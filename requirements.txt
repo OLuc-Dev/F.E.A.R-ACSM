@@ -1,0 +1,10 @@
+openai
+openai-whisper
+pyttsx3
+chromadb
+spotipy
+pyaudio
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
