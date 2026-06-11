@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>F.E.A.R. Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero-panel" aria-label="Estado da assistente">
+        <div class="top-bar">
+          <div>
+            <p class="eyebrow">Desktop presence</p>
+            <h1>F.E.A.R.</h1>
+          </div>
+          <div class="status-pill" id="connectionStatus">offline</div>
+        </div>
+
+        <div class="presence-wrap">
+          <div class="presence-orb" id="presenceOrb" aria-hidden="true">
+            <div class="orb-core"></div>
+            <div class="orb-ring orb-ring-one"></div>
+            <div class="orb-ring orb-ring-two"></div>
+          </div>
+          <p class="presence-state" id="presenceState">aguardando sinal</p>
+          <p class="presence-subtitle" id="presenceSubtitle">
+            Silenciosa, atenta, pronta para responder.
+          </p>
+        </div>
+
+        <div class="quick-actions">
+          <button type="button" id="captureOnceButton">capturar voz 5s</button>
+          <button type="button" id="startVoiceButton">iniciar voz</button>
+          <button type="button" id="stopVoiceButton">pausar voz</button>
+        </div>
+      </section>
+
+      <section class="console-panel" aria-label="Console de comando">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Command console</p>
+            <h2>Entrada manual</h2>
+          </div>
+          <label class="toggle-row">
+            <input type="checkbox" id="speakToggle" checked />
+            <span>responder em voz</span>
+          </label>
+        </div>
+
+        <form id="commandForm" class="command-form">
+          <label for="speakerInput">Quem está falando?</label>
+          <input id="speakerInput" name="speaker" value="user" autocomplete="off" />
+
+          <label for="commandInput">Comando</label>
+          <textarea
+            id="commandInput"
+            name="command"
+            rows="5"
+            placeholder="Ex.: lembra que eu gosto de interfaces escuras e minimalistas"
+          ></textarea>
+
+          <button type="submit">enviar para F.E.A.R.</button>
+        </form>
+
+        <div class="response-card" aria-live="polite">
+          <p class="eyebrow">Resposta</p>
+          <div id="assistantReply" class="assistant-reply">
+            Nenhum comando enviado ainda.
+          </div>
+        </div>
+      </section>
+
+      <section class="side-panel" aria-label="Memória e sistema">
+        <div class="memory-card">
+          <div class="panel-header compact">
+            <div>
+              <p class="eyebrow">Memory</p>
+              <h2>Memórias recentes</h2>
+            </div>
+            <button type="button" class="ghost-button" id="refreshMemoryButton">atualizar</button>
+          </div>
+          <div id="memoryList" class="memory-list">
+            <p class="muted">Escolha um speaker e atualize.</p>
+          </div>
+        </div>
+
+        <div class="system-card">
+          <p class="eyebrow">System</p>
+          <h2>Estado local</h2>
+          <div class="status-grid">
+            <div><span>API</span><strong id="apiStatus">checking</strong></div>
+            <div><span>Voz</span><strong id="voiceStatus">manual</strong></div>
+            <div><span>Memória</span><strong>ChromaDB</strong></div>
+            <div><span>TTS</span><strong>hybrid</strong></div>
+          </div>
+        </div>
+
+        <div class="timeline-card">
+          <p class="eyebrow">Timeline</p>
+          <div id="eventTimeline" class="timeline"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
