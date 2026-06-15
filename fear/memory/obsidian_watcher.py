@@ -4,14 +4,13 @@ import logging
 import re
 import threading
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Optional
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
 from fear.memory.personal_memory import PersonalMemory
-
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 
@@ -108,8 +107,8 @@ class ObsidianWatcher:
         self.memory = memory
         self.speaker = speaker
         self.source = source
-        self._observer: Optional[Observer] = None
-        self._thread: Optional[threading.Thread] = None
+        self._observer: Observer | None = None
+        self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._logger = logging.getLogger(self.__class__.__name__)
 

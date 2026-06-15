@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Tuple
 
 from dotenv import load_dotenv
 
@@ -19,7 +18,7 @@ class Settings:
     sample_rate: int = 16_000
     chunk_size: int = 1_024
 
-    wake_words: Tuple[str, ...] = ("fear", "hey fear")
+    wake_words: tuple[str, ...] = ("fear", "hey fear")
     whisper_model_name: str = "base"
 
     chroma_path: str = "data/chroma"
@@ -43,7 +42,7 @@ class Settings:
     )
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         """Load settings from .env and environment variables."""
         load_dotenv()
 
@@ -73,7 +72,7 @@ class Settings:
         )
 
 
-def _parse_csv_env(name: str, default: Tuple[str, ...]) -> Tuple[str, ...]:
+def _parse_csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     """Parse a comma-separated env var into a tuple of non-empty strings."""
     raw = os.getenv(name)
 
