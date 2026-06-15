@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator, Optional
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -18,6 +18,7 @@ from fear.brain.async_conversation import AsyncConversationalBrain
 from fear.config import Settings
 from fear.input.clap_detector import ClapDetector
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
+from fear.integrations.spotify_client import SpotifyClient
 from fear.library.reference_library import ReferenceLibrary
 from fear.memory.obsidian_watcher import ObsidianWatcher
 from fear.memory.personal_memory import PersonalMemory
@@ -36,7 +37,7 @@ class CommandResponse(BaseModel):
 
     reply: str
     speaker: str
-    audio_file: Optional[str] = None
+    audio_file: str | None = None
 
 
 class MemoryResponse(BaseModel):
@@ -50,7 +51,7 @@ class TapGesturePayload(BaseModel):
     """Request body for /wearable/tap."""
 
     gesture: GestureName = "single_tap"
-    device_id: Optional[str] = None
+    device_id: str | None = None
     speaker: str = "user"
 
 
@@ -110,14 +111,20 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         collection_name=os.getenv("BOOK_KNOWLEDGE_COLLECTION", "book_knowledge"),
     )
 
+    # Loads only when SPOTIPY_* credentials are present; otherwise stays inert.
+    spotify = SpotifyClient(scope=settings.spotify_scope)
+    await spotify.load()
+
     application.state.settings = settings
     application.state.memory = memory
     application.state.reference_library = reference_library
+    application.state.spotify = spotify
     application.state.tts = NaturalTTS()
     application.state.brain = AsyncConversationalBrain(
         settings=settings,
         memory=memory,
         reference_library=reference_library,
+        spotify=spotify,
     )
     application.state.loop = asyncio.get_running_loop()
     application.state.voice_listener = None
@@ -171,17 +178,17 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        listener = getattr(application.state, "voice_listener", None)
-        if listener is not None:
-            listener.stop()
+        active_listener = getattr(application.state, "voice_listener", None)
+        if active_listener is not None:
+            active_listener.stop()
 
-        watcher = getattr(application.state, "obsidian_watcher", None)
-        if watcher is not None:
-            watcher.stop()
+        active_watcher = getattr(application.state, "obsidian_watcher", None)
+        if active_watcher is not None:
+            active_watcher.stop()
 
-        clap_detector = getattr(application.state, "clap_detector", None)
-        if clap_detector is not None:
-            clap_detector.stop()
+        active_clap_detector = getattr(application.state, "clap_detector", None)
+        if active_clap_detector is not None:
+            active_clap_detector.stop()
 
 
 app = FastAPI(title="F.E.A.R. Unified API", lifespan=lifespan)

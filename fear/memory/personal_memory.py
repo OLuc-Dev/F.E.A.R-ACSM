@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
-
-import chromadb
-from sentence_transformers import SentenceTransformer
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -16,14 +13,18 @@ class PersonalMemoryResult:
     speaker: str
     source: str
     timestamp: float
-    distance: Optional[float] = None
-    metadata: Optional[dict[str, Any]] = None
+    distance: float | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class SentenceTransformerEmbedding:
     """Embedding adapter using sentence-transformers/all-MiniLM-L6-v2."""
 
     def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
+        # Imported lazily so the conversational core can be imported and tested
+        # without pulling in sentence-transformers / torch.
+        from sentence_transformers import SentenceTransformer
+
         self.model_name = model_name
         self._model = SentenceTransformer(model_name)
 
@@ -51,6 +52,8 @@ class PersonalMemory:
         collection_name: str = "personal_memory",
         embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     ) -> None:
+        import chromadb
+
         self.path = path
         self.collection_name = collection_name
         self.embedding = SentenceTransformerEmbedding(embedding_model_name)
@@ -85,7 +88,7 @@ class PersonalMemory:
         self,
         query: str,
         n_results: int = 5,
-        filter_by_speaker: Optional[str] = None,
+        filter_by_speaker: str | None = None,
     ) -> list[PersonalMemoryResult]:
         """Search memories by semantic similarity."""
         if not query.strip():
@@ -101,10 +104,12 @@ class PersonalMemory:
         return self._format_results(raw)
 
     def get_facts_about_speaker(self, speaker: str, n_results: int = 10) -> list[PersonalMemoryResult]:
-        """Return recent memories from a specific speaker."""
+        """Return the most recent memories from a specific speaker."""
+        # Fetch all of the speaker's memories, then sort by timestamp and take
+        # the newest. Applying a Chroma `limit` before sorting would return an
+        # arbitrary subset rather than the most recent facts.
         raw = self._collection.get(
             where={"speaker": speaker},
-            limit=n_results,
             include=["documents", "metadatas"],
         )
 
@@ -117,7 +122,7 @@ class PersonalMemory:
             results.append(self._result_from_document(str(document), metadata, None))
 
         results.sort(key=lambda item: item.timestamp, reverse=True)
-        return results
+        return results[:n_results]
 
     def _format_results(self, raw: dict[str, Any]) -> list[PersonalMemoryResult]:
         documents = raw.get("documents", [[]])[0] or []
@@ -135,8 +140,8 @@ class PersonalMemory:
     @staticmethod
     def _result_from_document(
         document: str,
-        metadata: Optional[dict[str, Any]],
-        distance: Optional[float],
+        metadata: dict[str, Any] | None,
+        distance: float | None,
     ) -> PersonalMemoryResult:
         metadata = metadata or {}
         return PersonalMemoryResult(

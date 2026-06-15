@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional
-
+from typing import Literal
 
 GestureName = Literal["single_tap", "double_tap", "long_press", "double_clap"]
 
@@ -12,7 +11,7 @@ class WearableTapEvent:
     """Normalized tap event coming from a wearable bridge."""
 
     gesture: GestureName
-    device_id: Optional[str] = None
+    device_id: str | None = None
 
 
 def gesture_to_command(event: WearableTapEvent) -> str:

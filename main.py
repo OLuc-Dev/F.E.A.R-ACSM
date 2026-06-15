@@ -1,29 +1,16 @@
 from __future__ import annotations
 
-import asyncio
-import signal
-
-from fear.assistant import FearAssistant
-from fear.config import Settings
+from fear.web.app import run
 
 
-async def main() -> None:
-    """Entrypoint for the F.E.A.R. desktop assistant."""
-    settings = Settings.from_env()
-    assistant = FearAssistant(settings)
+def main() -> None:
+    """Launch the local F.E.A.R. runtime.
 
-    loop = asyncio.get_running_loop()
-
-    # SIGTERM may not be supported by every Windows event loop policy, so this
-    # is intentionally wrapped.
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, assistant.shutdown_event.set)
-        except NotImplementedError:
-            pass
-
-    await assistant.start()
+    F.E.A.R. is a quiet local presence: it serves the web/command API and, when
+    enabled via environment flags, listens for voice, claps, and Obsidian notes.
+    """
+    run()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

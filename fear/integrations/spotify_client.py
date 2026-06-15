@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
@@ -15,9 +15,9 @@ class SpotifyStatus:
 
     is_configured: bool
     is_playing: bool = False
-    track_name: Optional[str] = None
-    artist_name: Optional[str] = None
-    device_name: Optional[str] = None
+    track_name: str | None = None
+    artist_name: str | None = None
+    device_name: str | None = None
 
 
 class SpotifyClient:
@@ -25,7 +25,7 @@ class SpotifyClient:
 
     def __init__(self, *, scope: str) -> None:
         self.scope = scope
-        self._client: Optional[spotipy.Spotify] = None
+        self._client: spotipy.Spotify | None = None
 
     @property
     def is_configured(self) -> bool:
@@ -114,15 +114,17 @@ class SpotifyClient:
         """Handle simple natural-language Spotify commands."""
         lower = text.lower()
 
-        if "pause" in lower:
-            return await self.pause()
-        if "resume" in lower or "play" in lower:
-            return await self.resume()
+        # Specific intents are checked before the greedy "play"/"resume" branch
+        # so phrases like "toggle Spotify playback" are not misread as "resume".
+        if "toggle" in lower:
+            return await self.toggle()
         if "next" in lower or "skip" in lower:
             return await self.next_track()
         if "previous" in lower or "back" in lower:
             return await self.previous_track()
-        if "toggle" in lower:
-            return await self.toggle()
+        if "pause" in lower or "stop" in lower:
+            return await self.pause()
+        if "resume" in lower or "play" in lower:
+            return await self.resume()
 
         return ""

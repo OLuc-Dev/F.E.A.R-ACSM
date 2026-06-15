@@ -6,9 +6,9 @@ import re
 import tempfile
 import threading
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 import pyaudio
 import whisper
@@ -21,7 +21,7 @@ class TranscriptEvent:
     raw_text: str
     speaker: str
     message: str
-    audio_path: Optional[Path] = None
+    audio_path: Path | None = None
 
 
 class VoiceListener:
@@ -37,13 +37,13 @@ class VoiceListener:
     def __init__(
         self,
         *,
-        on_transcript: Optional[Callable[[TranscriptEvent], None]] = None,
+        on_transcript: Callable[[TranscriptEvent], None] | None = None,
         model_name: str = "base",
         sample_rate: int = 16_000,
         chunk_size: int = 1_024,
         record_seconds: float = 5.0,
         default_speaker: str = "user",
-        input_device_index: Optional[int] = None,
+        input_device_index: int | None = None,
     ) -> None:
         self.on_transcript = on_transcript
         self.model_name = model_name
@@ -57,8 +57,8 @@ class VoiceListener:
         self._capture_event = threading.Event()
         self._audio_queue: queue.Queue[Path] = queue.Queue()
 
-        self._recorder_thread: Optional[threading.Thread] = None
-        self._transcriber_thread: Optional[threading.Thread] = None
+        self._recorder_thread: threading.Thread | None = None
+        self._transcriber_thread: threading.Thread | None = None
         self._model = None
         self._lock = threading.Lock()
         self._logger = logging.getLogger(self.__class__.__name__)
@@ -159,7 +159,7 @@ class VoiceListener:
                 except Exception:
                     pass
 
-    def _transcribe_file(self, audio_path: Path) -> Optional[TranscriptEvent]:
+    def _transcribe_file(self, audio_path: Path) -> TranscriptEvent | None:
         """Transcribe one file and parse an optional speaker prefix."""
         if self._model is None:
             return None

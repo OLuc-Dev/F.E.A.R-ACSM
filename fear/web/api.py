@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from fear.assistant import app
-
+from fear.web.app import app
 
 __all__ = ["app"]

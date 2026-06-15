@@ -5,8 +5,9 @@ import logging
 import sys
 import threading
 import time
+from collections.abc import Callable
 from queue import Empty, Queue
-from typing import Any, Callable, Optional
+from typing import Any
 
 import pyaudio
 
@@ -46,7 +47,7 @@ class ClapDetector:
         min_clap_ms: int = 50,
         max_clap_ms: int = 200,
         double_clap_window_ms: int = 1_000,
-        input_device_index: Optional[int] = None,
+        input_device_index: int | None = None,
     ) -> None:
         """
         Create a ClapDetector.
@@ -90,11 +91,11 @@ class ClapDetector:
         # processor thread. Queue is thread-safe by design.
         self._clap_queue: Queue[float] = Queue()
 
-        self._audio_thread: Optional[threading.Thread] = None
-        self._processor_thread: Optional[threading.Thread] = None
+        self._audio_thread: threading.Thread | None = None
+        self._processor_thread: threading.Thread | None = None
 
-        self._pa: Optional[pyaudio.PyAudio] = None
-        self._stream: Optional[Any] = None
+        self._pa: pyaudio.PyAudio | None = None
+        self._stream: Any | None = None
 
         # Prevents concurrent start/stop calls from racing.
         self._lock = threading.Lock()
@@ -163,7 +164,7 @@ class ClapDetector:
         """
         chunk_duration_s = self.chunk_size / self.sample_rate
         in_potential_clap = False
-        clap_start_time: Optional[float] = None
+        clap_start_time: float | None = None
 
         try:
             self._pa = pyaudio.PyAudio()
@@ -219,7 +220,7 @@ class ClapDetector:
 
     def _clap_processor_loop(self) -> None:
         """Consume valid clap timestamps and detect double-clap pairs."""
-        first_clap_time: Optional[float] = None
+        first_clap_time: float | None = None
         double_clap_window_s = self.double_clap_window_ms / 1000.0
 
         while not self._stop_event.is_set():

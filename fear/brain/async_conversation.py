@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
 from fear.config import Settings
 from fear.library.reference_library import ReferenceLibrary
 from fear.memory.personal_memory import PersonalMemory, PersonalMemoryResult
+
+if TYPE_CHECKING:
+    from fear.integrations.spotify_client import SpotifyClient
+
+
+# Only route to Spotify when the message clearly refers to music. This keeps the
+# assistant from hijacking ordinary conversation that happens to contain a verb
+# like "play" or "stop".
+SPOTIFY_HINTS = ("spotify", "music", "song", "track", "playback")
 
 
 @dataclass(slots=True)
@@ -34,12 +43,14 @@ class AsyncConversationalBrain:
         *,
         settings: Settings,
         memory: PersonalMemory,
-        reference_library: Optional[ReferenceLibrary] = None,
+        reference_library: ReferenceLibrary | None = None,
+        spotify: SpotifyClient | None = None,
     ) -> None:
         self.settings = settings
         self.memory = memory
         self.reference_library = reference_library
-        self.client: Optional[AsyncOpenAI] = None
+        self.spotify = spotify
+        self.client: AsyncOpenAI | None = None
 
         if settings.openrouter_api_key:
             self.client = AsyncOpenAI(
@@ -58,6 +69,16 @@ class AsyncConversationalBrain:
 
         if not clean_text:
             return CommandResponse(reply="", speaker=clean_speaker, remembered=False)
+
+        spotify_reply = await self._try_spotify(clean_text)
+        if spotify_reply:
+            await asyncio.to_thread(
+                self.memory.add_memory,
+                clean_text,
+                clean_speaker,
+                "spotify",
+            )
+            return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
         speaker_facts_task = asyncio.to_thread(
             self.memory.get_facts_about_speaker,
@@ -138,6 +159,17 @@ class AsyncConversationalBrain:
             )
 
         return CommandResponse(reply=reply, speaker=clean_speaker, remembered=True)
+
+    async def _try_spotify(self, text: str) -> str:
+        """Route clear music commands to Spotify, returning "" when not applicable."""
+        if self.spotify is None:
+            return ""
+
+        lowered = text.lower()
+        if not any(hint in lowered for hint in SPOTIFY_HINTS):
+            return ""
+
+        return await self.spotify.handle_intent(lowered)
 
     def _build_system_message(self) -> str:
         return (

@@ -4,10 +4,10 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import pyttsx3
-import requests
+import requests  # type: ignore[import-untyped]
 
 
 class NaturalTTS:
@@ -18,10 +18,10 @@ class NaturalTTS:
         self.remote_api_key = os.getenv("ELEVENLABS_API_KEY", "")
         self.default_voice = os.getenv("ELEVENLABS_DEFAULT_VOICE_ID", "")
         self.remote_model = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
-        self._offline_engine = None
+        self._offline_engine: Any = None
         self._lock = asyncio.Lock()
 
-    async def say(self, text: str, voice: str = "default") -> Optional[Path]:
+    async def say(self, text: str, voice: str = "default") -> Path | None:
         """Speak text. Returns an audio file path when remote synthesis is used."""
         if not text.strip():
             return None
