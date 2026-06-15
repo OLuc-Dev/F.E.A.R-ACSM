@@ -1,3 +1,0 @@
-requests
-watchdog
-sentence-transformers

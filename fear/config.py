@@ -18,7 +18,6 @@ class Settings:
     sample_rate: int = 16_000
     chunk_size: int = 1_024
 
-    wake_words: tuple[str, ...] = ("fear", "hey fear")
     whisper_model_name: str = "base"
 
     chroma_path: str = "data/chroma"
@@ -52,7 +51,6 @@ class Settings:
             port=int(os.getenv("FEAR_PORT", "8765")),
             sample_rate=int(os.getenv("FEAR_SAMPLE_RATE", "16000")),
             chunk_size=int(os.getenv("FEAR_CHUNK_SIZE", "1024")),
-            wake_words=_parse_csv_env("FEAR_WAKE_WORDS", ("fear", "hey fear")),
             whisper_model_name=os.getenv("WHISPER_MODEL", "base"),
             chroma_path=os.getenv("CHROMA_PATH", "data/chroma"),
             chroma_collection_name=os.getenv("CHROMA_COLLECTION", "fear_memory"),
@@ -70,14 +68,3 @@ class Settings:
             openrouter_app_title=os.getenv("OPENROUTER_APP_TITLE", "F.E.A.R."),
             clap_threshold=float(os.getenv("CLAP_THRESHOLD", "0.1")),
         )
-
-
-def _parse_csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    """Parse a comma-separated env var into a tuple of non-empty strings."""
-    raw = os.getenv(name)
-
-    if not raw:
-        return default
-
-    values = tuple(item.strip().lower() for item in raw.split(",") if item.strip())
-    return values or default

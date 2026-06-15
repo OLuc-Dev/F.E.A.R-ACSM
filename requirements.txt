@@ -1,10 +1,15 @@
-openai
-openai-whisper
-pyttsx3
-chromadb
-spotipy
-pyaudio
-fastapi
-uvicorn[standard]
-pydantic
-python-dotenv
+# Runtime dependencies. The canonical source is pyproject.toml — prefer
+# `pip install -e .` (add `.[dev]` for the test/lint tooling).
+openai>=1.55,<2
+openai-whisper>=20231117,<20250626
+pyttsx3>=2.90,<3
+chromadb>=0.5,<1
+spotipy>=2.24,<3
+pyaudio>=0.2.14,<0.3
+fastapi>=0.115,<0.116
+uvicorn[standard]>=0.30,<0.35
+pydantic>=2.8,<3
+python-dotenv>=1,<2
+requests>=2.32,<3
+watchdog>=5,<7
+sentence-transformers>=3,<4
