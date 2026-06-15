@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=69,<76", "wheel>=0.43,<1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fear-acsm"
+version = "0.1.0"
+description = "F.E.A.R. desktop assistant backend"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "openai>=1.55,<2",
+  "openai-whisper>=20231117,<20250626",
+  "pyttsx3>=2.90,<3",
+  "chromadb>=0.5,<1",
+  "spotipy>=2.24,<3",
+  "pyaudio>=0.2.14,<0.3",
+  "fastapi>=0.115,<0.116",
+  "uvicorn[standard]>=0.30,<0.35",
+  "pydantic>=2.8,<3",
+  "python-dotenv>=1,<2",
+  "requests>=2.32,<3",
+  "watchdog>=5,<7",
+  "sentence-transformers>=3,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.8,<1",
+  "mypy>=1.13,<2",
+]
+
+[tool.setuptools.packages.find]
+include = ["fear*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
