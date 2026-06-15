@@ -36,6 +36,17 @@ class FakeMemory:
         return f"fake-{len(self.added)}"
 
 
+class FakeSpotify:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def handle_intent(self, text: str) -> str:
+        self.calls.append(text)
+        if "next" in text:
+            return "Skipped to the next track."
+        return ""
+
+
 @pytest.mark.asyncio
 async def test_process_command_fallback_without_openrouter() -> None:
     memory = FakeMemory()
@@ -82,3 +93,38 @@ def test_build_context_includes_memory_sections() -> None:
     assert "Lucas likes calm tools." in context
     assert "Local reference notes" in context
     assert "- local note" in context
+
+
+@pytest.mark.asyncio
+async def test_music_command_routes_to_spotify() -> None:
+    memory = FakeMemory()
+    spotify = FakeSpotify()
+    brain = AsyncConversationalBrain(
+        settings=Settings(),
+        memory=memory,
+        spotify=spotify,  # type: ignore[arg-type]
+    )
+
+    result = await brain.process_command("next Spotify song", "Lucas")
+
+    assert result.reply == "Skipped to the next track."
+    assert result.remembered is True
+    assert spotify.calls == ["next spotify song"]
+    assert memory.added == [("next Spotify song", "Lucas", "spotify")]
+
+
+@pytest.mark.asyncio
+async def test_non_music_command_does_not_touch_spotify() -> None:
+    memory = FakeMemory()
+    spotify = FakeSpotify()
+    brain = AsyncConversationalBrain(
+        settings=Settings(),
+        memory=memory,
+        spotify=spotify,  # type: ignore[arg-type]
+    )
+
+    result = await brain.process_command("how are you today", "Lucas")
+
+    assert spotify.calls == []
+    assert "OpenRouter is not configured" in result.reply
+    assert memory.added == [("how are you today", "Lucas", "conversation")]

@@ -3,10 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
-
-import chromadb
-from sentence_transformers import SentenceTransformer
+from typing import Any
 
 
 @dataclass(slots=True)
@@ -16,8 +13,8 @@ class ReferenceResult:
     text: str
     source: str
     section: str
-    distance: Optional[float] = None
-    metadata: Optional[dict[str, Any]] = None
+    distance: float | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class ReferenceLibrary:
@@ -30,6 +27,11 @@ class ReferenceLibrary:
         collection_name: str = "reference_library",
         embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     ) -> None:
+        # Imported lazily so the conversational core can be imported and tested
+        # without pulling in sentence-transformers / torch.
+        import chromadb
+        from sentence_transformers import SentenceTransformer
+
         self.path = path
         self.collection_name = collection_name
         self._embedding_model = SentenceTransformer(embedding_model_name)
@@ -74,7 +76,7 @@ class ReferenceLibrary:
 
         return len(chunks)
 
-    def retrieve(self, query: str, *, n_results: int = 3, source: Optional[str] = None) -> list[ReferenceResult]:
+    def retrieve(self, query: str, *, n_results: int = 3, source: str | None = None) -> list[ReferenceResult]:
         """Retrieve relevant local reference notes."""
         if not query.strip():
             return []
