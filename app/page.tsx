@@ -7,6 +7,14 @@ import { BookOpen, Brain, Cpu, Database, Mic, Music, RotateCcw, Send } from "luc
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { Card } from "@/components/ui/card";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
+import {
+  captureVoiceOnce,
+  checkHealth,
+  getMemory,
+  resetConversation,
+  sendCommand,
+  streamCommand,
+} from "@/lib/api";
 
 const FearPresence = dynamic(
   () => import("@/components/ui/fear-presence").then((module) => module.FearPresence),
@@ -19,8 +27,6 @@ const FearPresence = dynamic(
     ),
   },
 );
-
-const API_BASE = process.env.NEXT_PUBLIC_FEAR_API_BASE ?? "http://127.0.0.1:8765";
 
 type Role = "user" | "fear" | "system";
 type Status = "online" | "listening" | "thinking" | "speaking" | "error";
@@ -94,6 +100,7 @@ export default function HomePage() {
 
   const idRef = useRef(1);
   const threadRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const nextId = () => idRef.current++;
 
@@ -106,17 +113,16 @@ export default function HomePage() {
 
   useEffect(() => {
     let active = true;
-    fetch(`${API_BASE}/health`)
-      .then((response) => {
-        if (active) setBackendOnline(response.ok);
-      })
-      .catch(() => {
-        if (active) setBackendOnline(false);
-      });
+    checkHealth().then((ok) => {
+      if (active) setBackendOnline(ok);
+    });
     return () => {
       active = false;
     };
   }, []);
+
+  // Cancel any in-flight stream when the page unmounts.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   function pushMessage(role: Role, content: string) {
     setMessages((prev) => [...prev, { id: nextId(), role, content }]);
@@ -146,33 +152,27 @@ export default function HomePage() {
     pushMessage("user", trimmed);
     pushMessage("fear", "");
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      const response = await fetch(`${API_BASE}/command/stream`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: trimmed, speaker: speaker || "user", speak: false }),
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      setStatus("speaking");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        const chunk = decoder.decode(value, { stream: true });
-        if (chunk) {
+      let started = false;
+      await streamCommand(
+        { text: trimmed, speaker: speaker || "user" },
+        (chunk) => {
+          if (!started) {
+            setStatus("speaking");
+            started = true;
+          }
           appendToLastFear(chunk);
-        }
-      }
+        },
+        controller.signal,
+      );
       setStatus("online");
     } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
       appendToLastFear(error instanceof Error ? `Erro: ${error.message}` : "Falha ao falar com o backend.");
       setStatus("error");
     } finally {
@@ -186,26 +186,19 @@ export default function HomePage() {
     try {
       if (appId === "spotify") {
         setStatus("thinking");
-        const response = await fetch(`${API_BASE}/command`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: "toggle Spotify playback", speaker: who, speak: false }),
-        });
-        const data = await response.json();
+        const data = await sendCommand({ text: "toggle Spotify playback", speaker: who });
         pushMessage("fear", data.reply || "Spotify acionado.");
         setStatus("online");
       } else if (appId === "voice") {
         setStatus("listening");
-        await fetch(`${API_BASE}/voice/capture-once`, { method: "POST" });
+        await captureVoiceOnce();
         pushMessage("system", "Escutando um trecho de voz…");
         setStatus("online");
       } else if (appId === "memory") {
-        const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(who)}`);
-        const data = await response.json();
-        const count = Array.isArray(data.memories) ? data.memories.length : 0;
-        pushMessage("system", `${count} memória(s) recente(s) sobre ${who}.`);
+        const data = await getMemory(who);
+        pushMessage("system", `${data.memories.length} memória(s) recente(s) sobre ${who}.`);
       } else if (appId === "reset") {
-        await fetch(`${API_BASE}/conversation/reset?speaker=${encodeURIComponent(who)}`, { method: "POST" });
+        await resetConversation(who);
         setMessages([{ id: nextId(), role: "system", content: "Conversa reiniciada. Memória pessoal mantida." }]);
       } else if (appId === "obsidian") {
         pushMessage("system", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
