@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import types
+from pathlib import Path
 
 import pytest
 
@@ -194,3 +195,17 @@ def test_persona_file_overrides_default(tmp_path) -> None:
     )
 
     assert brain._build_system_message() == "You are a playful JARVIS-style companion."
+
+
+def test_shipped_persona_file_loads() -> None:
+    persona_path = Path(__file__).resolve().parents[1] / "prompts" / "fear_persona.md"
+    assert persona_path.exists(), "prompts/fear_persona.md should ship with the repo"
+
+    brain = AsyncConversationalBrain(
+        settings=Settings(persona_file=str(persona_path)),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+
+    message = brain._build_system_message()
+    assert "F.E.A.R." in message
+    assert "Chairman" in message  # confirms the council persona loaded, not the fallback

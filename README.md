@@ -23,8 +23,9 @@ pode consultar uma biblioteca de notas em markdown.
 
 - **Diálogo com continuidade**: janela de conversa por interlocutor, então F.E.A.R.
   acompanha o assunto entre turnos em vez de tratar cada mensagem isolada.
-- **Persona configurável**: voz padrão calorosa (que brinca, mas lê a hora) ou a sua
-  própria, via `FEAR_PERSONA_FILE`.
+- **Persona editável**: a personalidade da F.E.A.R. vive em `prompts/fear_persona.md`
+  (carregado por `FEAR_PERSONA_FILE`). Edite esse arquivo para mudar a voz dele; sem
+  ele, uma persona embutida é usada como fallback.
 - **Memória persistente por interlocutor** (`PersonalMemory`, ChromaDB).
 - **Biblioteca de referência** indexável a partir de notas markdown (`ReferenceLibrary`).
 - **Spotify** por linguagem natural, palmas e toques de wearable.
