@@ -14,10 +14,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Python dependencies
+      - name: Install Python tooling
+        # Lint/type/test do not need the heavy ML/audio stack (chromadb,
+        # sentence-transformers/torch, whisper, pyaudio): those are imported
+        # lazily and stubbed in tests. Installing only the tooling and the light
+        # deps keeps CI fast and avoids the portaudio system dependency that
+        # pyaudio would otherwise need to compile.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install "ruff>=0.8,<1" "mypy>=1.13,<2" "pytest>=8.3,<9" \
+            "pytest-asyncio>=0.23,<1" "types-requests>=2.32,<3" \
+            "openai>=1.55,<2" "python-dotenv>=1,<2"
       - name: Lint Python
         run: python -m ruff check fear tests
       - name: Typecheck Python
