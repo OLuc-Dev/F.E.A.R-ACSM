@@ -2,12 +2,12 @@
 
 import { Suspense, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { ContactShadows, Float, RoundedBox, Sparkles } from "@react-three/drei";
+import { ContactShadows, Environment, Float, Lightformer, Sparkles } from "@react-three/drei";
 import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 
-// A code-controlled F.E.A.R. presence: a graphite head with glowing red eyes
-// and a mouth that animates while she speaks. Fully ours, fully reactive.
+// A code-controlled F.E.A.R. presence: a liquid-chrome head with glowing red
+// eyes and a mouth that animates while she speaks. Fully ours, fully reactive.
 
 function Head({ speaking }: { speaking: boolean }) {
   const group = useRef<THREE.Group>(null);
@@ -21,8 +21,7 @@ function Head({ speaking }: { speaking: boolean }) {
     if (group.current) {
       group.current.rotation.y = Math.sin(t * 0.5) * 0.26;
       group.current.rotation.x = Math.sin(t * 0.35) * 0.07;
-      const breathe = 1 + Math.sin(t * 1.4) * 0.012;
-      group.current.scale.setScalar(breathe);
+      group.current.scale.setScalar(1 + Math.sin(t * 1.4) * 0.012);
     }
 
     const base = speaking ? 3.2 : 2.0;
@@ -38,52 +37,48 @@ function Head({ speaking }: { speaking: boolean }) {
 
   return (
     <group ref={group}>
-      {/* Head shell — graphite with a clearcoat sheen */}
-      <RoundedBox args={[2.2, 2.6, 2]} radius={0.4} smoothness={8}>
+      {/* Chrome cranium — a polished metal ovoid */}
+      <mesh scale={[1.5, 1.85, 1.6]}>
+        <sphereGeometry args={[1, 96, 96]} />
         <meshPhysicalMaterial
-          color="#15171c"
-          metalness={0.9}
-          roughness={0.34}
-          clearcoat={0.7}
-          clearcoatRoughness={0.28}
+          color="#c8ccd4"
+          metalness={1}
+          roughness={0.28}
+          clearcoat={0.8}
+          clearcoatRoughness={0.18}
+          envMapIntensity={0.9}
         />
-      </RoundedBox>
-
-      {/* Recessed glossy face plate */}
-      <RoundedBox args={[1.78, 1.62, 0.22]} radius={0.24} position={[0, 0.04, 1.0]}>
-        <meshPhysicalMaterial color="#080910" metalness={0.6} roughness={0.25} clearcoat={1} clearcoatRoughness={0.15} />
-      </RoundedBox>
-
-      {/* Brow accent line */}
-      <mesh position={[0, 0.72, 1.08]}>
-        <boxGeometry args={[1.5, 0.05, 0.08]} />
-        <meshStandardMaterial color="#3a4256" metalness={0.8} roughness={0.4} />
       </mesh>
 
-      {/* Eyes */}
-      {[-0.44, 0.44].map((x, i) => (
-        <group key={x} position={[x, 0.4, 1.13]}>
+      {/* Recessed dark eye band */}
+      <mesh position={[0, 0.28, 1.28]}>
+        <boxGeometry args={[1.5, 0.6, 0.18]} />
+        <meshStandardMaterial color="#0a0b0f" metalness={0.7} roughness={0.3} />
+      </mesh>
+
+      {/* Eyes with a hot inner core */}
+      {[-0.4, 0.4].map((x, i) => (
+        <group key={x} position={[x, 0.3, 1.44]}>
           <mesh>
-            <sphereGeometry args={[0.19, 32, 32]} />
+            <sphereGeometry args={[0.16, 32, 32]} />
             <meshStandardMaterial
               ref={i === 0 ? leftEye : rightEye}
               color="#ff2a2a"
               emissive="#ff1414"
-              emissiveIntensity={2}
+              emissiveIntensity={2.2}
               toneMapped={false}
             />
           </mesh>
-          {/* bright inner core */}
-          <mesh position={[0, 0, 0.08]}>
-            <sphereGeometry args={[0.08, 24, 24]} />
-            <meshStandardMaterial color="#fff1f1" emissive="#ffd0d0" emissiveIntensity={3} toneMapped={false} />
+          <mesh position={[0, 0, 0.07]}>
+            <sphereGeometry args={[0.07, 24, 24]} />
+            <meshStandardMaterial color="#fff1f1" emissive="#ffd0d0" emissiveIntensity={3.2} toneMapped={false} />
           </mesh>
         </group>
       ))}
 
       {/* Mouth */}
-      <mesh ref={mouth} position={[0, -0.52, 1.13]} scale={[1, 0.05, 1]}>
-        <boxGeometry args={[0.95, 0.4, 0.12]} />
+      <mesh ref={mouth} position={[0, -0.66, 1.34]} scale={[1, 0.05, 1]}>
+        <boxGeometry args={[0.85, 0.4, 0.12]} />
         <meshStandardMaterial color="#ff2a2a" emissive="#ff1414" emissiveIntensity={1.6} toneMapped={false} />
       </mesh>
     </group>
@@ -92,26 +87,34 @@ function Head({ speaking }: { speaking: boolean }) {
 
 export function FearPresence({ speaking = false }: { speaking?: boolean }) {
   return (
-    <Canvas camera={{ position: [0, 0, 6], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true }}>
+    <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true }}>
       <color attach="background" args={["#06070a"]} />
-      <fog attach="fog" args={["#06070a", 7.5, 15]} />
+      <fog attach="fog" args={["#06070a", 8, 16]} />
 
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[4, 5, 5]} intensity={2.4} />
-      <pointLight position={[-4, -1, 3]} intensity={11} color="#3b5bff" />
-      <pointLight position={[3, -2, 2]} intensity={6} color="#ff3030" />
+      <hemisphereLight args={["#aebfe0", "#15171c", 0.45]} />
+      <directionalLight position={[4, 5, 5]} intensity={1.3} />
+      <pointLight position={[-4, -1, 3]} intensity={4} color="#3b5bff" />
 
       <Suspense fallback={null}>
-        <Float speed={1.4} rotationIntensity={0.25} floatIntensity={0.7}>
+        {/* Procedural environment so the chrome has soft streaks to reflect */}
+        <Environment resolution={256}>
+          <Lightformer form="rect" intensity={1.6} position={[0, 3, 2]} scale={[5, 1.4, 1]} color="#dfe6ff" />
+          <Lightformer form="rect" intensity={1.2} position={[-4, 1, 1]} rotation={[0, Math.PI / 4, 0]} scale={[2.5, 4, 1]} color="#7aa2ff" />
+          <Lightformer form="rect" intensity={1.0} position={[4, -1, 1]} rotation={[0, -Math.PI / 4, 0]} scale={[2.5, 4, 1]} color="#ff5a5a" />
+        </Environment>
+
+        <Float speed={1.3} rotationIntensity={0.22} floatIntensity={0.6}>
           <Head speaking={speaking} />
         </Float>
-        <Sparkles count={42} scale={9} size={2.2} speed={0.3} color="#7aa2ff" opacity={0.5} />
-        <ContactShadows position={[0, -2.05, 0]} opacity={0.55} scale={11} blur={2.8} far={4.2} color="#000000" />
+
+        <Sparkles count={42} scale={9} size={2.2} speed={0.3} color="#9ab4ff" opacity={0.5} />
+        <ContactShadows position={[0, -2.2, 0]} opacity={0.6} scale={12} blur={2.8} far={4.5} color="#000000" />
       </Suspense>
 
       <EffectComposer>
-        <Bloom intensity={1.1} luminanceThreshold={0.2} luminanceSmoothing={0.32} mipmapBlur />
-        <Vignette offset={0.28} darkness={0.72} />
+        {/* High threshold so only the emissive eyes/mouth bloom, not the chrome */}
+        <Bloom intensity={0.7} luminanceThreshold={0.6} luminanceSmoothing={0.2} mipmapBlur />
+        <Vignette offset={0.3} darkness={0.7} />
       </EffectComposer>
     </Canvas>
   );
