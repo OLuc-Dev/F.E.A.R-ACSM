@@ -247,6 +247,13 @@ async def wearable_tap(payload: TapGesturePayload) -> CommandResponse:
     return CommandResponse(reply=result.reply, speaker=result.speaker, audio_file=None)
 
 
+@app.post("/conversation/reset")
+async def conversation_reset(speaker: str = "user") -> dict[str, str]:
+    """Clear the in-memory dialogue window for a speaker (persistent memory is kept)."""
+    app.state.brain.reset_conversation(speaker)
+    return {"status": "reset", "speaker": speaker}
+
+
 @app.post("/voice/start")
 async def voice_start() -> dict[str, str]:
     """Start push-to-talk capture when the optional voice listener is enabled."""

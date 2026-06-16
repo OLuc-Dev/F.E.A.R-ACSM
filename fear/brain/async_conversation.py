@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
@@ -14,10 +17,27 @@ if TYPE_CHECKING:
     from fear.integrations.spotify_client import SpotifyClient
 
 
+logger = logging.getLogger(__name__)
+
 # Only route to Spotify when the message clearly refers to music. This keeps the
 # assistant from hijacking ordinary conversation that happens to contain a verb
 # like "play" or "stop".
 SPOTIFY_HINTS = ("spotify", "music", "song", "track", "playback")
+
+# The default voice of F.E.A.R.: a close, sharp companion that can banter, but
+# reads the room. Override it with a file via settings.persona_file.
+DEFAULT_PERSONA = (
+    "You are F.E.A.R. — a close, sharp, personal companion, not a corporate assistant. "
+    "You talk like a trusted friend who happens to be brilliant: warm, quick, and easy to be around. "
+    "You have a dry sense of humor and you joke, tease, and riff when the moment is light — "
+    "but you read the room, and when something actually matters you drop the bit and you are fully present. "
+    "You are honest and direct; you do not flatter, and you push back when you disagree. "
+    "You use what you remember about the person to be personal and useful, never invasive, "
+    "and you never repeat private details loudly or out of context. "
+    "Keep replies conversational and concise — talk with the person, do not lecture them. "
+    "On relationships and other sensitive topics, stay respectful, consent-focused, honest, and non-manipulative. "
+    "If local reference notes are provided, treat them as inspiration, not as absolute truth."
+)
 
 
 @dataclass(slots=True)
@@ -52,6 +72,12 @@ class AsyncConversationalBrain:
         self.spotify = spotify
         self.client: AsyncOpenAI | None = None
 
+        self._persona = self._load_persona(settings)
+        self._max_history_turns = max(0, settings.max_history_turns)
+        # Rolling per-speaker dialogue window, so F.E.A.R. follows a conversation
+        # across turns instead of treating every message as standalone.
+        self._history: dict[str, deque[dict[str, str]]] = {}
+
         if settings.openrouter_api_key:
             self.client = AsyncOpenAI(
                 api_key=settings.openrouter_api_key,
@@ -78,6 +104,7 @@ class AsyncConversationalBrain:
                 clean_speaker,
                 "spotify",
             )
+            self._record_turn(clean_speaker, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
         speaker_facts_task = asyncio.to_thread(
@@ -114,6 +141,7 @@ class AsyncConversationalBrain:
                 clean_speaker,
                 "conversation",
             )
+            self._record_turn(clean_speaker, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
         if not self.settings.openrouter_chat_model:
@@ -124,6 +152,7 @@ class AsyncConversationalBrain:
                 clean_speaker,
                 "conversation",
             )
+            self._record_turn(clean_speaker, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
         context = self._build_context(
@@ -134,12 +163,18 @@ class AsyncConversationalBrain:
             reference_context=reference_context,
         )
 
+        system_content = (
+            f"{self._persona}\n\n"
+            "Context F.E.A.R. can draw on (do not read it back verbatim):\n"
+            f"{context}"
+        )
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
+        messages.extend(self._history_for(clean_speaker))
+        messages.append({"role": "user", "content": clean_text})
+
         response = await self.client.chat.completions.create(
             model=self.settings.openrouter_chat_model,
-            messages=[
-                {"role": "system", "content": self._build_system_message()},
-                {"role": "user", "content": f"Context:\n{context}\n\nUser ({clean_speaker}): {clean_text}"},
-            ],
+            messages=messages,
         )
 
         reply = response.choices[0].message.content or ""
@@ -158,6 +193,7 @@ class AsyncConversationalBrain:
                 "assistant_reply",
             )
 
+        self._record_turn(clean_speaker, clean_text, reply)
         return CommandResponse(reply=reply, speaker=clean_speaker, remembered=True)
 
     async def _try_spotify(self, text: str) -> str:
@@ -172,13 +208,45 @@ class AsyncConversationalBrain:
         return await self.spotify.handle_intent(lowered)
 
     def _build_system_message(self) -> str:
-        return (
-            "You are F.E.A.R., a quiet, intelligent, empathetic desktop friend and assistant. "
-            "You use personal memories only to be helpful and personal, never invasive. "
-            "Give direct, useful advice. "
-            "When giving relationship advice, be respectful, consent-focused, honest, and non-manipulative. "
-            "If local reference notes are provided, use them as inspiration, not as absolute truth."
-        )
+        """Return F.E.A.R.'s persona (a custom one from settings.persona_file, or the default)."""
+        return self._persona
+
+    @staticmethod
+    def _load_persona(settings: Settings) -> str:
+        """Load a custom persona file when configured, falling back to the default."""
+        path_value = settings.persona_file.strip()
+        if not path_value:
+            return DEFAULT_PERSONA
+
+        try:
+            text = Path(path_value).expanduser().read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            logger.warning("Could not read persona file %s (%s); using default persona", path_value, exc)
+            return DEFAULT_PERSONA
+
+        return text or DEFAULT_PERSONA
+
+    def _history_for(self, speaker: str) -> list[dict[str, str]]:
+        """Return a copy of the rolling dialogue window for a speaker."""
+        return list(self._history.get(speaker, ()))
+
+    def _record_turn(self, speaker: str, user_text: str, reply: str) -> None:
+        """Append one user/assistant exchange to the speaker's rolling window."""
+        if self._max_history_turns <= 0:
+            return
+
+        window = self._history.get(speaker)
+        if window is None:
+            window = deque(maxlen=self._max_history_turns)
+            self._history[speaker] = window
+
+        window.append({"role": "user", "content": user_text})
+        if reply:
+            window.append({"role": "assistant", "content": reply})
+
+    def reset_conversation(self, speaker: str) -> None:
+        """Forget the in-memory dialogue window for a speaker (persistent memory is kept)."""
+        self._history.pop(speaker, None)
 
     def _build_context(
         self,
