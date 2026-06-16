@@ -1,12 +1,23 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Brain, Mic, Music, NotebookText, Radio, RotateCcw, Send, Sparkles } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Brain, Mic, Music, NotebookText, RotateCcw, Send, Sparkles } from "lucide-react";
 
-import DisplayCards from "@/components/ui/display-cards";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { Card } from "@/components/ui/card";
-import { SplineSceneBasic } from "@/components/ui/spline-scene-demo";
+
+const FearPresence = dynamic(
+  () => import("@/components/ui/fear-presence").then((module) => module.FearPresence),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+        carregando presença…
+      </div>
+    ),
+  },
+);
 
 const API_BASE = process.env.NEXT_PUBLIC_FEAR_API_BASE ?? "http://127.0.0.1:8765";
 
@@ -18,35 +29,6 @@ interface Message {
   role: Role;
   content: string;
 }
-
-const fearCards = [
-  {
-    icon: <Mic className="size-4 text-cyan-200" />,
-    title: "Voice",
-    description: "Whisper listener ready",
-    date: "Local",
-    titleClassName: "text-cyan-200",
-    className:
-      "[grid-area:stack] hover:-translate-y-10 before:absolute before:left-0 before:top-0 before:h-[100%] before:w-[100%] before:rounded-xl before:bg-background/50 before:bg-blend-overlay before:outline before:outline-1 before:outline-border before:content-[''] before:transition-opacity before:duration-700 hover:before:opacity-0 grayscale-[100%] hover:grayscale-0",
-  },
-  {
-    icon: <Brain className="size-4 text-violet-200" />,
-    title: "Memory",
-    description: "ChromaDB second brain",
-    date: "Persistent",
-    titleClassName: "text-violet-200",
-    className:
-      "[grid-area:stack] translate-x-12 translate-y-10 hover:-translate-y-1 before:absolute before:left-0 before:top-0 before:h-[100%] before:w-[100%] before:rounded-xl before:bg-background/50 before:bg-blend-overlay before:outline before:outline-1 before:outline-border before:content-[''] before:transition-opacity before:duration-700 hover:before:opacity-0 grayscale-[100%] hover:grayscale-0",
-  },
-  {
-    icon: <Radio className="size-4 text-blue-200" />,
-    title: "Actions",
-    description: "Spotify and gestures",
-    date: "Desktop",
-    titleClassName: "text-blue-200",
-    className: "[grid-area:stack] translate-x-24 translate-y-20 hover:translate-y-10",
-  },
-];
 
 // F.E.A.R.'s capabilities as a glass dock of "apps".
 const fearApps: DockApp[] = [
@@ -79,6 +61,7 @@ export default function HomePage() {
   ]);
   const [status, setStatus] = useState<Status>("online");
   const [isBusy, setIsBusy] = useState(false);
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
   const idRef = useRef(1);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -91,6 +74,20 @@ export default function HomePage() {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages]);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API_BASE}/health`)
+      .then((response) => {
+        if (active) setBackendOnline(response.ok);
+      })
+      .catch(() => {
+        if (active) setBackendOnline(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function pushMessage(role: Role, content: string) {
     setMessages((prev) => [...prev, { id: nextId(), role, content }]);
@@ -261,13 +258,46 @@ export default function HomePage() {
           </form>
         </div>
 
-        <div className="grid gap-8">
-          <SplineSceneBasic />
-          <Card className="flex items-center gap-2 border-violet-300/10 bg-card/60 p-6 text-xs uppercase tracking-[0.3em] text-violet-200/80">
-            <Sparkles className="size-4" /> presença · memória · ações
+        <div className="grid h-[680px] grid-rows-[1fr_auto] gap-6">
+          <Card className="relative h-full overflow-hidden border-white/10 bg-black/70">
+            <p className="absolute left-5 top-4 z-10 text-[10px] uppercase tracking-[0.4em] text-rose-400/70">
+              F.E.A.R. presence
+            </p>
+            <FearPresence speaking={status === "speaking"} />
           </Card>
-          <Card className="min-h-[260px] overflow-hidden border-cyan-300/10 bg-card/60 p-8">
-            <DisplayCards cards={fearCards} />
+
+          <Card className="border-cyan-300/10 bg-card/60 p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-violet-200/80">
+                <Sparkles className="size-4" /> sistema
+              </span>
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span
+                  className={`size-2 rounded-full ${
+                    backendOnline === null
+                      ? "bg-amber-300/70"
+                      : backendOnline
+                        ? "bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]"
+                        : "bg-rose-400"
+                  }`}
+                />
+                {backendOnline === null ? "verificando" : backendOnline ? "backend online" : "backend offline"}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-2">
+                <Mic className="size-3.5 text-cyan-200" /> Voz
+              </span>
+              <span className="flex items-center gap-2">
+                <Brain className="size-3.5 text-violet-200" /> Memória
+              </span>
+              <span className="flex items-center gap-2">
+                <Music className="size-3.5 text-emerald-200" /> Spotify
+              </span>
+              <span className="flex items-center gap-2">
+                <NotebookText className="size-3.5 text-blue-200" /> Obsidian
+              </span>
+            </div>
           </Card>
         </div>
       </section>
