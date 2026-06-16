@@ -215,18 +215,28 @@ class AsyncConversationalBrain:
 
     @staticmethod
     def _load_persona(settings: Settings) -> str:
-        """Load a custom persona file when configured, falling back to the default."""
+        """Load the persona file when available, falling back to the built-in persona."""
         path_value = settings.persona_file.strip()
         if not path_value:
             return DEFAULT_PERSONA
 
-        try:
-            text = Path(path_value).expanduser().read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            logger.warning("Could not read persona file %s (%s); using default persona", path_value, exc)
-            return DEFAULT_PERSONA
+        candidate = Path(path_value).expanduser()
+        search = [candidate]
+        if not candidate.is_absolute():
+            # Also resolve relative paths from the project root so the default
+            # persona loads regardless of the process working directory.
+            search.append(Path(__file__).resolve().parents[2] / candidate)
 
-        return text or DEFAULT_PERSONA
+        for path in search:
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if text:
+                return text
+
+        logger.warning("Persona file %s not found; using the built-in persona", path_value)
+        return DEFAULT_PERSONA
 
     def _history_for(self, speaker: str) -> list[dict[str, str]]:
         """Return a copy of the rolling dialogue window for a speaker."""
