@@ -73,6 +73,16 @@ class FakeClient:
         self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
 
 
+class FailingClient:
+    """An AsyncOpenAI stand-in whose completion calls always raise."""
+
+    def __init__(self) -> None:
+        async def create(*, model, messages, **kwargs):
+            raise RuntimeError("simulated upstream failure")
+
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+
+
 @pytest.mark.asyncio
 async def test_process_command_fallback_without_openrouter() -> None:
     memory = FakeMemory()
@@ -253,3 +263,34 @@ def test_default_persona_is_the_shipped_council() -> None:
     assert "F.E.A.R." in message
     assert "Chairman" in message  # the six-voice council
     assert "Ultron" in message  # the flavor
+
+
+@pytest.mark.asyncio
+async def test_process_command_survives_llm_failure() -> None:
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=memory,  # type: ignore[arg-type]
+    )
+    brain.client = FailingClient()  # type: ignore[assignment]
+
+    result = await brain.process_command("oi", "Lucas")
+
+    assert result.remembered is True
+    assert "problema" in result.reply.lower()  # graceful fallback, not a crash
+    # The user input is kept; the error reply is not stored as an assistant memory.
+    assert ("oi", "Lucas", "conversation") in memory.added
+    assert all(source != "assistant_reply" for (_, _, source) in memory.added)
+
+
+@pytest.mark.asyncio
+async def test_stream_command_survives_llm_failure() -> None:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = FailingClient()  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in brain.stream_command("oi", "Lucas")]
+
+    assert any("problema" in chunk.lower() for chunk in chunks)

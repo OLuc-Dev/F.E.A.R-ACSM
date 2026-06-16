@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -21,8 +22,11 @@ from fear.input.clap_detector import ClapDetector
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
 from fear.integrations.spotify_client import SpotifyClient
 from fear.library.reference_library import ReferenceLibrary
+from fear.logging_config import configure_logging
 from fear.memory.obsidian_watcher import ObsidianWatcher
 from fear.memory.personal_memory import PersonalMemory
+
+logger = logging.getLogger(__name__)
 
 
 class CommandRequest(BaseModel):
@@ -99,7 +103,9 @@ async def process_voice_event(application: FastAPI, event: TranscriptEvent) -> N
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Initialize and stop the unified F.E.A.R. runtime."""
+    configure_logging()
     settings = Settings.from_env()
+    logger.info("Starting F.E.A.R. runtime")
 
     memory = await asyncio.to_thread(
         PersonalMemory,
@@ -201,6 +207,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 mount_static_frontend(app)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log unhandled errors and return a clean payload instead of a stack trace."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal error. The incident was logged."})
 
 
 @app.get("/health")
@@ -314,6 +327,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 def run() -> None:
     """Run the unified API with uvicorn."""
+    configure_logging()
     settings = Settings.from_env()
     uvicorn.run(app, host=settings.host, port=settings.port)
 

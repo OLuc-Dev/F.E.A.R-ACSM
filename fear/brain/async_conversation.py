@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Shown to the user when a model call fails, instead of surfacing a 500.
+LLM_ERROR_REPLY = "Tive um problema para processar isso agora. Tenta de novo em instantes."
+
 # Only route to Spotify when the message clearly refers to music. This keeps the
 # assistant from hijacking ordinary conversation that happens to contain a verb
 # like "play" or "stop".
@@ -99,12 +102,7 @@ class AsyncConversationalBrain:
 
         spotify_reply = await self._try_spotify(clean_text)
         if spotify_reply:
-            await asyncio.to_thread(
-                self.memory.add_memory,
-                clean_text,
-                clean_speaker,
-                "spotify",
-            )
+            await self._remember(clean_text, clean_speaker, "spotify")
             self._record_turn(clean_speaker, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
@@ -114,23 +112,13 @@ class AsyncConversationalBrain:
 
         if self.client is None:
             fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
-            await asyncio.to_thread(
-                self.memory.add_memory,
-                clean_text,
-                clean_speaker,
-                "conversation",
-            )
+            await self._remember(clean_text, clean_speaker, "conversation")
             self._record_turn(clean_speaker, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
         if not self.settings.openrouter_chat_model:
             fallback = "OpenRouter is configured, but OPENROUTER_CHAT_MODEL is empty. Pick a model when ready."
-            await asyncio.to_thread(
-                self.memory.add_memory,
-                clean_text,
-                clean_speaker,
-                "conversation",
-            )
+            await self._remember(clean_text, clean_speaker, "conversation")
             self._record_turn(clean_speaker, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
@@ -143,28 +131,22 @@ class AsyncConversationalBrain:
             reference_context,
         )
 
-        response = await self.client.chat.completions.create(
-            model=self.settings.openrouter_chat_model,
-            # messages is a plain list of role/content dicts, which the OpenAI
-            # client accepts at runtime; cast past its TypedDict param type.
-            messages=cast(Any, messages),
-        )
-
-        reply = response.choices[0].message.content or ""
-        await asyncio.to_thread(
-            self.memory.add_memory,
-            clean_text,
-            clean_speaker,
-            "conversation",
-        )
-
-        if reply:
-            await asyncio.to_thread(
-                self.memory.add_memory,
-                reply,
-                "fear",
-                "assistant_reply",
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.settings.openrouter_chat_model,
+                # Plain role/content dicts; cast past the client's TypedDict param.
+                messages=cast(Any, messages),
             )
+            reply = response.choices[0].message.content or ""
+            failed = False
+        except Exception:
+            logger.exception("OpenRouter chat completion failed")
+            reply = LLM_ERROR_REPLY
+            failed = True
+
+        await self._remember(clean_text, clean_speaker, "conversation")
+        if reply and not failed:
+            await self._remember(reply, "fear", "assistant_reply")
 
         self._record_turn(clean_speaker, clean_text, reply)
         return CommandResponse(reply=reply, speaker=clean_speaker, remembered=True)
@@ -179,7 +161,7 @@ class AsyncConversationalBrain:
 
         spotify_reply = await self._try_spotify(clean_text)
         if spotify_reply:
-            await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "spotify")
+            await self._remember(clean_text, clean_speaker, "spotify")
             self._record_turn(clean_speaker, clean_text, spotify_reply)
             yield spotify_reply
             return
@@ -190,14 +172,14 @@ class AsyncConversationalBrain:
 
         if self.client is None:
             fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
-            await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "conversation")
+            await self._remember(clean_text, clean_speaker, "conversation")
             self._record_turn(clean_speaker, clean_text, fallback)
             yield fallback
             return
 
         if not self.settings.openrouter_chat_model:
             fallback = "OpenRouter is configured, but OPENROUTER_CHAT_MODEL is empty. Pick a model when ready."
-            await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "conversation")
+            await self._remember(clean_text, clean_speaker, "conversation")
             self._record_turn(clean_speaker, clean_text, fallback)
             yield fallback
             return
@@ -211,25 +193,38 @@ class AsyncConversationalBrain:
             reference_context,
         )
         # Persist the user input up front so it survives an early client disconnect.
-        await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "conversation")
-
-        stream = await self.client.chat.completions.create(
-            model=self.settings.openrouter_chat_model,
-            messages=cast(Any, messages),
-            stream=True,
-        )
+        await self._remember(clean_text, clean_speaker, "conversation")
 
         parts: list[str] = []
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                parts.append(delta)
-                yield delta
+        try:
+            stream = await self.client.chat.completions.create(
+                model=self.settings.openrouter_chat_model,
+                messages=cast(Any, messages),
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    parts.append(delta)
+                    yield delta
+        except Exception:
+            logger.exception("OpenRouter streaming failed")
+            if not parts:
+                self._record_turn(clean_speaker, clean_text, LLM_ERROR_REPLY)
+                yield LLM_ERROR_REPLY
+                return
 
         reply = "".join(parts)
         if reply:
-            await asyncio.to_thread(self.memory.add_memory, reply, "fear", "assistant_reply")
+            await self._remember(reply, "fear", "assistant_reply")
         self._record_turn(clean_speaker, clean_text, reply)
+
+    async def _remember(self, text: str, speaker: str, source: str) -> None:
+        """Persist a memory; a storage failure must not break the conversation."""
+        try:
+            await asyncio.to_thread(self.memory.add_memory, text, speaker, source)
+        except Exception:
+            logger.exception("Failed to persist memory (speaker=%s, source=%s)", speaker, source)
 
     async def _gather_context(
         self, text: str, speaker: str
@@ -283,7 +278,11 @@ class AsyncConversationalBrain:
         if not any(hint in lowered for hint in SPOTIFY_HINTS):
             return ""
 
-        return await self.spotify.handle_intent(lowered)
+        try:
+            return await self.spotify.handle_intent(lowered)
+        except Exception:
+            logger.exception("Spotify intent failed")
+            return "Não consegui falar com o Spotify agora."
 
     def _build_system_message(self) -> str:
         """Return F.E.A.R.'s persona (a custom one from settings.persona_file, or the default)."""
