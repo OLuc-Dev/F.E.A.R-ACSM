@@ -5,7 +5,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncOpenAI
 
@@ -174,7 +174,9 @@ class AsyncConversationalBrain:
 
         response = await self.client.chat.completions.create(
             model=self.settings.openrouter_chat_model,
-            messages=messages,
+            # messages is a plain list of role/content dicts, which the OpenAI
+            # client accepts at runtime; cast past its TypedDict param type.
+            messages=cast(Any, messages),
         )
 
         reply = response.choices[0].message.content or ""
