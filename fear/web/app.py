@@ -6,25 +6,23 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from fear.audio.natural_tts import NaturalTTS
-from fear.audio.voice_listener import TranscriptEvent, VoiceListener
 from fear.brain.async_conversation import AsyncConversationalBrain
 from fear.config import Settings
-from fear.input.clap_detector import ClapDetector
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
-from fear.integrations.spotify_client import SpotifyClient
 from fear.library.reference_library import ReferenceLibrary
 from fear.logging_config import configure_logging
-from fear.memory.obsidian_watcher import ObsidianWatcher
 from fear.memory.personal_memory import PersonalMemory
+
+if TYPE_CHECKING:
+    from fear.audio.voice_listener import TranscriptEvent
 
 logger = logging.getLogger(__name__)
 
@@ -88,8 +86,21 @@ def mount_static_frontend(application: FastAPI) -> None:
         )
 
 
+# --- Dependency providers (read app state; overridable in tests) ---
+def get_brain(request: Request) -> AsyncConversationalBrain:
+    return request.app.state.brain
+
+
+def get_memory(request: Request) -> PersonalMemory:
+    return request.app.state.memory
+
+
+def get_tts(request: Request) -> Any:
+    return request.app.state.tts
+
+
 async def process_text_command(application: FastAPI, text: str, speaker: str):
-    """Process a text command through the configured brain."""
+    """Process a text command through the configured brain (used by /ws and callbacks)."""
     return await application.state.brain.process_command(text, speaker)
 
 
@@ -106,6 +117,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     settings = Settings.from_env()
     logger.info("Starting F.E.A.R. runtime")
+
+    # Hardware/IO-heavy modules are imported here so importing this module (and
+    # testing the HTTP layer) does not require the audio/ML stack to be present.
+    from fear.audio.natural_tts import NaturalTTS
+    from fear.audio.voice_listener import VoiceListener
+    from fear.input.clap_detector import ClapDetector
+    from fear.integrations.spotify_client import SpotifyClient
+    from fear.memory.obsidian_watcher import ObsidianWatcher
 
     memory = await asyncio.to_thread(
         PersonalMemory,
@@ -149,6 +168,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.obsidian_watcher = watcher
 
     if env_bool("FEAR_ENABLE_VOICE_LISTENER", default=False):
+
         def on_transcript(event: TranscriptEvent) -> None:
             loop = application.state.loop
             loop.call_soon_threadsafe(
@@ -165,6 +185,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.voice_listener = listener
 
     if env_bool("FEAR_ENABLE_CLAP_DETECTOR", default=False):
+
         def on_double_clap() -> None:
             loop = application.state.loop
             loop.call_soon_threadsafe(
@@ -225,12 +246,16 @@ async def health() -> dict[str, str]:
 
 
 @app.post("/command", response_model=CommandResponse)
-async def command(payload: CommandRequest) -> CommandResponse:
+async def command(
+    payload: CommandRequest,
+    brain: AsyncConversationalBrain = Depends(get_brain),
+    tts: Any = Depends(get_tts),
+) -> CommandResponse:
     """Process a text command and optionally speak it locally."""
-    result = await process_text_command(app, payload.text, payload.speaker)
+    result = await brain.process_command(payload.text, payload.speaker)
 
     if payload.speak and result.reply:
-        audio_path = await app.state.tts.say(result.reply)
+        audio_path = await tts.say(result.reply)
         if audio_path is not None:
             try:
                 audio_path.unlink(missing_ok=True)
@@ -241,41 +266,53 @@ async def command(payload: CommandRequest) -> CommandResponse:
 
 
 @app.post("/command/stream")
-async def command_stream(payload: CommandRequest) -> StreamingResponse:
+async def command_stream(
+    payload: CommandRequest,
+    brain: AsyncConversationalBrain = Depends(get_brain),
+) -> StreamingResponse:
     """Stream the reply as plain-text chunks as the model produces them."""
 
     async def generate() -> AsyncIterator[str]:
-        async for chunk in app.state.brain.stream_command(payload.text, payload.speaker):
+        async for chunk in brain.stream_command(payload.text, payload.speaker):
             yield chunk
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 
 
 @app.get("/memory/{speaker}", response_model=MemoryResponse)
-async def memory_for_speaker(speaker: str) -> MemoryResponse:
+async def memory_for_speaker(
+    speaker: str,
+    memory: PersonalMemory = Depends(get_memory),
+) -> MemoryResponse:
     """Return recent memories for a speaker."""
-    memories = await asyncio.to_thread(app.state.memory.get_facts_about_speaker, speaker)
+    facts = await asyncio.to_thread(memory.get_facts_about_speaker, speaker)
     return MemoryResponse(
         speaker=speaker,
         memories=[
             {"text": item.text, "source": item.source, "timestamp": item.timestamp}
-            for item in memories
+            for item in facts
         ],
     )
 
 
 @app.post("/wearable/tap", response_model=CommandResponse)
-async def wearable_tap(payload: TapGesturePayload) -> CommandResponse:
+async def wearable_tap(
+    payload: TapGesturePayload,
+    brain: AsyncConversationalBrain = Depends(get_brain),
+) -> CommandResponse:
     """Process a simple wearable tap as a command."""
     text = gesture_to_command(WearableTapEvent(payload.gesture, payload.device_id))
-    result = await process_text_command(app, text or payload.gesture, payload.speaker)
+    result = await brain.process_command(text or payload.gesture, payload.speaker)
     return CommandResponse(reply=result.reply, speaker=result.speaker, audio_file=None)
 
 
 @app.post("/conversation/reset")
-async def conversation_reset(speaker: str = "user") -> dict[str, str]:
+async def conversation_reset(
+    speaker: str = "user",
+    brain: AsyncConversationalBrain = Depends(get_brain),
+) -> dict[str, str]:
     """Clear the in-memory dialogue window for a speaker (persistent memory is kept)."""
-    app.state.brain.reset_conversation(speaker)
+    brain.reset_conversation(speaker)
     return {"status": "reset", "speaker": speaker}
 
 
@@ -327,6 +364,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 def run() -> None:
     """Run the unified API with uvicorn."""
+    import uvicorn
+
     configure_logging()
     settings = Settings.from_env()
     uvicorn.run(app, host=settings.host, port=settings.port)
