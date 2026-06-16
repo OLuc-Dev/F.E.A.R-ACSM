@@ -1,15 +1,23 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Brain, Mic, Music, NotebookText, Radio, RotateCcw, Send, Sparkles } from "lucide-react";
 
-import AnimatedTextCycle from "@/components/ui/animated-text-cycle";
 import DisplayCards from "@/components/ui/display-cards";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { Card } from "@/components/ui/card";
 import { SplineSceneBasic } from "@/components/ui/spline-scene-demo";
 
 const API_BASE = process.env.NEXT_PUBLIC_FEAR_API_BASE ?? "http://127.0.0.1:8765";
+
+type Role = "user" | "fear";
+type Status = "online" | "thinking" | "speaking" | "error";
+
+interface Message {
+  id: number;
+  role: Role;
+  content: string;
+}
 
 const fearCards = [
   {
@@ -49,13 +57,102 @@ const fearApps: DockApp[] = [
   { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-rose-200" /> },
 ];
 
+const STATUS_LABEL: Record<Status, string> = {
+  online: "pronto",
+  thinking: "pensando",
+  speaking: "respondendo",
+  error: "atenção",
+};
+
+const STATUS_ORB: Record<Status, string> = {
+  online: "bg-cyan-300/80 shadow-[0_0_16px_4px_rgba(34,211,238,0.45)]",
+  thinking: "bg-violet-300/80 shadow-[0_0_16px_4px_rgba(167,139,250,0.5)] animate-pulse",
+  speaking: "bg-cyan-200 shadow-[0_0_20px_6px_rgba(34,211,238,0.6)] animate-pulse",
+  error: "bg-rose-400/80 shadow-[0_0_16px_4px_rgba(251,113,133,0.5)]",
+};
+
 export default function HomePage() {
   const [speaker, setSpeaker] = useState("Lucas");
   const [text, setText] = useState("");
-  const [reply, setReply] = useState("F.E.A.R. está online. Envie um comando para testar.");
-  const [isLoading, setIsLoading] = useState(false);
-  const [status, setStatus] = useState("online");
-  const [openApps, setOpenApps] = useState<string[]>([]);
+  const [messages, setMessages] = useState<Message[]>([
+    { id: 0, role: "fear", content: "Estou aqui. Em silêncio, atento. Manda." },
+  ]);
+  const [status, setStatus] = useState<Status>("online");
+  const [isBusy, setIsBusy] = useState(false);
+
+  const idRef = useRef(1);
+  const threadRef = useRef<HTMLDivElement>(null);
+
+  const nextId = () => idRef.current++;
+
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages]);
+
+  function pushMessage(role: Role, content: string) {
+    setMessages((prev) => [...prev, { id: nextId(), role, content }]);
+  }
+
+  function appendToLastFear(chunk: string) {
+    setMessages((prev) => {
+      const copy = prev.slice();
+      const last = copy[copy.length - 1];
+      if (last && last.role === "fear") {
+        copy[copy.length - 1] = { ...last, content: last.content + chunk };
+      }
+      return copy;
+    });
+  }
+
+  async function submitCommand(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = text.trim();
+    if (!trimmed || isBusy) {
+      return;
+    }
+
+    setText("");
+    setIsBusy(true);
+    setStatus("thinking");
+    pushMessage("user", trimmed);
+    pushMessage("fear", "");
+
+    try {
+      const response = await fetch(`${API_BASE}/command/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: trimmed, speaker: speaker || "user", speak: false }),
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      setStatus("speaking");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        const chunk = decoder.decode(value, { stream: true });
+        if (chunk) {
+          appendToLastFear(chunk);
+        }
+      }
+      setStatus("online");
+    } catch (error) {
+      appendToLastFear(error instanceof Error ? `Erro: ${error.message}` : "Falha ao falar com o backend.");
+      setStatus("error");
+    } finally {
+      setIsBusy(false);
+    }
+  }
 
   async function handleAppClick(appId: string) {
     const who = speaker || "user";
@@ -69,155 +166,107 @@ export default function HomePage() {
           body: JSON.stringify({ text: "toggle Spotify playback", speaker: who, speak: false }),
         });
         const data = await response.json();
-        setReply(data.reply || "Spotify acionado.");
+        pushMessage("fear", data.reply || "Spotify acionado.");
         setStatus("online");
       } else if (appId === "voice") {
         await fetch(`${API_BASE}/voice/capture-once`, { method: "POST" });
-        setReply("Escutando um trecho de voz…");
-        setOpenApps((prev) => (prev.includes("voice") ? prev : [...prev, "voice"]));
+        pushMessage("fear", "Escutando um trecho de voz…");
       } else if (appId === "memory") {
         const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(who)}`);
         const data = await response.json();
         const count = Array.isArray(data.memories) ? data.memories.length : 0;
-        setReply(`Tenho ${count} memória(s) recente(s) sobre ${who}.`);
+        pushMessage("fear", `Tenho ${count} memória(s) recente(s) sobre ${who}.`);
       } else if (appId === "reset") {
         await fetch(`${API_BASE}/conversation/reset?speaker=${encodeURIComponent(who)}`, { method: "POST" });
-        setOpenApps((prev) => prev.filter((id) => id !== "voice"));
-        setReply("Conversa reiniciada. A memória pessoal foi mantida.");
+        setMessages([{ id: nextId(), role: "fear", content: "Conversa reiniciada. A memória pessoal foi mantida." }]);
       } else if (appId === "obsidian") {
-        setReply("Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
+        pushMessage("fear", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
       }
     } catch {
       setStatus("error");
-      setReply("Não consegui falar com o backend local.");
-    }
-  }
-
-  async function submitCommand(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!text.trim()) {
-      setReply("Digite um comando antes de enviar.");
-      return;
-    }
-
-    setIsLoading(true);
-    setStatus("thinking");
-
-    try {
-      const response = await fetch(`${API_BASE}/command`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          text,
-          speaker: speaker || "user",
-          speak: false,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json();
-      setReply(data.reply || "Comando recebido.");
-      setText("");
-      setStatus("online");
-    } catch (error) {
-      setStatus("error");
-      setReply(error instanceof Error ? error.message : "Erro ao falar com o backend.");
-    } finally {
-      setIsLoading(false);
+      pushMessage("fear", "Não consegui falar com o backend local.");
     }
   }
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_28rem),radial-gradient(circle_at_top_right,rgba(139,92,246,0.14),transparent_26rem)] px-6 py-8 text-foreground">
+    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_28rem),radial-gradient(circle_at_top_right,rgba(139,92,246,0.14),transparent_26rem)] px-6 pb-32 pt-8 text-foreground">
       <section className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="flex min-h-[680px] flex-col justify-between rounded-[2rem] border bg-card/70 p-8 shadow-2xl backdrop-blur">
-          <div>
-            <div className="mb-10 flex items-center justify-between gap-4">
+        <div className="flex h-[680px] flex-col rounded-[2rem] border bg-card/70 p-6 shadow-2xl backdrop-blur">
+          <header className="mb-4 flex items-center justify-between gap-4 border-b border-white/5 pb-4">
+            <div className="flex items-center gap-3">
+              <span className={`size-3 rounded-full transition-colors ${STATUS_ORB[status]}`} />
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.45em] text-cyan-300/80">
-                  Desktop presence
-                </p>
-                <h1 className="mt-4 text-6xl font-black tracking-[-0.08em] md:text-8xl">
-                  F.E.A.R.
-                </h1>
-              </div>
-              <div className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.2em] text-cyan-200">
-                {status}
+                <h1 className="text-2xl font-black tracking-[-0.06em]">F.E.A.R.</h1>
+                <p className="text-[10px] uppercase tracking-[0.4em] text-cyan-300/70">{STATUS_LABEL[status]}</p>
               </div>
             </div>
+            <input
+              value={speaker}
+              onChange={(event) => setSpeaker(event.target.value)}
+              aria-label="Speaker"
+              className="h-9 w-32 rounded-full border bg-background/60 px-4 text-sm outline-none ring-cyan-300/30 transition focus:ring-4"
+              placeholder="Speaker"
+            />
+          </header>
 
-            <h2 className="max-w-3xl text-4xl font-light leading-tight text-muted-foreground md:text-6xl">
-              Uma interface para sua{" "}
-              <AnimatedTextCycle
-                words={["voz", "memória", "rotina", "música", "presença", "máquina"]}
-                interval={2600}
-                className="font-semibold text-foreground"
-              />
-              .
-            </h2>
-
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">
-              Python executa. FastAPI conecta. React mostra. Esta tela conversa com
-              o backend local em {API_BASE}.
-            </p>
-          </div>
-
-          <div className="mt-14 grid gap-6 xl:grid-cols-[1fr_0.95fr]">
-            <Card className="border-cyan-300/10 bg-background/50 p-5">
-              <form onSubmit={submitCommand} className="space-y-4">
-                <div className="grid gap-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
-                    Speaker
-                  </label>
-                  <input
-                    value={speaker}
-                    onChange={(event) => setSpeaker(event.target.value)}
-                    className="h-11 rounded-xl border bg-background/70 px-4 outline-none ring-cyan-300/30 transition focus:ring-4"
-                    placeholder="Lucas"
-                  />
-                </div>
-
-                <div className="grid gap-2">
-                  <label className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">
-                    Comando
-                  </label>
-                  <textarea
-                    value={text}
-                    onChange={(event) => setText(event.target.value)}
-                    className="min-h-32 rounded-xl border bg-background/70 p-4 outline-none ring-cyan-300/30 transition focus:ring-4"
-                    placeholder="Ex.: lembra que eu gosto de interfaces escuras e minimalistas"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-cyan-300 px-5 text-sm font-bold uppercase tracking-[0.2em] text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
+          <div ref={threadRef} className="flex-1 space-y-3 overflow-y-auto pr-1">
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+              >
+                <div
+                  className={
+                    message.role === "user"
+                      ? "max-w-[80%] rounded-2xl rounded-br-sm border border-cyan-300/20 bg-cyan-300/10 px-4 py-2.5 text-sm leading-6 backdrop-blur"
+                      : "max-w-[85%] rounded-2xl rounded-bl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm leading-6 text-muted-foreground backdrop-blur"
+                  }
                 >
-                  <Send className="size-4" />
-                  {isLoading ? "processando" : "enviar"}
-                </button>
-              </form>
-            </Card>
-
-            <Card className="border-violet-300/10 bg-background/50 p-5">
-              <p className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.25em] text-violet-200">
-                <Sparkles className="size-4" /> resposta
-              </p>
-              <p className="whitespace-pre-wrap text-sm leading-7 text-muted-foreground">
-                {reply}
-              </p>
-            </Card>
+                  {message.content ? (
+                    <span className="whitespace-pre-wrap">{message.content}</span>
+                  ) : (
+                    <span className="inline-flex gap-1 align-middle">
+                      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/70 [animation-delay:-0.2s]" />
+                      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/70 [animation-delay:-0.1s]" />
+                      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/70" />
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
+
+          <form onSubmit={submitCommand} className="mt-4 flex items-end gap-3 border-t border-white/5 pt-4">
+            <textarea
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              rows={1}
+              className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border bg-background/60 p-3 text-sm outline-none ring-cyan-300/30 transition focus:ring-4"
+              placeholder="Fala com a F.E.A.R.…  (Enter envia, Shift+Enter quebra linha)"
+            />
+            <button
+              type="submit"
+              disabled={isBusy}
+              aria-label="Enviar"
+              className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-cyan-300 text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Send className="size-4" />
+            </button>
+          </form>
         </div>
 
         <div className="grid gap-8">
           <SplineSceneBasic />
-          <Card className="min-h-[360px] overflow-hidden border-cyan-300/10 bg-card/60 p-8">
+          <Card className="flex items-center gap-2 border-violet-300/10 bg-card/60 p-6 text-xs uppercase tracking-[0.3em] text-violet-200/80">
+            <Sparkles className="size-4" /> presença · memória · ações
+          </Card>
+          <Card className="min-h-[260px] overflow-hidden border-cyan-300/10 bg-card/60 p-8">
             <DisplayCards cards={fearCards} />
           </Card>
         </div>
@@ -226,7 +275,7 @@ export default function HomePage() {
       <MacOSDock
         apps={fearApps}
         onAppClick={handleAppClick}
-        openApps={openApps}
+        openApps={[]}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />
     </main>

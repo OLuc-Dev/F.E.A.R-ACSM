@@ -51,14 +51,22 @@ class FakeSpotify:
 
 
 class FakeClient:
-    """Minimal stand-in for AsyncOpenAI that records the messages it receives."""
+    """Minimal stand-in for AsyncOpenAI that records calls and can stream."""
 
     def __init__(self, reply: str = "ok") -> None:
         self.reply = reply
+        self.stream_pieces: list[str] = ["F.E.A.", "R. ", "aqui."]
         self.calls: list[dict] = []
 
-        async def create(*, model, messages):
-            self.calls.append({"model": model, "messages": messages})
+        async def create(*, model, messages, stream=False):
+            self.calls.append({"model": model, "messages": messages, "stream": stream})
+            if stream:
+                async def gen():
+                    for piece in self.stream_pieces:
+                        delta = types.SimpleNamespace(content=piece)
+                        yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+                return gen()
             choice = types.SimpleNamespace(message=types.SimpleNamespace(content=self.reply))
             return types.SimpleNamespace(choices=[choice])
 
@@ -198,6 +206,39 @@ def test_persona_file_overrides_default(tmp_path) -> None:
     )
 
     assert brain._build_system_message() == "You are a playful JARVIS-style companion."
+
+
+@pytest.mark.asyncio
+async def test_stream_command_streams_and_records() -> None:
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=memory,  # type: ignore[arg-type]
+    )
+    fake = FakeClient()
+    fake.stream_pieces = ["Olá", ", ", "Lucas."]
+    brain.client = fake  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in brain.stream_command("oi", "Lucas")]
+
+    assert chunks == ["Olá", ", ", "Lucas."]
+    assert fake.calls[0]["stream"] is True
+    # User input and the assembled reply are both persisted; the turn is recorded.
+    assert ("oi", "Lucas", "conversation") in memory.added
+    assert ("Olá, Lucas.", "fear", "assistant_reply") in memory.added
+    assert brain._history["Lucas"][-1] == {"role": "assistant", "content": "Olá, Lucas."}
+
+
+@pytest.mark.asyncio
+async def test_stream_command_fallback_without_openrouter() -> None:
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(settings=Settings(), memory=memory)  # type: ignore[arg-type]
+
+    chunks = [chunk async for chunk in brain.stream_command("oi", "Lucas")]
+
+    assert len(chunks) == 1
+    assert "OpenRouter is not configured" in chunks[0]
+    assert memory.added == [("oi", "Lucas", "conversation")]
 
 
 def test_default_persona_is_the_shipped_council() -> None:
