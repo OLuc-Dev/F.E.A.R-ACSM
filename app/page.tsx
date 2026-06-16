@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Brain, Mic, Music, NotebookText, RotateCcw, Send, Sparkles } from "lucide-react";
+import { BookOpen, Brain, Cpu, Database, Mic, Music, RotateCcw, Send } from "lucide-react";
 
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { Card } from "@/components/ui/card";
+import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 
 const FearPresence = dynamic(
   () => import("@/components/ui/fear-presence").then((module) => module.FearPresence),
@@ -21,8 +22,8 @@ const FearPresence = dynamic(
 
 const API_BASE = process.env.NEXT_PUBLIC_FEAR_API_BASE ?? "http://127.0.0.1:8765";
 
-type Role = "user" | "fear";
-type Status = "online" | "thinking" | "speaking" | "error";
+type Role = "user" | "fear" | "system";
+type Status = "online" | "listening" | "thinking" | "speaking" | "error";
 
 interface Message {
   id: number;
@@ -30,34 +31,62 @@ interface Message {
   content: string;
 }
 
-// F.E.A.R.'s capabilities as a glass dock of "apps".
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-cyan-200" /> },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
-  { id: "obsidian", name: "Obsidian", icon: <NotebookText className="h-full w-full text-blue-200" /> },
+  { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
   { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-rose-200" /> },
 ];
 
 const STATUS_LABEL: Record<Status, string> = {
   online: "pronto",
+  listening: "ouvindo",
   thinking: "pensando",
   speaking: "respondendo",
   error: "atenção",
 };
 
+// Idle/listening = cyan; speaking = white/cyan; thinking = controlled red; error = strong red.
 const STATUS_ORB: Record<Status, string> = {
-  online: "bg-cyan-300/80 shadow-[0_0_16px_4px_rgba(34,211,238,0.45)]",
-  thinking: "bg-violet-300/80 shadow-[0_0_16px_4px_rgba(167,139,250,0.5)] animate-pulse",
-  speaking: "bg-cyan-200 shadow-[0_0_20px_6px_rgba(34,211,238,0.6)] animate-pulse",
-  error: "bg-rose-400/80 shadow-[0_0_16px_4px_rgba(251,113,133,0.5)]",
+  online: "bg-cyan-400/80 shadow-[0_0_14px_3px_rgba(34,211,238,0.4)]",
+  listening: "bg-sky-300 shadow-[0_0_16px_4px_rgba(56,189,248,0.5)] animate-pulse",
+  thinking: "bg-rose-400/60 shadow-[0_0_14px_3px_rgba(251,113,133,0.35)] animate-pulse",
+  speaking: "bg-white shadow-[0_0_20px_6px_rgba(186,230,253,0.7)] animate-pulse",
+  error: "bg-rose-500 shadow-[0_0_18px_5px_rgba(244,63,94,0.7)]",
 };
+
+function SystemRow({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  tone: "ok" | "muted" | "off";
+}) {
+  const dot = tone === "ok" ? "bg-cyan-300" : tone === "off" ? "bg-rose-400/70" : "bg-white/25";
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="flex items-center gap-2 text-muted-foreground">
+        {icon}
+        {label}
+      </span>
+      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80">
+        <span className={`size-1.5 rounded-full ${dot}`} />
+        {value}
+      </span>
+    </div>
+  );
+}
 
 export default function HomePage() {
   const [speaker, setSpeaker] = useState("Lucas");
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([
-    { id: 0, role: "fear", content: "Estou aqui. Em silêncio, atento. Manda." },
+    { id: 0, role: "fear", content: "Presença ativa. Diga o próximo movimento." },
   ]);
   const [status, setStatus] = useState<Status>("online");
   const [isBusy, setIsBusy] = useState(false);
@@ -166,29 +195,35 @@ export default function HomePage() {
         pushMessage("fear", data.reply || "Spotify acionado.");
         setStatus("online");
       } else if (appId === "voice") {
+        setStatus("listening");
         await fetch(`${API_BASE}/voice/capture-once`, { method: "POST" });
-        pushMessage("fear", "Escutando um trecho de voz…");
+        pushMessage("system", "Escutando um trecho de voz…");
+        setStatus("online");
       } else if (appId === "memory") {
         const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(who)}`);
         const data = await response.json();
         const count = Array.isArray(data.memories) ? data.memories.length : 0;
-        pushMessage("fear", `Tenho ${count} memória(s) recente(s) sobre ${who}.`);
+        pushMessage("system", `${count} memória(s) recente(s) sobre ${who}.`);
       } else if (appId === "reset") {
         await fetch(`${API_BASE}/conversation/reset?speaker=${encodeURIComponent(who)}`, { method: "POST" });
-        setMessages([{ id: nextId(), role: "fear", content: "Conversa reiniciada. A memória pessoal foi mantida." }]);
+        setMessages([{ id: nextId(), role: "system", content: "Conversa reiniciada. Memória pessoal mantida." }]);
       } else if (appId === "obsidian") {
-        pushMessage("fear", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
+        pushMessage("system", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
       }
     } catch {
       setStatus("error");
-      pushMessage("fear", "Não consegui falar com o backend local.");
+      pushMessage("system", "Não consegui falar com o backend local.");
     }
   }
 
+  const backendTone = backendOnline === null ? "muted" : backendOnline ? "ok" : "off";
+  const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
+
   return (
-    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_28rem),radial-gradient(circle_at_top_right,rgba(139,92,246,0.14),transparent_26rem)] px-6 pb-32 pt-8 text-foreground">
-      <section className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="flex h-[680px] flex-col rounded-[2rem] border bg-card/70 p-6 shadow-2xl backdrop-blur">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.14),transparent_30rem),radial-gradient(circle_at_top_right,rgba(139,92,246,0.12),transparent_28rem),#05060a] px-4 pb-32 pt-6 text-foreground md:px-6 md:pt-8">
+      <section className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-8">
+        {/* Conversation */}
+        <div className="flex h-[68vh] min-h-[440px] flex-col rounded-[1.75rem] border bg-card/70 p-5 shadow-2xl backdrop-blur md:p-6 lg:h-[680px]">
           <header className="mb-4 flex items-center justify-between gap-4 border-b border-white/5 pb-4">
             <div className="flex items-center gap-3">
               <span className={`size-3 rounded-full transition-colors ${STATUS_ORB[status]}`} />
@@ -201,36 +236,21 @@ export default function HomePage() {
               value={speaker}
               onChange={(event) => setSpeaker(event.target.value)}
               aria-label="Speaker"
-              className="h-9 w-32 rounded-full border bg-background/60 px-4 text-sm outline-none ring-cyan-300/30 transition focus:ring-4"
+              className="h-9 w-28 rounded-full border bg-background/60 px-4 text-sm outline-none ring-cyan-300/30 transition focus:ring-4 sm:w-32"
               placeholder="Speaker"
             />
           </header>
 
           <div ref={threadRef} className="flex-1 space-y-3 overflow-y-auto pr-1">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={
-                    message.role === "user"
-                      ? "max-w-[80%] rounded-2xl rounded-br-sm border border-cyan-300/20 bg-cyan-300/10 px-4 py-2.5 text-sm leading-6 backdrop-blur"
-                      : "max-w-[85%] rounded-2xl rounded-bl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm leading-6 text-muted-foreground backdrop-blur"
-                  }
-                >
-                  {message.content ? (
-                    <span className="whitespace-pre-wrap">{message.content}</span>
-                  ) : (
-                    <span className="inline-flex gap-1 align-middle">
-                      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/70 [animation-delay:-0.2s]" />
-                      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/70 [animation-delay:-0.1s]" />
-                      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/70" />
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <UserMessage key={message.id} content={message.content} />
+              ) : message.role === "system" ? (
+                <SystemMessage key={message.id} content={message.content} />
+              ) : (
+                <AssistantMessage key={message.id} content={message.content} />
+              ),
+            )}
           </div>
 
           <form onSubmit={submitCommand} className="mt-4 flex items-end gap-3 border-t border-white/5 pt-4">
@@ -245,7 +265,7 @@ export default function HomePage() {
               }}
               rows={1}
               className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border bg-background/60 p-3 text-sm outline-none ring-cyan-300/30 transition focus:ring-4"
-              placeholder="Fala com a F.E.A.R.…  (Enter envia, Shift+Enter quebra linha)"
+              placeholder="Traga a ideia. Eu encontro as rachaduras."
             />
             <button
               type="submit"
@@ -258,8 +278,9 @@ export default function HomePage() {
           </form>
         </div>
 
-        <div className="grid h-[680px] grid-rows-[1fr_auto] gap-6">
-          <Card className="relative h-full overflow-hidden border-white/10 bg-black/70">
+        {/* Presence + system */}
+        <div className="flex flex-col gap-6 lg:h-[680px]">
+          <Card className="relative h-[320px] overflow-hidden border-white/10 bg-black/70 lg:h-auto lg:flex-1">
             <p className="absolute left-5 top-4 z-10 text-[10px] uppercase tracking-[0.4em] text-rose-400/70">
               F.E.A.R. presence
             </p>
@@ -267,36 +288,29 @@ export default function HomePage() {
           </Card>
 
           <Card className="border-cyan-300/10 bg-card/60 p-5">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between border-b border-white/5 pb-3">
               <span className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.3em] text-violet-200/80">
-                <Sparkles className="size-4" /> sistema
+                <Cpu className="size-4" /> sistema
               </span>
-              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span
                   className={`size-2 rounded-full ${
-                    backendOnline === null
-                      ? "bg-amber-300/70"
-                      : backendOnline
-                        ? "bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]"
-                        : "bg-rose-400"
+                    backendTone === "ok"
+                      ? "bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]"
+                      : backendTone === "off"
+                        ? "bg-rose-400"
+                        : "bg-amber-300/70"
                   }`}
                 />
-                {backendOnline === null ? "verificando" : backendOnline ? "backend online" : "backend offline"}
+                backend {backendValue}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-              <span className="flex items-center gap-2">
-                <Mic className="size-3.5 text-cyan-200" /> Voz
-              </span>
-              <span className="flex items-center gap-2">
-                <Brain className="size-3.5 text-violet-200" /> Memória
-              </span>
-              <span className="flex items-center gap-2">
-                <Music className="size-3.5 text-emerald-200" /> Spotify
-              </span>
-              <span className="flex items-center gap-2">
-                <NotebookText className="size-3.5 text-blue-200" /> Obsidian
-              </span>
+            <div className="text-xs">
+              <SystemRow icon={<Cpu className="size-3.5 text-cyan-200" />} label="OpenRouter" value="config local" tone="muted" />
+              <SystemRow icon={<Database className="size-3.5 text-violet-200" />} label="Memória" value="ativa" tone="ok" />
+              <SystemRow icon={<Mic className="size-3.5 text-cyan-200" />} label="Voz" value="sob demanda" tone="muted" />
+              <SystemRow icon={<Music className="size-3.5 text-emerald-200" />} label="Spotify" value="config local" tone="muted" />
+              <SystemRow icon={<BookOpen className="size-3.5 text-blue-200" />} label="Obsidian" value="config local" tone="muted" />
             </div>
           </Card>
         </div>
