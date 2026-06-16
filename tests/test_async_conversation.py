@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import types
+from pathlib import Path
 
 import pytest
 
@@ -77,8 +78,11 @@ async def test_process_command_fallback_without_openrouter() -> None:
     assert memory.added == [("remember this preference", "Lucas", "conversation")]
 
 
-def test_build_system_message_uses_default_persona() -> None:
-    brain = AsyncConversationalBrain(settings=Settings(), memory=FakeMemory())  # type: ignore[arg-type]
+def test_fallback_persona_used_when_no_file() -> None:
+    brain = AsyncConversationalBrain(
+        settings=Settings(persona_file=""),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
 
     message = brain._build_system_message()
 
@@ -194,3 +198,17 @@ def test_persona_file_overrides_default(tmp_path) -> None:
     )
 
     assert brain._build_system_message() == "You are a playful JARVIS-style companion."
+
+
+def test_default_persona_is_the_shipped_council() -> None:
+    persona_path = Path(__file__).resolve().parents[1] / "prompts" / "fear_persona.md"
+    assert persona_path.exists(), "prompts/fear_persona.md should ship with the repo"
+
+    # Settings() defaults persona_file to the shipped persona, and it must load
+    # regardless of the current working directory.
+    brain = AsyncConversationalBrain(settings=Settings(), memory=FakeMemory())  # type: ignore[arg-type]
+
+    message = brain._build_system_message()
+    assert "F.E.A.R." in message
+    assert "Chairman" in message  # the six-voice council
+    assert "Ultron" in message  # the flavor
