@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import types
+
 import pytest
 
 from fear.brain.async_conversation import AsyncConversationalBrain
@@ -47,6 +49,21 @@ class FakeSpotify:
         return ""
 
 
+class FakeClient:
+    """Minimal stand-in for AsyncOpenAI that records the messages it receives."""
+
+    def __init__(self, reply: str = "ok") -> None:
+        self.reply = reply
+        self.calls: list[dict] = []
+
+        async def create(*, model, messages):
+            self.calls.append({"model": model, "messages": messages})
+            choice = types.SimpleNamespace(message=types.SimpleNamespace(content=self.reply))
+            return types.SimpleNamespace(choices=[choice])
+
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+
+
 @pytest.mark.asyncio
 async def test_process_command_fallback_without_openrouter() -> None:
     memory = FakeMemory()
@@ -60,15 +77,14 @@ async def test_process_command_fallback_without_openrouter() -> None:
     assert memory.added == [("remember this preference", "Lucas", "conversation")]
 
 
-def test_build_system_message_preserves_persona() -> None:
+def test_build_system_message_uses_default_persona() -> None:
     brain = AsyncConversationalBrain(settings=Settings(), memory=FakeMemory())  # type: ignore[arg-type]
 
     message = brain._build_system_message()
 
     assert "F.E.A.R." in message
-    assert "quiet" in message
-    assert "empathetic" in message
-    assert "consent-focused" in message
+    assert "joke" in message  # can banter
+    assert "consent-focused" in message  # keeps the guardrail
 
 
 def test_build_context_includes_memory_sections() -> None:
@@ -128,3 +144,53 @@ async def test_non_music_command_does_not_touch_spotify() -> None:
     assert spotify.calls == []
     assert "OpenRouter is not configured" in result.reply
     assert memory.added == [("how are you today", "Lucas", "conversation")]
+
+
+@pytest.mark.asyncio
+async def test_conversation_keeps_recent_history() -> None:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    fake = FakeClient(reply="primeira resposta")
+    brain.client = fake  # type: ignore[assignment]
+
+    await brain.process_command("oi, guarda meu nome: Lucas", "Lucas")
+    fake.reply = "segunda resposta"
+    await brain.process_command("qual meu nome?", "Lucas")
+
+    # The second call must carry the first exchange as prior context.
+    second_messages = fake.calls[1]["messages"]
+    assert second_messages[0]["role"] == "system"
+    assert "F.E.A.R." in second_messages[0]["content"]
+
+    pairs = [(m["role"], m["content"]) for m in second_messages]
+    assert ("user", "oi, guarda meu nome: Lucas") in pairs
+    assert ("assistant", "primeira resposta") in pairs
+    assert second_messages[-1] == {"role": "user", "content": "qual meu nome?"}
+
+
+@pytest.mark.asyncio
+async def test_history_window_is_capped() -> None:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m", max_history_turns=2),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = FakeClient(reply="r")  # type: ignore[assignment]
+
+    for index in range(3):
+        await brain.process_command(f"mensagem {index}", "Lucas")
+
+    assert len(brain._history["Lucas"]) <= 2
+
+
+def test_persona_file_overrides_default(tmp_path) -> None:
+    persona_path = tmp_path / "persona.md"
+    persona_path.write_text("You are a playful JARVIS-style companion.", encoding="utf-8")
+
+    brain = AsyncConversationalBrain(
+        settings=Settings(persona_file=str(persona_path)),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+
+    assert brain._build_system_message() == "You are a playful JARVIS-style companion."

@@ -1,10 +1,11 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { Brain, Mic, Radio, Send, Sparkles } from "lucide-react";
+import { Brain, Mic, Music, NotebookText, Radio, RotateCcw, Send, Sparkles } from "lucide-react";
 
 import AnimatedTextCycle from "@/components/ui/animated-text-cycle";
 import DisplayCards from "@/components/ui/display-cards";
+import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { Card } from "@/components/ui/card";
 import { SplineSceneBasic } from "@/components/ui/spline-scene-demo";
 
@@ -39,12 +40,58 @@ const fearCards = [
   },
 ];
 
+// F.E.A.R.'s capabilities as a glass dock of "apps".
+const fearApps: DockApp[] = [
+  { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-cyan-200" /> },
+  { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
+  { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
+  { id: "obsidian", name: "Obsidian", icon: <NotebookText className="h-full w-full text-blue-200" /> },
+  { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-rose-200" /> },
+];
+
 export default function HomePage() {
   const [speaker, setSpeaker] = useState("Lucas");
   const [text, setText] = useState("");
   const [reply, setReply] = useState("F.E.A.R. está online. Envie um comando para testar.");
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState("online");
+  const [openApps, setOpenApps] = useState<string[]>([]);
+
+  async function handleAppClick(appId: string) {
+    const who = speaker || "user";
+
+    try {
+      if (appId === "spotify") {
+        setStatus("thinking");
+        const response = await fetch(`${API_BASE}/command`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "toggle Spotify playback", speaker: who, speak: false }),
+        });
+        const data = await response.json();
+        setReply(data.reply || "Spotify acionado.");
+        setStatus("online");
+      } else if (appId === "voice") {
+        await fetch(`${API_BASE}/voice/capture-once`, { method: "POST" });
+        setReply("Escutando um trecho de voz…");
+        setOpenApps((prev) => (prev.includes("voice") ? prev : [...prev, "voice"]));
+      } else if (appId === "memory") {
+        const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(who)}`);
+        const data = await response.json();
+        const count = Array.isArray(data.memories) ? data.memories.length : 0;
+        setReply(`Tenho ${count} memória(s) recente(s) sobre ${who}.`);
+      } else if (appId === "reset") {
+        await fetch(`${API_BASE}/conversation/reset?speaker=${encodeURIComponent(who)}`, { method: "POST" });
+        setOpenApps((prev) => prev.filter((id) => id !== "voice"));
+        setReply("Conversa reiniciada. A memória pessoal foi mantida.");
+      } else if (appId === "obsidian") {
+        setReply("Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
+      }
+    } catch {
+      setStatus("error");
+      setReply("Não consegui falar com o backend local.");
+    }
+  }
 
   async function submitCommand(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -175,6 +222,13 @@ export default function HomePage() {
           </Card>
         </div>
       </section>
+
+      <MacOSDock
+        apps={fearApps}
+        onAppClick={handleAppClick}
+        openApps={openApps}
+        className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
+      />
     </main>
   );
 }

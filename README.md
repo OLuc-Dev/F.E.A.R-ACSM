@@ -21,6 +21,10 @@ pode consultar uma biblioteca de notas em markdown.
 
 ## Funcionalidades
 
+- **Diálogo com continuidade**: janela de conversa por interlocutor, então F.E.A.R.
+  acompanha o assunto entre turnos em vez de tratar cada mensagem isolada.
+- **Persona configurável**: voz padrão calorosa (que brinca, mas lê a hora) ou a sua
+  própria, via `FEAR_PERSONA_FILE`.
 - **Memória persistente por interlocutor** (`PersonalMemory`, ChromaDB).
 - **Biblioteca de referência** indexável a partir de notas markdown (`ReferenceLibrary`).
 - **Spotify** por linguagem natural, palmas e toques de wearable.
@@ -80,6 +84,7 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | ------ | --------------------- | ------------------------------------------- |
 | GET    | `/health`             | Status do runtime.                          |
 | POST   | `/command`            | `{text, speaker, speak}` → `{reply, ...}`.  |
+| POST   | `/conversation/reset` | Limpa a janela de diálogo de um interlocutor. |
 | GET    | `/memory/{speaker}`   | Memórias recentes de um interlocutor.       |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |
 | POST   | `/voice/{start,stop,capture-once}` | Captura push-to-talk (se habilitada). |

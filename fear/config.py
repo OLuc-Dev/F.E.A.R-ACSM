@@ -34,6 +34,14 @@ class Settings:
 
     clap_threshold: float = 0.1
 
+    # Conversation behaviour.
+    # persona_file: optional path to a custom system persona (Markdown/text).
+    #   When empty or missing, the built-in F.E.A.R. persona is used.
+    # max_history_turns: how many recent messages (user + assistant) to keep in
+    #   the rolling per-speaker dialogue window sent to the model.
+    persona_file: str = ""
+    max_history_turns: int = 12
+
     spotify_scope: str = (
         "user-read-playback-state "
         "user-modify-playback-state "
@@ -67,4 +75,6 @@ class Settings:
             ),
             openrouter_app_title=os.getenv("OPENROUTER_APP_TITLE", "F.E.A.R."),
             clap_threshold=float(os.getenv("CLAP_THRESHOLD", "0.1")),
+            persona_file=os.getenv("FEAR_PERSONA_FILE", ""),
+            max_history_turns=int(os.getenv("FEAR_MAX_HISTORY_TURNS", "12")),
         )
