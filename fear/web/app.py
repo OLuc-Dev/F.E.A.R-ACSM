@@ -9,6 +9,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -224,6 +225,17 @@ async def command(payload: CommandRequest) -> CommandResponse:
                 pass
 
     return CommandResponse(reply=result.reply, speaker=result.speaker, audio_file=None)
+
+
+@app.post("/command/stream")
+async def command_stream(payload: CommandRequest) -> StreamingResponse:
+    """Stream the reply as plain-text chunks as the model produces them."""
+
+    async def generate() -> AsyncIterator[str]:
+        async for chunk in app.state.brain.stream_command(payload.text, payload.speaker):
+            yield chunk
+
+    return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 
 
 @app.get("/memory/{speaker}", response_model=MemoryResponse)

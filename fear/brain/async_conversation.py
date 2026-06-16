@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -107,30 +108,8 @@ class AsyncConversationalBrain:
             self._record_turn(clean_speaker, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
-        speaker_facts_task = asyncio.to_thread(
-            self.memory.get_facts_about_speaker,
-            clean_speaker,
-            8,
-        )
-        related_memories_task = asyncio.to_thread(
-            self.memory.query_memories,
-            clean_text,
-            5,
-            clean_speaker,
-        )
-        general_memories_task = asyncio.to_thread(
-            self.memory.query_memories,
-            clean_text,
-            3,
-            None,
-        )
-        reference_context_task = asyncio.to_thread(self._get_reference_context_sync, clean_text)
-
-        speaker_facts, related_memories, general_memories, reference_context = await asyncio.gather(
-            speaker_facts_task,
-            related_memories_task,
-            general_memories_task,
-            reference_context_task,
+        speaker_facts, related_memories, general_memories, reference_context = (
+            await self._gather_context(clean_text, clean_speaker)
         )
 
         if self.client is None:
@@ -155,22 +134,14 @@ class AsyncConversationalBrain:
             self._record_turn(clean_speaker, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
-        context = self._build_context(
-            speaker_name=clean_speaker,
-            speaker_facts=speaker_facts,
-            related_memories=related_memories,
-            general_memories=general_memories,
-            reference_context=reference_context,
+        messages = self._build_messages(
+            clean_speaker,
+            clean_text,
+            speaker_facts,
+            related_memories,
+            general_memories,
+            reference_context,
         )
-
-        system_content = (
-            f"{self._persona}\n\n"
-            "Context F.E.A.R. can draw on (do not read it back verbatim):\n"
-            f"{context}"
-        )
-        messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
-        messages.extend(self._history_for(clean_speaker))
-        messages.append({"role": "user", "content": clean_text})
 
         response = await self.client.chat.completions.create(
             model=self.settings.openrouter_chat_model,
@@ -197,6 +168,111 @@ class AsyncConversationalBrain:
 
         self._record_turn(clean_speaker, clean_text, reply)
         return CommandResponse(reply=reply, speaker=clean_speaker, remembered=True)
+
+    async def stream_command(self, user_text: str, speaker_name: str = "user") -> AsyncIterator[str]:
+        """Stream a reply chunk-by-chunk, persisting memory and recording the turn at the end."""
+        clean_text = user_text.strip()
+        clean_speaker = speaker_name.strip() or "user"
+
+        if not clean_text:
+            return
+
+        spotify_reply = await self._try_spotify(clean_text)
+        if spotify_reply:
+            await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "spotify")
+            self._record_turn(clean_speaker, clean_text, spotify_reply)
+            yield spotify_reply
+            return
+
+        speaker_facts, related_memories, general_memories, reference_context = (
+            await self._gather_context(clean_text, clean_speaker)
+        )
+
+        if self.client is None:
+            fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
+            await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "conversation")
+            self._record_turn(clean_speaker, clean_text, fallback)
+            yield fallback
+            return
+
+        if not self.settings.openrouter_chat_model:
+            fallback = "OpenRouter is configured, but OPENROUTER_CHAT_MODEL is empty. Pick a model when ready."
+            await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "conversation")
+            self._record_turn(clean_speaker, clean_text, fallback)
+            yield fallback
+            return
+
+        messages = self._build_messages(
+            clean_speaker,
+            clean_text,
+            speaker_facts,
+            related_memories,
+            general_memories,
+            reference_context,
+        )
+        # Persist the user input up front so it survives an early client disconnect.
+        await asyncio.to_thread(self.memory.add_memory, clean_text, clean_speaker, "conversation")
+
+        stream = await self.client.chat.completions.create(
+            model=self.settings.openrouter_chat_model,
+            messages=cast(Any, messages),
+            stream=True,
+        )
+
+        parts: list[str] = []
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                parts.append(delta)
+                yield delta
+
+        reply = "".join(parts)
+        if reply:
+            await asyncio.to_thread(self.memory.add_memory, reply, "fear", "assistant_reply")
+        self._record_turn(clean_speaker, clean_text, reply)
+
+    async def _gather_context(
+        self, text: str, speaker: str
+    ) -> tuple[
+        list[PersonalMemoryResult],
+        list[PersonalMemoryResult],
+        list[PersonalMemoryResult],
+        str,
+    ]:
+        """Fetch speaker facts, related/general memories, and reference notes concurrently."""
+        return await asyncio.gather(
+            asyncio.to_thread(self.memory.get_facts_about_speaker, speaker, 8),
+            asyncio.to_thread(self.memory.query_memories, text, 5, speaker),
+            asyncio.to_thread(self.memory.query_memories, text, 3, None),
+            asyncio.to_thread(self._get_reference_context_sync, text),
+        )
+
+    def _build_messages(
+        self,
+        speaker: str,
+        text: str,
+        speaker_facts: list[PersonalMemoryResult],
+        related_memories: list[PersonalMemoryResult],
+        general_memories: list[PersonalMemoryResult],
+        reference_context: str,
+    ) -> list[dict[str, str]]:
+        """Assemble system(persona + memory) + rolling history + the new user message."""
+        context = self._build_context(
+            speaker_name=speaker,
+            speaker_facts=speaker_facts,
+            related_memories=related_memories,
+            general_memories=general_memories,
+            reference_context=reference_context,
+        )
+        system_content = (
+            f"{self._persona}\n\n"
+            "Context F.E.A.R. can draw on (do not read it back verbatim):\n"
+            f"{context}"
+        )
+        messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
+        messages.extend(self._history_for(speaker))
+        messages.append({"role": "user", "content": text})
+        return messages
 
     async def _try_spotify(self, text: str) -> str:
         """Route clear music commands to Spotify, returning "" when not applicable."""
