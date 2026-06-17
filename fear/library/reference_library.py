@@ -63,8 +63,7 @@ class ReferenceLibrary:
         ids = [f"ref-{source}-{section}-{index}" for index, _ in enumerate(chunks)]
         embeddings = self._embedding_model.encode(chunks, normalize_embeddings=True).tolist()
         metadatas = [
-            {"source": source, "section": section, "file_path": str(file_path)}
-            for _ in chunks
+            {"source": source, "section": section, "file_path": str(file_path)} for _ in chunks
         ]
 
         self._collection.upsert(
@@ -76,7 +75,9 @@ class ReferenceLibrary:
 
         return len(chunks)
 
-    def retrieve(self, query: str, *, n_results: int = 3, source: str | None = None) -> list[ReferenceResult]:
+    def retrieve(
+        self, query: str, *, n_results: int = 3, source: str | None = None
+    ) -> list[ReferenceResult]:
         """Retrieve relevant local reference notes."""
         if not query.strip():
             return []

@@ -171,7 +171,9 @@ class VoiceListener:
             return None
 
         speaker, message = self.extract_speaker(raw_text, self.default_speaker)
-        return TranscriptEvent(raw_text=raw_text, speaker=speaker, message=message, audio_path=audio_path)
+        return TranscriptEvent(
+            raw_text=raw_text, speaker=speaker, message=message, audio_path=audio_path
+        )
 
     @classmethod
     def extract_speaker(cls, text: str, default_speaker: str = "user") -> tuple[str, str]:

@@ -106,9 +106,12 @@ class AsyncConversationalBrain:
             self._record_turn(clean_speaker, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
-        speaker_facts, related_memories, general_memories, reference_context = (
-            await self._gather_context(clean_text, clean_speaker)
-        )
+        (
+            speaker_facts,
+            related_memories,
+            general_memories,
+            reference_context,
+        ) = await self._gather_context(clean_text, clean_speaker)
 
         if self.client is None:
             fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
@@ -151,7 +154,9 @@ class AsyncConversationalBrain:
         self._record_turn(clean_speaker, clean_text, reply)
         return CommandResponse(reply=reply, speaker=clean_speaker, remembered=True)
 
-    async def stream_command(self, user_text: str, speaker_name: str = "user") -> AsyncIterator[str]:
+    async def stream_command(
+        self, user_text: str, speaker_name: str = "user"
+    ) -> AsyncIterator[str]:
         """Stream a reply chunk-by-chunk, persisting memory and recording the turn at the end."""
         clean_text = user_text.strip()
         clean_speaker = speaker_name.strip() or "user"
@@ -166,9 +171,12 @@ class AsyncConversationalBrain:
             yield spotify_reply
             return
 
-        speaker_facts, related_memories, general_memories, reference_context = (
-            await self._gather_context(clean_text, clean_speaker)
-        )
+        (
+            speaker_facts,
+            related_memories,
+            general_memories,
+            reference_context,
+        ) = await self._gather_context(clean_text, clean_speaker)
 
         if self.client is None:
             fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
@@ -369,8 +377,7 @@ class AsyncConversationalBrain:
             return ""
 
         return "\n".join(
-            f"- [{result.source} / {result.section}] {result.text}"
-            for result in results
+            f"- [{result.source} / {result.section}] {result.text}" for result in results
         )
 
     @staticmethod

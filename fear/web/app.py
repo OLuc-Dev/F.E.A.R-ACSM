@@ -249,7 +249,9 @@ mount_static_frontend(app)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Log unhandled errors and return a clean payload instead of a stack trace."""
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Internal error. The incident was logged."})
+    return JSONResponse(
+        status_code=500, content={"detail": "Internal error. The incident was logged."}
+    )
 
 
 @app.get("/health")

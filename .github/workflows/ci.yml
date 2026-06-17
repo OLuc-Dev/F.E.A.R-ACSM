@@ -28,6 +28,8 @@ jobs:
             "fastapi>=0.115,<0.116" "httpx>=0.27,<1"
       - name: Lint Python
         run: python -m ruff check fear tests
+      - name: Check Python formatting
+        run: python -m ruff format --check fear tests
       - name: Typecheck Python
         run: python -m mypy fear --ignore-missing-imports
       - name: Test Python

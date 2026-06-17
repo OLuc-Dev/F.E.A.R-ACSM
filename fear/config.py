@@ -43,9 +43,7 @@ class Settings:
     max_history_turns: int = 12
 
     spotify_scope: str = (
-        "user-read-playback-state "
-        "user-modify-playback-state "
-        "user-read-currently-playing"
+        "user-read-playback-state user-modify-playback-state user-read-currently-playing"
     )
 
     @classmethod

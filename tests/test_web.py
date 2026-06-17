@@ -27,8 +27,14 @@ class FakeBrain:
 
 
 class FakeMemory:
-    def get_facts_about_speaker(self, speaker: str, n_results: int = 10) -> list[PersonalMemoryResult]:
-        return [PersonalMemoryResult(text="uma lembrança", speaker=speaker, source="voice", timestamp=1.0)]
+    def get_facts_about_speaker(
+        self, speaker: str, n_results: int = 10
+    ) -> list[PersonalMemoryResult]:
+        return [
+            PersonalMemoryResult(
+                text="uma lembrança", speaker=speaker, source="voice", timestamp=1.0
+            )
+        ]
 
 
 class FakeTTS:

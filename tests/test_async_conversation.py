@@ -61,6 +61,7 @@ class FakeClient:
         async def create(*, model, messages, stream=False):
             self.calls.append({"model": model, "messages": messages, "stream": stream})
             if stream:
+
                 async def gen():
                     for piece in self.stream_pieces:
                         delta = types.SimpleNamespace(content=piece)

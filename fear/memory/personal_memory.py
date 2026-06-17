@@ -103,7 +103,9 @@ class PersonalMemory:
 
         return self._format_results(raw)
 
-    def get_facts_about_speaker(self, speaker: str, n_results: int = 10) -> list[PersonalMemoryResult]:
+    def get_facts_about_speaker(
+        self, speaker: str, n_results: int = 10
+    ) -> list[PersonalMemoryResult]:
         """Return the most recent memories from a specific speaker."""
         # Fetch all of the speaker's memories, then sort by timestamp and take
         # the newest. Applying a Chroma `limit` before sorting would return an

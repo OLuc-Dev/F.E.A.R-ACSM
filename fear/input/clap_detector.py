@@ -279,7 +279,7 @@ class ClapDetector:
             square_sum += float(sample) * float(sample)
 
         mean_square = square_sum / len(samples)
-        rms = (mean_square ** 0.5) / 32768.0
+        rms = (mean_square**0.5) / 32768.0
         return min(rms, 1.0)
 
     def _close_audio_resources(self) -> None:
