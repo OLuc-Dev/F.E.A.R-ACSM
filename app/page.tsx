@@ -125,7 +125,11 @@ export default function HomePage() {
               <span aria-hidden className={`size-3 rounded-full transition-colors ${STATUS_ORB[status]}`} />
               <div>
                 <h1 className="text-2xl font-black tracking-[-0.06em]">F.E.A.R.</h1>
-                <p role="status" aria-live="polite" className="text-[10px] uppercase tracking-[0.4em] text-cyan-300/70">
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="text-[10px] uppercase tracking-[0.4em] text-cyan-300/70"
+                >
                   {STATUS_LABEL[status]}
                 </p>
               </div>
@@ -211,11 +215,31 @@ export default function HomePage() {
               </span>
             </div>
             <div className="text-xs">
-              <SystemRow icon={<Cpu className="size-3.5 text-cyan-200" />} label="OpenRouter" {...flag(systemStatus?.openrouter, "configurado")} />
-              <SystemRow icon={<Database className="size-3.5 text-violet-200" />} label="Memória" {...flag(systemStatus?.memory, "ativa")} />
-              <SystemRow icon={<Mic className="size-3.5 text-cyan-200" />} label="Voz" {...flag(systemStatus?.voice, "ativa")} />
-              <SystemRow icon={<Music className="size-3.5 text-emerald-200" />} label="Spotify" {...flag(systemStatus?.spotify, "configurado")} />
-              <SystemRow icon={<BookOpen className="size-3.5 text-blue-200" />} label="Obsidian" {...flag(systemStatus?.obsidian, "configurado")} />
+              <SystemRow
+                icon={<Cpu className="size-3.5 text-cyan-200" />}
+                label="OpenRouter"
+                {...flag(systemStatus?.openrouter, "configurado")}
+              />
+              <SystemRow
+                icon={<Database className="size-3.5 text-violet-200" />}
+                label="Memória"
+                {...flag(systemStatus?.memory, "ativa")}
+              />
+              <SystemRow
+                icon={<Mic className="size-3.5 text-cyan-200" />}
+                label="Voz"
+                {...flag(systemStatus?.voice, "ativa")}
+              />
+              <SystemRow
+                icon={<Music className="size-3.5 text-emerald-200" />}
+                label="Spotify"
+                {...flag(systemStatus?.spotify, "configurado")}
+              />
+              <SystemRow
+                icon={<BookOpen className="size-3.5 text-blue-200" />}
+                label="Obsidian"
+                {...flag(systemStatus?.obsidian, "configurado")}
+              />
             </div>
           </Card>
         </div>

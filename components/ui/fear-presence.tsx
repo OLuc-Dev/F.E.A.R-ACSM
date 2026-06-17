@@ -71,7 +71,12 @@ function Head({ speaking }: { speaking: boolean }) {
           </mesh>
           <mesh position={[0, 0, 0.07]}>
             <sphereGeometry args={[0.07, 24, 24]} />
-            <meshStandardMaterial color="#fff1f1" emissive="#ffd0d0" emissiveIntensity={3.2} toneMapped={false} />
+            <meshStandardMaterial
+              color="#fff1f1"
+              emissive="#ffd0d0"
+              emissiveIntensity={3.2}
+              toneMapped={false}
+            />
           </mesh>
         </group>
       ))}
@@ -99,8 +104,22 @@ export function FearPresence({ speaking = false }: { speaking?: boolean }) {
         {/* Procedural environment so the chrome has soft streaks to reflect */}
         <Environment resolution={256}>
           <Lightformer form="rect" intensity={1.6} position={[0, 3, 2]} scale={[5, 1.4, 1]} color="#dfe6ff" />
-          <Lightformer form="rect" intensity={1.2} position={[-4, 1, 1]} rotation={[0, Math.PI / 4, 0]} scale={[2.5, 4, 1]} color="#7aa2ff" />
-          <Lightformer form="rect" intensity={1.0} position={[4, -1, 1]} rotation={[0, -Math.PI / 4, 0]} scale={[2.5, 4, 1]} color="#ff5a5a" />
+          <Lightformer
+            form="rect"
+            intensity={1.2}
+            position={[-4, 1, 1]}
+            rotation={[0, Math.PI / 4, 0]}
+            scale={[2.5, 4, 1]}
+            color="#7aa2ff"
+          />
+          <Lightformer
+            form="rect"
+            intensity={1.0}
+            position={[4, -1, 1]}
+            rotation={[0, -Math.PI / 4, 0]}
+            scale={[2.5, 4, 1]}
+            color="#ff5a5a"
+          />
         </Environment>
 
         <Float speed={1.3} rotationIntensity={0.22} floatIntensity={0.6}>
@@ -108,7 +127,14 @@ export function FearPresence({ speaking = false }: { speaking?: boolean }) {
         </Float>
 
         <Sparkles count={42} scale={9} size={2.2} speed={0.3} color="#9ab4ff" opacity={0.5} />
-        <ContactShadows position={[0, -2.2, 0]} opacity={0.6} scale={12} blur={2.8} far={4.5} color="#000000" />
+        <ContactShadows
+          position={[0, -2.2, 0]}
+          opacity={0.6}
+          scale={12}
+          blur={2.8}
+          far={4.5}
+          color="#000000"
+        />
       </Suspense>
 
       <EffectComposer>

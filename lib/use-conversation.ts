@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  captureVoiceOnce,
-  getMemory,
-  resetConversation,
-  sendCommand,
-  streamCommand,
-} from "@/lib/api";
+import { captureVoiceOnce, getMemory, resetConversation, sendCommand, streamCommand } from "@/lib/api";
 
 export type Role = "user" | "fear" | "system";
 export type Status = "online" | "listening" | "thinking" | "speaking" | "error";
@@ -116,7 +110,9 @@ export function useConversation() {
           pushMessage("system", `${data.memories.length} memória(s) recente(s) sobre ${who}.`);
         } else if (appId === "reset") {
           await resetConversation(who);
-          setMessages([{ id: nextId(), role: "system", content: "Conversa reiniciada. Memória pessoal mantida." }]);
+          setMessages([
+            { id: nextId(), role: "system", content: "Conversa reiniciada. Memória pessoal mantida." },
+          ]);
         } else if (appId === "obsidian") {
           pushMessage("system", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
         }

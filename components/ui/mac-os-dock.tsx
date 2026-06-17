@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 // A glass macOS-style dock, adapted for F.E.A.R.: icons are React nodes
 // (e.g. lucide-react glyphs) instead of remote images, and the optional GSAP
@@ -19,12 +19,7 @@ interface MacOSDockProps {
   className?: string;
 }
 
-const MacOSDock: React.FC<MacOSDockProps> = ({
-  apps,
-  onAppClick,
-  openApps = [],
-  className = '',
-}) => {
+const MacOSDock: React.FC<MacOSDockProps> = ({ apps, onAppClick, openApps = [], className = "" }) => {
   const [mouseX, setMouseX] = useState<number | null>(null);
   const [currentScales, setCurrentScales] = useState<number[]>(apps.map(() => 1));
   const [currentPositions, setCurrentPositions] = useState<number[]>([]);
@@ -34,20 +29,36 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
   const lastMouseMoveTime = useRef<number>(0);
 
   const getResponsiveConfig = useCallback(() => {
-    if (typeof window === 'undefined') {
+    if (typeof window === "undefined") {
       return { baseIconSize: 56, maxScale: 1.6, effectWidth: 240 };
     }
 
     const smallerDimension = Math.min(window.innerWidth, window.innerHeight);
 
     if (smallerDimension < 480) {
-      return { baseIconSize: Math.max(40, smallerDimension * 0.08), maxScale: 1.4, effectWidth: smallerDimension * 0.4 };
+      return {
+        baseIconSize: Math.max(40, smallerDimension * 0.08),
+        maxScale: 1.4,
+        effectWidth: smallerDimension * 0.4,
+      };
     } else if (smallerDimension < 768) {
-      return { baseIconSize: Math.max(44, smallerDimension * 0.06), maxScale: 1.5, effectWidth: smallerDimension * 0.35 };
+      return {
+        baseIconSize: Math.max(44, smallerDimension * 0.06),
+        maxScale: 1.5,
+        effectWidth: smallerDimension * 0.35,
+      };
     } else if (smallerDimension < 1024) {
-      return { baseIconSize: Math.max(48, smallerDimension * 0.05), maxScale: 1.55, effectWidth: smallerDimension * 0.3 };
+      return {
+        baseIconSize: Math.max(48, smallerDimension * 0.05),
+        maxScale: 1.55,
+        effectWidth: smallerDimension * 0.3,
+      };
     }
-    return { baseIconSize: Math.max(52, Math.min(64, smallerDimension * 0.045)), maxScale: 1.6, effectWidth: 280 };
+    return {
+      baseIconSize: Math.max(52, Math.min(64, smallerDimension * 0.045)),
+      maxScale: 1.6,
+      effectWidth: 280,
+    };
   }, []);
 
   const [config, setConfig] = useState(getResponsiveConfig);
@@ -57,8 +68,8 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
 
   useEffect(() => {
     const handleResize = () => setConfig(getResponsiveConfig());
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, [getResponsiveConfig]);
 
   const calculateTargetMagnification = useCallback(
@@ -111,13 +122,20 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
     const lerpFactor = mouseX !== null ? 0.2 : 0.12;
 
     setCurrentScales((prevScales) =>
-      prevScales.map((currentScale, index) => currentScale + (targetScales[index] - currentScale) * lerpFactor),
+      prevScales.map(
+        (currentScale, index) => currentScale + (targetScales[index] - currentScale) * lerpFactor,
+      ),
     );
     setCurrentPositions((prevPositions) =>
-      prevPositions.map((currentPos, index) => currentPos + ((targetPositions[index] ?? currentPos) - currentPos) * lerpFactor),
+      prevPositions.map(
+        (currentPos, index) =>
+          currentPos + ((targetPositions[index] ?? currentPos) - currentPos) * lerpFactor,
+      ),
     );
 
-    const scalesNeedUpdate = currentScales.some((scale, index) => Math.abs(scale - targetScales[index]) > 0.002);
+    const scalesNeedUpdate = currentScales.some(
+      (scale, index) => Math.abs(scale - targetScales[index]) > 0.002,
+    );
     const positionsNeedUpdate = currentPositions.some(
       (pos, index) => Math.abs(pos - (targetPositions[index] ?? pos)) > 0.1,
     );
@@ -160,10 +178,10 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
 
   const createBounceAnimation = (element: HTMLElement) => {
     const bounceHeight = Math.max(-8, -baseIconSize * 0.15);
-    element.style.transition = 'transform 0.2s ease-out';
+    element.style.transition = "transform 0.2s ease-out";
     element.style.transform = `translateY(${bounceHeight}px)`;
     setTimeout(() => {
-      element.style.transform = 'translateY(0px)';
+      element.style.transform = "translateY(0px)";
     }, 200);
   };
 
@@ -188,9 +206,9 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
       className={`backdrop-blur-md ${className}`}
       style={{
         width: `${contentWidth + padding * 2}px`,
-        background: 'rgba(20, 22, 30, 0.6)',
+        background: "rgba(20, 22, 30, 0.6)",
         borderRadius: `${Math.max(12, baseIconSize * 0.4)}px`,
-        border: '1px solid rgba(255, 255, 255, 0.12)',
+        border: "1px solid rgba(255, 255, 255, 0.12)",
         boxShadow: `
           0 ${Math.max(4, baseIconSize * 0.1)}px ${Math.max(16, baseIconSize * 0.4)}px rgba(0, 0, 0, 0.45),
           inset 0 1px 0 rgba(255, 255, 255, 0.12),
@@ -201,7 +219,7 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
-      <div className="relative" style={{ height: `${baseIconSize}px`, width: '100%' }}>
+      <div className="relative" style={{ height: `${baseIconSize}px`, width: "100%" }}>
         {apps.map((app, index) => {
           const scale = currentScales[index] ?? 1;
           const position = currentPositions[index] || 0;
@@ -219,10 +237,10 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
               onClick={() => handleAppClick(app.id, index)}
               style={{
                 left: `${position - scaledSize / 2}px`,
-                bottom: '0px',
+                bottom: "0px",
                 width: `${scaledSize}px`,
                 height: `${scaledSize}px`,
-                transformOrigin: 'bottom center',
+                transformOrigin: "bottom center",
                 zIndex: Math.round(scale * 10),
               }}
             >
@@ -234,7 +252,9 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
                   filter: `drop-shadow(0 ${Math.max(2, baseIconSize * 0.05)}px ${Math.max(4, baseIconSize * 0.1)}px rgba(0,0,0,0.4))`,
                 }}
               >
-                <div style={{ width: `${scaledSize * 0.5}px`, height: `${scaledSize * 0.5}px` }}>{app.icon}</div>
+                <div style={{ width: `${scaledSize * 0.5}px`, height: `${scaledSize * 0.5}px` }}>
+                  {app.icon}
+                </div>
               </div>
 
               {openApps.includes(app.id) && (
@@ -242,13 +262,13 @@ const MacOSDock: React.FC<MacOSDockProps> = ({
                   className="absolute"
                   style={{
                     bottom: `${Math.max(-2, -baseIconSize * 0.05)}px`,
-                    left: '50%',
-                    transform: 'translateX(-50%)',
+                    left: "50%",
+                    transform: "translateX(-50%)",
                     width: `${Math.max(3, baseIconSize * 0.06)}px`,
                     height: `${Math.max(3, baseIconSize * 0.06)}px`,
-                    borderRadius: '50%',
-                    backgroundColor: 'rgba(255, 255, 255, 0.85)',
-                    boxShadow: '0 0 4px rgba(0, 0, 0, 0.3)',
+                    borderRadius: "50%",
+                    backgroundColor: "rgba(255, 255, 255, 0.85)",
+                    boxShadow: "0 0 4px rgba(0, 0, 0, 0.3)",
                   }}
                 />
               )}

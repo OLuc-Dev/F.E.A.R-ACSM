@@ -1,0 +1,24 @@
+# Local quality gates. Enable once with:
+#   pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (frontend)
+        entry: npx prettier --write
+        language: system
+        files: \.(ts|tsx|css)$
+        exclude: ^node_modules/
