@@ -86,6 +86,17 @@ function Head({ status }: { status: PresenceStatus }) {
         <meshPhysicalMaterial {...STEEL} />
       </mesh>
 
+      {/* Forehead crown plate — a subtle curved skull plate (not a flat brim) */}
+      <mesh position={[0, 0.74, 0.5]} scale={[1.16, 0.84, 1.18]}>
+        <sphereGeometry args={[1, 64, 64, 0, Math.PI * 2, 0, Math.PI * 0.5]} />
+        <meshPhysicalMaterial {...STEEL} />
+      </mesh>
+
+      {/* Centre seam — a thin dark inset that splits the forehead plate */}
+      <RoundedBox args={[0.05, 0.7, 0.06]} radius={0.02} smoothness={2} position={[0, 0.95, 1.4]}>
+        <meshStandardMaterial {...DARK} />
+      </RoundedBox>
+
       {/* Brow ridge — two halves dipping to the centre for an angry scowl */}
       {[-1, 1].map((s) => (
         <RoundedBox
@@ -113,29 +124,29 @@ function Head({ status }: { status: PresenceStatus }) {
       {[-1, 1].map((s) => (
         <RoundedBox
           key={`cheek-${s}`}
-          args={[0.5, 0.64, 0.16]}
+          args={[0.46, 0.6, 0.18]}
           radius={0.12}
           smoothness={4}
-          position={[s * 0.72, -0.22, 1.02]}
-          rotation={[0.06, s * -0.62, s * 0.12]}
+          position={[s * 0.64, -0.32, 1.14]}
+          rotation={[0.1, s * -0.4, s * 0.16]}
         >
           <meshPhysicalMaterial {...STEEL} />
         </RoundedBox>
       ))}
 
-      {/* Deep-set almond eyes */}
+      {/* Deep-set almond eyes (warm orange-red, like the inspiration) */}
       {[-0.41, 0.41].map((x, i) => (
         <group key={x} position={[x, 0.34, 1.32]} rotation={[0, 0, x < 0 ? 0.2 : -0.2]}>
           <mesh position={[0, 0, -0.12]} scale={[1.6, 0.95, 1]}>
             <sphereGeometry args={[0.2, 28, 28]} />
             <meshStandardMaterial {...DARK} />
           </mesh>
-          <mesh scale={[1.55, 0.72, 1]}>
+          <mesh scale={[1.6, 0.62, 1]}>
             <sphereGeometry args={[0.15, 32, 32]} />
             <meshStandardMaterial
               ref={i === 0 ? leftEye : rightEye}
-              color="#ff3a1e"
-              emissive="#ff2810"
+              color="#ff4a1e"
+              emissive="#ff360f"
               emissiveIntensity={2.4}
               toneMapped={false}
             />
