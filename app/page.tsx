@@ -1,21 +1,14 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { BookOpen, Brain, Cpu, Database, Mic, Music, RotateCcw, Send } from "lucide-react";
 
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { Card } from "@/components/ui/card";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
-import {
-  captureVoiceOnce,
-  getMemory,
-  getStatus,
-  resetConversation,
-  sendCommand,
-  type StatusResponse,
-  streamCommand,
-} from "@/lib/api";
+import { getStatus, type StatusResponse } from "@/lib/api";
+import { type Status, useConversation } from "@/lib/use-conversation";
 
 const FearPresence = dynamic(
   () => import("@/components/ui/fear-presence").then((module) => module.FearPresence),
@@ -28,15 +21,6 @@ const FearPresence = dynamic(
     ),
   },
 );
-
-type Role = "user" | "fear" | "system";
-type Status = "online" | "listening" | "thinking" | "speaking" | "error";
-
-interface Message {
-  id: number;
-  role: Role;
-  content: string;
-}
 
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-cyan-200" /> },
@@ -98,26 +82,10 @@ function flag(on: boolean | undefined, onLabel: string): { value: string; tone: 
 export default function HomePage() {
   const [speaker, setSpeaker] = useState("Lucas");
   const [text, setText] = useState("");
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 0, role: "fear", content: "Presença ativa. Diga o próximo movimento." },
-  ]);
-  const [status, setStatus] = useState<Status>("online");
-  const [isBusy, setIsBusy] = useState(false);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
 
-  const idRef = useRef(1);
-  const threadRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  const nextId = () => idRef.current++;
-
-  useEffect(() => {
-    const el = threadRef.current;
-    if (el) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages]);
+  const { messages, status, isBusy, threadRef, send, handleAppAction } = useConversation();
 
   useEffect(() => {
     let active = true;
@@ -136,92 +104,12 @@ export default function HomePage() {
     };
   }, []);
 
-  // Cancel any in-flight stream when the page unmounts.
-  useEffect(() => () => abortRef.current?.abort(), []);
-
-  function pushMessage(role: Role, content: string) {
-    setMessages((prev) => [...prev, { id: nextId(), role, content }]);
-  }
-
-  function appendToLastFear(chunk: string) {
-    setMessages((prev) => {
-      const copy = prev.slice();
-      const last = copy[copy.length - 1];
-      if (last && last.role === "fear") {
-        copy[copy.length - 1] = { ...last, content: last.content + chunk };
-      }
-      return copy;
-    });
-  }
-
-  async function submitCommand(event: FormEvent<HTMLFormElement>) {
+  function submitCommand(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmed = text.trim();
-    if (!trimmed || isBusy) {
-      return;
-    }
-
+    if (isBusy || !text.trim()) return;
+    const value = text;
     setText("");
-    setIsBusy(true);
-    setStatus("thinking");
-    pushMessage("user", trimmed);
-    pushMessage("fear", "");
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      let started = false;
-      await streamCommand(
-        { text: trimmed, speaker: speaker || "user" },
-        (chunk) => {
-          if (!started) {
-            setStatus("speaking");
-            started = true;
-          }
-          appendToLastFear(chunk);
-        },
-        controller.signal,
-      );
-      setStatus("online");
-    } catch (error) {
-      if (controller.signal.aborted) {
-        return;
-      }
-      appendToLastFear(error instanceof Error ? `Erro: ${error.message}` : "Falha ao falar com o backend.");
-      setStatus("error");
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function handleAppClick(appId: string) {
-    const who = speaker || "user";
-
-    try {
-      if (appId === "spotify") {
-        setStatus("thinking");
-        const data = await sendCommand({ text: "toggle Spotify playback", speaker: who });
-        pushMessage("fear", data.reply || "Spotify acionado.");
-        setStatus("online");
-      } else if (appId === "voice") {
-        setStatus("listening");
-        await captureVoiceOnce();
-        pushMessage("system", "Escutando um trecho de voz…");
-        setStatus("online");
-      } else if (appId === "memory") {
-        const data = await getMemory(who);
-        pushMessage("system", `${data.memories.length} memória(s) recente(s) sobre ${who}.`);
-      } else if (appId === "reset") {
-        await resetConversation(who);
-        setMessages([{ id: nextId(), role: "system", content: "Conversa reiniciada. Memória pessoal mantida." }]);
-      } else if (appId === "obsidian") {
-        pushMessage("system", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
-      }
-    } catch {
-      setStatus("error");
-      pushMessage("system", "Não consegui falar com o backend local.");
-    }
+    void send(value, speaker);
   }
 
   const backendTone = backendOnline === null ? "muted" : backendOnline ? "ok" : "off";
@@ -234,22 +122,30 @@ export default function HomePage() {
         <div className="flex h-[68vh] min-h-[440px] flex-col rounded-[1.75rem] border bg-card/70 p-5 shadow-2xl backdrop-blur md:p-6 lg:h-[680px]">
           <header className="mb-4 flex items-center justify-between gap-4 border-b border-white/5 pb-4">
             <div className="flex items-center gap-3">
-              <span className={`size-3 rounded-full transition-colors ${STATUS_ORB[status]}`} />
+              <span aria-hidden className={`size-3 rounded-full transition-colors ${STATUS_ORB[status]}`} />
               <div>
                 <h1 className="text-2xl font-black tracking-[-0.06em]">F.E.A.R.</h1>
-                <p className="text-[10px] uppercase tracking-[0.4em] text-cyan-300/70">{STATUS_LABEL[status]}</p>
+                <p role="status" aria-live="polite" className="text-[10px] uppercase tracking-[0.4em] text-cyan-300/70">
+                  {STATUS_LABEL[status]}
+                </p>
               </div>
             </div>
             <input
               value={speaker}
               onChange={(event) => setSpeaker(event.target.value)}
-              aria-label="Speaker"
+              aria-label="Nome do interlocutor"
               className="h-9 w-28 rounded-full border bg-background/60 px-4 text-sm outline-none ring-cyan-300/30 transition focus:ring-4 sm:w-32"
               placeholder="Speaker"
             />
           </header>
 
-          <div ref={threadRef} className="flex-1 space-y-3 overflow-y-auto pr-1">
+          <div
+            ref={threadRef}
+            role="log"
+            aria-live="polite"
+            aria-label="Conversa com a F.E.A.R."
+            className="flex-1 space-y-3 overflow-y-auto pr-1"
+          >
             {messages.map((message) =>
               message.role === "user" ? (
                 <UserMessage key={message.id} content={message.content} />
@@ -272,6 +168,7 @@ export default function HomePage() {
                 }
               }}
               rows={1}
+              aria-label="Mensagem para a F.E.A.R."
               className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border bg-background/60 p-3 text-sm outline-none ring-cyan-300/30 transition focus:ring-4"
               placeholder="Traga a ideia. Eu encontro as rachaduras."
             />
@@ -326,7 +223,7 @@ export default function HomePage() {
 
       <MacOSDock
         apps={fearApps}
-        onAppClick={handleAppClick}
+        onAppClick={(appId) => handleAppAction(appId, speaker)}
         openApps={[]}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />
