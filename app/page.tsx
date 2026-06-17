@@ -412,7 +412,7 @@ export default function HomePage() {
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} status={systemStatus} />
     </main>
   );
 }

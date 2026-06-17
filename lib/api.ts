@@ -44,6 +44,18 @@ export interface KnowledgeListResponse {
   sources: KnowledgeSource[];
 }
 
+export interface ConfigResponse {
+  model: string;
+  model_default: string;
+  persona_mode: string;
+  persona_modes: string[];
+}
+
+export interface ConfigUpdate {
+  model?: string;
+  persona_mode?: string;
+}
+
 export class ApiError extends Error {
   readonly status?: number;
 
@@ -158,4 +170,17 @@ export async function deleteKnowledge(source: string): Promise<void> {
     method: "DELETE",
   });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+}
+
+// --- Runtime behaviour config (model + persona mode; never secrets) ---
+
+export async function getConfig(): Promise<ConfigResponse> {
+  const response = await fetch(`${API_BASE}/config`);
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  return (await response.json()) as ConfigResponse;
+}
+
+export async function updateConfig(update: ConfigUpdate): Promise<ConfigResponse> {
+  const response = await postJson("/config", update);
+  return (await response.json()) as ConfigResponse;
 }

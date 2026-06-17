@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from fear.brain.async_conversation import AsyncConversationalBrain
-from fear.config import Settings
+from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
 from fear.library.reference_library import ReferenceLibrary
 from fear.logging_config import configure_logging
@@ -95,6 +95,22 @@ class KnowledgeListResponse(BaseModel):
 
     available: bool
     sources: list[KnowledgeSource]
+
+
+class ConfigResponse(BaseModel):
+    """Live, non-secret runtime configuration (drives the behaviour panel)."""
+
+    model: str
+    model_default: str
+    persona_mode: str
+    persona_modes: list[str]
+
+
+class ConfigUpdate(BaseModel):
+    """Partial update for runtime configuration. Secrets are never accepted here."""
+
+    model: str | None = None
+    persona_mode: str | None = None
 
 
 def cors_origins() -> list[str]:
@@ -456,6 +472,40 @@ async def conversation_reset(
     """Clear the in-memory dialogue window for a speaker (persistent memory is kept)."""
     brain.reset_conversation(speaker)
     return {"status": "reset", "speaker": speaker}
+
+
+def _config_response(brain: AsyncConversationalBrain) -> ConfigResponse:
+    config = brain.get_config()
+    return ConfigResponse(
+        model=config["model"],
+        model_default=DEFAULT_CHAT_MODEL,
+        persona_mode=config["persona_mode"],
+        persona_modes=config["persona_modes"],
+    )
+
+
+@app.get("/config", response_model=ConfigResponse)
+async def config_get(
+    brain: AsyncConversationalBrain = Depends(get_brain),
+) -> ConfigResponse:
+    """Return the live, non-secret runtime configuration."""
+    return _config_response(brain)
+
+
+@app.post("/config", response_model=ConfigResponse)
+async def config_set(
+    payload: ConfigUpdate,
+    brain: AsyncConversationalBrain = Depends(get_brain),
+) -> ConfigResponse:
+    """Update the chat model and/or persona mode for this session (no secrets)."""
+    if payload.model is not None:
+        brain.set_chat_model(payload.model)
+    if payload.persona_mode is not None:
+        try:
+            brain.set_persona_mode(payload.persona_mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Modo de persona inválido.") from exc
+    return _config_response(brain)
 
 
 @app.post("/voice/start")

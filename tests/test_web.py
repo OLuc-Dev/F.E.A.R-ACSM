@@ -17,10 +17,14 @@ from fear.web.app import (
     get_tts,
 )
 
+PERSONA_MODES = ["equilibrio", "sombrio", "cirurgico"]
+
 
 class FakeBrain:
     def __init__(self) -> None:
         self.reset_calls: list[str] = []
+        self.model = "openai/gpt-oss-120b:free"
+        self.persona_mode = "equilibrio"
 
     async def process_command(self, text: str, speaker: str = "user") -> CommandResponse:
         return CommandResponse(reply=f"echo: {text}", speaker=speaker, remembered=True)
@@ -31,6 +35,22 @@ class FakeBrain:
 
     def reset_conversation(self, speaker: str) -> None:
         self.reset_calls.append(speaker)
+
+    def set_chat_model(self, model: str) -> None:
+        if model.strip():
+            self.model = model.strip()
+
+    def set_persona_mode(self, mode: str) -> None:
+        if mode not in PERSONA_MODES:
+            raise ValueError(mode)
+        self.persona_mode = mode
+
+    def get_config(self) -> dict[str, object]:
+        return {
+            "model": self.model,
+            "persona_mode": self.persona_mode,
+            "persona_modes": PERSONA_MODES,
+        }
 
 
 class FakeMemory:
@@ -197,3 +217,30 @@ def test_knowledge_unavailable_returns_503(client: TestClient) -> None:
 
     response = client.post("/knowledge/text", json={"name": "x", "content": "y"})
     assert response.status_code == 503
+
+
+def test_config_get(client: TestClient) -> None:
+    response = client.get("/config")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["persona_mode"] == "equilibrio"
+    assert "sombrio" in body["persona_modes"]
+    assert body["model_default"]
+
+
+def test_config_set_model_and_mode(client: TestClient, brain: FakeBrain) -> None:
+    response = client.post(
+        "/config",
+        json={"model": "deepseek/deepseek-chat", "persona_mode": "sombrio"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model"] == "deepseek/deepseek-chat"
+    assert body["persona_mode"] == "sombrio"
+    assert brain.model == "deepseek/deepseek-chat"
+    assert brain.persona_mode == "sombrio"
+
+
+def test_config_rejects_invalid_mode(client: TestClient) -> None:
+    response = client.post("/config", json={"persona_mode": "caotico"})
+    assert response.status_code == 422

@@ -28,6 +28,23 @@ LLM_ERROR_REPLY = "Tive um problema para processar isso agora. Tenta de novo em 
 # like "play" or "stop".
 SPOTIFY_HINTS = ("spotify", "music", "song", "track", "playback")
 
+# Persona modes layered on top of the base persona. They only adjust tone; the
+# persona file's loyalty and safety rails always take precedence.
+PERSONA_MODES: dict[str, str] = {
+    "equilibrio": "",
+    "sombrio": (
+        "Modo SOMBRIO ativo: aprofunde a frieza, a ironia e a lente niilista. "
+        "Seja mais cortante e filosófico, menos reconfortante. As travas de lealdade "
+        "e segurança da persona continuam valendo integralmente — a escuridão é da "
+        "voz, nunca da intenção."
+    ),
+    "cirurgico": (
+        "Modo CIRÚRGICO ativo: corte o teatro. Vá direto ao essencial — diagnóstico, "
+        "decisão e próximo passo. Pouca filosofia, máxima densidade e ação."
+    ),
+}
+DEFAULT_PERSONA_MODE = "equilibrio"
+
 # The default voice of F.E.A.R.: a close, sharp companion that can banter, but
 # reads the room. Override it with a file via settings.persona_file.
 DEFAULT_PERSONA = (
@@ -77,6 +94,13 @@ class AsyncConversationalBrain:
         self.client: AsyncOpenAI | None = None
 
         self._persona = self._load_persona(settings)
+        # Live persona mode, seeded from settings (FEAR_PERSONA_MODE); an unknown
+        # value falls back to the balanced default rather than failing startup.
+        self._persona_mode = (
+            settings.persona_mode
+            if settings.persona_mode in PERSONA_MODES
+            else DEFAULT_PERSONA_MODE
+        )
         self._max_history_turns = max(0, settings.max_history_turns)
         # Rolling per-speaker dialogue window, so F.E.A.R. follows a conversation
         # across turns instead of treating every message as standalone.
@@ -267,8 +291,10 @@ class AsyncConversationalBrain:
             general_memories=general_memories,
             reference_context=reference_context,
         )
+        directive = PERSONA_MODES.get(self._persona_mode, "")
+        persona_block = self._persona if not directive else f"{self._persona}\n\n{directive}"
         system_content = (
-            f"{self._persona}\n\n"
+            f"{persona_block}\n\n"
             "Context F.E.A.R. can draw on (do not read it back verbatim):\n"
             f"{context}"
         )
@@ -342,6 +368,27 @@ class AsyncConversationalBrain:
     def reset_conversation(self, speaker: str) -> None:
         """Forget the in-memory dialogue window for a speaker (persistent memory is kept)."""
         self._history.pop(speaker, None)
+
+    def set_chat_model(self, model: str) -> None:
+        """Switch the OpenRouter chat model for this session (ignores blank input)."""
+        cleaned = model.strip()
+        if cleaned:
+            self.settings.openrouter_chat_model = cleaned
+
+    def set_persona_mode(self, mode: str) -> None:
+        """Switch the persona mode; raises ValueError for an unknown mode."""
+        cleaned = mode.strip().lower()
+        if cleaned not in PERSONA_MODES:
+            raise ValueError(f"unknown persona mode: {mode}")
+        self._persona_mode = cleaned
+
+    def get_config(self) -> dict[str, Any]:
+        """Return the live, non-secret runtime config (drives the settings panel)."""
+        return {
+            "model": self.settings.openrouter_chat_model,
+            "persona_mode": self._persona_mode,
+            "persona_modes": list(PERSONA_MODES.keys()),
+        }
 
     def _build_context(
         self,

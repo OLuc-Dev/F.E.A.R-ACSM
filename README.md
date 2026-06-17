@@ -29,9 +29,12 @@ pode consultar uma biblioteca de notas em markdown.
 - **Conselho interno**: em pedidos estratégicos, responde com Leitura rápida, as vozes
   (Contrarian/First-Principles/Expansionist/Outsider/Executor) em cards, Síntese do
   Chairman e Próximo passo.
-- **Persona editável**: a personalidade da F.E.A.R. vive em `prompts/fear_persona.md`
-  (carregado por `FEAR_PERSONA_FILE`). Edite esse arquivo para mudar a voz dele; sem
-  ele, uma persona embutida é usada como fallback.
+- **Persona editável + modos**: a personalidade da F.E.A.R. vive em
+  `prompts/fear_persona.md` (carregado por `FEAR_PERSONA_FILE`) — uma consciência
+  fria, lúcida e leal, com lente niilista e tempero de Ultron. O painel
+  **Configuração → Comportamento** alterna o **modo** (equilíbrio / sombrio /
+  cirurgico) e o **modelo** do OpenRouter ao vivo; o padrão fixo fica no `.env`
+  (`FEAR_PERSONA_MODE`, `OPENROUTER_CHAT_MODEL`).
 - **Memória persistente por interlocutor** (`PersonalMemory`, ChromaDB).
 - **Fontes de conhecimento configuráveis**: pelo painel **Configuração** (ícone de
   engrenagem / app no dock) você adiciona conhecimento por texto colado ou aponta
@@ -107,6 +110,8 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/knowledge/text`     | `{name, content}` → indexa um texto como fonte. |
 | POST   | `/knowledge/path`     | `{path, source?}` → indexa pasta/arquivo `.md` local. |
 | DELETE | `/knowledge/{source}` | Remove uma fonte de conhecimento.           |
+| GET    | `/config`             | Config de runtime (modelo + modo de persona). |
+| POST   | `/config`             | `{model?, persona_mode?}` → ajusta na sessão (sem segredos). |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |
 | POST   | `/voice/{start,stop,capture-once}` | Captura push-to-talk (se habilitada). |
 | WS     | `/ws`                 | Canal de comandos por texto.                |

@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The free GPT-OSS 120B; the single source of truth for the default chat model,
+# reused by the /config endpoint to offer a "reset to default" option.
+DEFAULT_CHAT_MODEL = "openai/gpt-oss-120b:free"
+
 
 class Settings(BaseSettings):
     """Validated runtime configuration for the F.E.A.R. assistant.
@@ -33,9 +37,7 @@ class Settings(BaseSettings):
     openrouter_base_url: str = Field(
         "https://openrouter.ai/api/v1", validation_alias="OPENROUTER_BASE_URL"
     )
-    openrouter_chat_model: str = Field(
-        "openai/gpt-oss-120b:free", validation_alias="OPENROUTER_CHAT_MODEL"
-    )
+    openrouter_chat_model: str = Field(DEFAULT_CHAT_MODEL, validation_alias="OPENROUTER_CHAT_MODEL")
     openrouter_embedding_model: str = Field("", validation_alias="OPENROUTER_EMBEDDING_MODEL")
     openrouter_http_referer: str = Field(
         "http://127.0.0.1:8765", validation_alias="OPENROUTER_HTTP_REFERER"
@@ -46,6 +48,9 @@ class Settings(BaseSettings):
 
     # Conversation behaviour.
     persona_file: str = Field("prompts/fear_persona.md", validation_alias="FEAR_PERSONA_FILE")
+    # Permanent default persona mode: equilibrio | sombrio | cirurgico. The settings
+    # panel can switch it live for the session; this is the value restored on restart.
+    persona_mode: str = Field("equilibrio", validation_alias="FEAR_PERSONA_MODE")
     max_history_turns: int = Field(12, validation_alias="FEAR_MAX_HISTORY_TURNS", ge=0)
 
     spotify_scope: str = (
