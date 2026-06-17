@@ -16,6 +16,7 @@ import {
   Music,
   RotateCcw,
   Send,
+  Settings,
   Split,
   Swords,
   User,
@@ -25,6 +26,7 @@ import {
 
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
+import { SettingsPanel } from "@/components/ui/settings-panel";
 import { getStatus, type StatusResponse } from "@/lib/api";
 import { type Status, useConversation } from "@/lib/use-conversation";
 
@@ -45,6 +47,7 @@ const fearApps: DockApp[] = [
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
+  { id: "config", name: "Configuração", icon: <Settings className="h-full w-full text-slate-200" /> },
   { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-rose-200" /> },
 ];
 
@@ -179,6 +182,7 @@ export default function HomePage() {
   const [text, setText] = useState("");
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { messages, status, isBusy, threadRef, send, handleAppAction } = useConversation();
 
@@ -253,6 +257,14 @@ export default function HomePage() {
               )}
               <span className="hidden sm:inline">{backendValue}</span>
             </div>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Configuração"
+              title="Configuração"
+              className="grid size-9 place-items-center rounded-full border border-white/10 bg-white/[0.03] text-muted-foreground transition hover:border-cyan-300/40 hover:text-cyan-200"
+            >
+              <Settings className="size-4" />
+            </button>
           </div>
         </header>
 
@@ -395,10 +407,12 @@ export default function HomePage() {
 
       <MacOSDock
         apps={fearApps}
-        onAppClick={(appId) => handleAppAction(appId, speaker)}
-        openApps={[]}
+        onAppClick={(appId) => (appId === "config" ? setSettingsOpen(true) : handleAppAction(appId, speaker))}
+        openApps={settingsOpen ? ["config"] : []}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />
+
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </main>
   );
 }

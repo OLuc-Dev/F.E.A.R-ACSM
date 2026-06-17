@@ -33,7 +33,10 @@ pode consultar uma biblioteca de notas em markdown.
   (carregado por `FEAR_PERSONA_FILE`). Edite esse arquivo para mudar a voz dele; sem
   ele, uma persona embutida é usada como fallback.
 - **Memória persistente por interlocutor** (`PersonalMemory`, ChromaDB).
-- **Biblioteca de referência** indexável a partir de notas markdown (`ReferenceLibrary`).
+- **Fontes de conhecimento configuráveis**: pelo painel **Configuração** (ícone de
+  engrenagem / app no dock) você adiciona conhecimento por texto colado ou aponta
+  uma pasta/arquivo markdown local. Tudo é indexado na `ReferenceLibrary` e F.E.A.R.
+  consulta sozinho ao responder.
 - **Spotify** por linguagem natural, palmas e toques de wearable.
 - **Percepção de palmas** (`ClapDetector`) e **toques de wearable** (`/wearable/tap`).
 - **Voz** opcional (Whisper, push-to-talk) e **TTS** natural (ElevenLabs) com
@@ -100,6 +103,10 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/command/stream`     | Mesma entrada; resposta em streaming (texto).|
 | POST   | `/conversation/reset` | Limpa a janela de diálogo de um interlocutor. |
 | GET    | `/memory/{speaker}`   | Memórias recentes de um interlocutor.       |
+| GET    | `/knowledge`          | Fontes de conhecimento indexadas (painel Configuração). |
+| POST   | `/knowledge/text`     | `{name, content}` → indexa um texto como fonte. |
+| POST   | `/knowledge/path`     | `{path, source?}` → indexa pasta/arquivo `.md` local. |
+| DELETE | `/knowledge/{source}` | Remove uma fonte de conhecimento.           |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |
 | POST   | `/voice/{start,stop,capture-once}` | Captura push-to-talk (se habilitada). |
 | WS     | `/ws`                 | Canal de comandos por texto.                |

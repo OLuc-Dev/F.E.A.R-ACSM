@@ -75,6 +75,58 @@ class ReferenceLibrary:
 
         return len(chunks)
 
+    def index_text(self, text: str, *, source: str, section: str = "nota") -> int:
+        """Index a free-text knowledge snippet under a named source.
+
+        Re-indexing the same ``source`` replaces its previous chunks, so a named
+        source behaves like one editable document.
+        """
+        clean = text.strip()
+        if not clean:
+            return 0
+
+        chunks = chunk_markdown(clean)
+        if not chunks:
+            # Short snippets fall below the chunker's minimum; keep them whole so
+            # small notes still become searchable knowledge.
+            chunks = [clean]
+
+        # Replace any existing chunks for this source (edit semantics).
+        self._collection.delete(where={"source": source})
+
+        ids = [f"ref-{source}-{index}" for index, _ in enumerate(chunks)]
+        embeddings = self._embedding_model.encode(chunks, normalize_embeddings=True).tolist()
+        metadatas = [{"source": source, "section": section, "origin": "text"} for _ in chunks]
+
+        self._collection.upsert(
+            ids=ids,
+            documents=chunks,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+
+        return len(chunks)
+
+    def list_sources(self) -> list[dict[str, Any]]:
+        """Return the indexed sources with their chunk counts, sorted by name."""
+        raw = self._collection.get(include=["metadatas"])
+        metadatas = raw.get("metadatas", []) or []
+
+        counts: dict[str, int] = {}
+        for metadata in metadatas:
+            source = str((metadata or {}).get("source", "unknown"))
+            counts[source] = counts.get(source, 0) + 1
+
+        return [{"source": source, "chunks": count} for source, count in sorted(counts.items())]
+
+    def delete_source(self, source: str) -> int:
+        """Remove every chunk belonging to a source; return how many were removed."""
+        existing = self._collection.get(where={"source": source})
+        ids = existing.get("ids", []) or []
+        if ids:
+            self._collection.delete(ids=ids)
+        return len(ids)
+
     def retrieve(
         self, query: str, *, n_results: int = 3, source: str | None = None
     ) -> list[ReferenceResult]:

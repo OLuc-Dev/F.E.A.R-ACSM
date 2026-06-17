@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -69,6 +69,34 @@ class StatusResponse(BaseModel):
     obsidian: bool
 
 
+class KnowledgeTextRequest(BaseModel):
+    """Request body for adding a free-text knowledge source."""
+
+    name: str
+    content: str
+
+
+class KnowledgePathRequest(BaseModel):
+    """Request body for indexing a local folder or markdown file as knowledge."""
+
+    path: str
+    source: str | None = None
+
+
+class KnowledgeSource(BaseModel):
+    """One indexed knowledge source and how many chunks it holds."""
+
+    source: str
+    chunks: int
+
+
+class KnowledgeListResponse(BaseModel):
+    """The configured knowledge sources (drives the settings panel)."""
+
+    available: bool
+    sources: list[KnowledgeSource]
+
+
 def cors_origins() -> list[str]:
     """Read allowed CORS origins from FEAR_CORS_ORIGINS."""
     raw = os.getenv(
@@ -112,6 +140,24 @@ def get_tts(request: Request) -> Any:
 
 def get_settings(request: Request) -> Settings:
     return request.app.state.settings
+
+
+def get_reference_library(request: Request) -> ReferenceLibrary | None:
+    """Return the reference library, or None when it could not be initialized."""
+    return getattr(request.app.state, "reference_library", None)
+
+
+def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibrary:
+    """Guard endpoints that need the knowledge store, returning a clean 503 if absent."""
+    if library is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Biblioteca de conhecimento indisponível. "
+                "Instale as dependências (chromadb, sentence-transformers) e reinicie o backend."
+            ),
+        )
+    return library
 
 
 async def process_text_command(application: FastAPI, text: str, speaker: str):
@@ -327,6 +373,68 @@ async def memory_for_speaker(
             for item in facts
         ],
     )
+
+
+@app.get("/knowledge", response_model=KnowledgeListResponse)
+async def knowledge_list(
+    library: ReferenceLibrary | None = Depends(get_reference_library),
+) -> KnowledgeListResponse:
+    """List the knowledge sources F.E.A.R. can draw on."""
+    if library is None:
+        return KnowledgeListResponse(available=False, sources=[])
+
+    sources = await asyncio.to_thread(library.list_sources)
+    return KnowledgeListResponse(
+        available=True,
+        sources=[KnowledgeSource(source=item["source"], chunks=item["chunks"]) for item in sources],
+    )
+
+
+@app.post("/knowledge/text", response_model=KnowledgeSource)
+async def knowledge_add_text(
+    payload: KnowledgeTextRequest,
+    library: ReferenceLibrary | None = Depends(get_reference_library),
+) -> KnowledgeSource:
+    """Add a free-text knowledge source (a named, editable note)."""
+    store = require_reference_library(library)
+    name = payload.name.strip() or "nota"
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="O conteúdo não pode ser vazio.")
+
+    chunks = await asyncio.to_thread(store.index_text, content, source=name)
+    return KnowledgeSource(source=name, chunks=chunks)
+
+
+@app.post("/knowledge/path", response_model=KnowledgeSource)
+async def knowledge_add_path(
+    payload: KnowledgePathRequest,
+    library: ReferenceLibrary | None = Depends(get_reference_library),
+) -> KnowledgeSource:
+    """Index a local folder of markdown notes, or a single markdown file."""
+    store = require_reference_library(library)
+    path = Path(payload.path.strip()).expanduser()
+    source = (payload.source or "").strip() or (path.stem or "fonte")
+
+    if path.is_dir():
+        chunks = await asyncio.to_thread(store.index_folder, path, source=source)
+    elif path.is_file():
+        chunks = await asyncio.to_thread(store.index_file, path, source=source)
+    else:
+        raise HTTPException(status_code=404, detail=f"Caminho não encontrado: {path}")
+
+    return KnowledgeSource(source=source, chunks=chunks)
+
+
+@app.delete("/knowledge/{source}")
+async def knowledge_delete(
+    source: str,
+    library: ReferenceLibrary | None = Depends(get_reference_library),
+) -> dict[str, object]:
+    """Remove a knowledge source and all of its chunks."""
+    store = require_reference_library(library)
+    deleted = await asyncio.to_thread(store.delete_source, source)
+    return {"source": source, "deleted": deleted}
 
 
 @app.post("/wearable/tap", response_model=CommandResponse)

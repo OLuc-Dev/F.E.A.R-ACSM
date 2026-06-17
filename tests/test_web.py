@@ -8,7 +8,14 @@ from fastapi.testclient import TestClient
 from fear.brain.async_conversation import CommandResponse
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
-from fear.web.app import app, get_brain, get_memory, get_settings, get_tts
+from fear.web.app import (
+    app,
+    get_brain,
+    get_memory,
+    get_reference_library,
+    get_settings,
+    get_tts,
+)
 
 
 class FakeBrain:
@@ -46,17 +53,49 @@ class FakeTTS:
         return None
 
 
+class FakeReferenceLibrary:
+    """In-memory stand-in for the ChromaDB-backed library (no ML deps)."""
+
+    def __init__(self) -> None:
+        self.sources: dict[str, int] = {}
+
+    def index_text(self, text: str, *, source: str, section: str = "nota") -> int:
+        chunks = max(1, len(text) // 80)
+        self.sources[source] = chunks
+        return chunks
+
+    def index_folder(self, folder: object, *, source: str) -> int:
+        self.sources[source] = 3
+        return 3
+
+    def index_file(self, path: object, *, source: str) -> int:
+        self.sources[source] = 1
+        return 1
+
+    def list_sources(self) -> list[dict[str, object]]:
+        return [{"source": name, "chunks": count} for name, count in sorted(self.sources.items())]
+
+    def delete_source(self, source: str) -> int:
+        return self.sources.pop(source, 0)
+
+
 @pytest.fixture
 def brain() -> FakeBrain:
     return FakeBrain()
 
 
 @pytest.fixture
-def client(brain: FakeBrain) -> Iterator[TestClient]:
+def library() -> FakeReferenceLibrary:
+    return FakeReferenceLibrary()
+
+
+@pytest.fixture
+def client(brain: FakeBrain, library: FakeReferenceLibrary) -> Iterator[TestClient]:
     # Override the dependency providers and skip the lifespan (no hardware/ML deps).
     app.dependency_overrides[get_brain] = lambda: brain
     app.dependency_overrides[get_memory] = FakeMemory
     app.dependency_overrides[get_tts] = FakeTTS
+    app.dependency_overrides[get_reference_library] = lambda: library
     app.dependency_overrides[get_settings] = lambda: Settings(
         openrouter_api_key="", openrouter_chat_model=""
     )
@@ -113,3 +152,48 @@ def test_conversation_reset(client: TestClient, brain: FakeBrain) -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "reset", "speaker": "Lucas"}
     assert brain.reset_calls == ["Lucas"]
+
+
+def test_knowledge_list_starts_empty(client: TestClient) -> None:
+    response = client.get("/knowledge")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["sources"] == []
+
+
+def test_knowledge_add_text_then_list(client: TestClient) -> None:
+    response = client.post(
+        "/knowledge/text",
+        json={"name": "Manifesto", "content": "ideia " * 100},
+    )
+    assert response.status_code == 200
+    assert response.json()["source"] == "Manifesto"
+    assert response.json()["chunks"] >= 1
+
+    listed = client.get("/knowledge").json()
+    assert "Manifesto" in [item["source"] for item in listed["sources"]]
+
+
+def test_knowledge_add_text_rejects_empty_content(client: TestClient) -> None:
+    response = client.post("/knowledge/text", json={"name": "x", "content": "   "})
+    assert response.status_code == 422
+
+
+def test_knowledge_delete(client: TestClient, library: FakeReferenceLibrary) -> None:
+    library.sources["Antigo"] = 4
+    response = client.delete("/knowledge/Antigo")
+    assert response.status_code == 200
+    assert response.json() == {"source": "Antigo", "deleted": 4}
+    assert "Antigo" not in library.sources
+
+
+def test_knowledge_unavailable_returns_503(client: TestClient) -> None:
+    # Simulate the library failing to initialize (e.g. ML deps missing).
+    app.dependency_overrides[get_reference_library] = lambda: None
+
+    listed = client.get("/knowledge").json()
+    assert listed == {"available": False, "sources": []}
+
+    response = client.post("/knowledge/text", json={"name": "x", "content": "y"})
+    assert response.status_code == 503

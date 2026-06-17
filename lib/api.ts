@@ -34,6 +34,16 @@ export interface StatusResponse {
   obsidian: boolean;
 }
 
+export interface KnowledgeSource {
+  source: string;
+  chunks: number;
+}
+
+export interface KnowledgeListResponse {
+  available: boolean;
+  sources: KnowledgeSource[];
+}
+
 export class ApiError extends Error {
   readonly status?: number;
 
@@ -44,6 +54,17 @@ export class ApiError extends Error {
   }
 }
 
+// Pull FastAPI's `{ detail }` out of an error body so the UI can show why.
+async function errorDetail(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { detail?: unknown };
+    if (typeof data?.detail === "string") return data.detail;
+  } catch {
+    // Non-JSON body; fall through to the generic message.
+  }
+  return `HTTP ${response.status}`;
+}
+
 async function postJson(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -51,7 +72,7 @@ async function postJson(path: string, body: unknown, signal?: AbortSignal): Prom
     body: JSON.stringify(body),
     signal,
   });
-  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
   return response;
 }
 
@@ -112,4 +133,29 @@ export async function resetConversation(speaker: string): Promise<void> {
 
 export async function captureVoiceOnce(): Promise<void> {
   await postJson("/voice/capture-once", {});
+}
+
+// --- Knowledge sources (the settings panel) ---
+
+export async function listKnowledge(): Promise<KnowledgeListResponse> {
+  const response = await fetch(`${API_BASE}/knowledge`);
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  return (await response.json()) as KnowledgeListResponse;
+}
+
+export async function addKnowledgeText(name: string, content: string): Promise<KnowledgeSource> {
+  const response = await postJson("/knowledge/text", { name, content });
+  return (await response.json()) as KnowledgeSource;
+}
+
+export async function addKnowledgePath(path: string, source?: string): Promise<KnowledgeSource> {
+  const response = await postJson("/knowledge/path", { path, source: source || null });
+  return (await response.json()) as KnowledgeSource;
+}
+
+export async function deleteKnowledge(source: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/knowledge/${encodeURIComponent(source)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
 }
