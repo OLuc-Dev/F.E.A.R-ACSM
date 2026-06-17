@@ -9,10 +9,11 @@ import { Card } from "@/components/ui/card";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import {
   captureVoiceOnce,
-  checkHealth,
   getMemory,
+  getStatus,
   resetConversation,
   sendCommand,
+  type StatusResponse,
   streamCommand,
 } from "@/lib/api";
 
@@ -88,6 +89,12 @@ function SystemRow({
   );
 }
 
+// Map a backend status flag to a row's label + tone (cyan when on, grey otherwise).
+function flag(on: boolean | undefined, onLabel: string): { value: string; tone: "ok" | "muted" } {
+  if (on === undefined) return { value: "—", tone: "muted" };
+  return on ? { value: onLabel, tone: "ok" } : { value: "inativo", tone: "muted" };
+}
+
 export default function HomePage() {
   const [speaker, setSpeaker] = useState("Lucas");
   const [text, setText] = useState("");
@@ -97,6 +104,7 @@ export default function HomePage() {
   const [status, setStatus] = useState<Status>("online");
   const [isBusy, setIsBusy] = useState(false);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
 
   const idRef = useRef(1);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -113,9 +121,16 @@ export default function HomePage() {
 
   useEffect(() => {
     let active = true;
-    checkHealth().then((ok) => {
-      if (active) setBackendOnline(ok);
-    });
+    getStatus()
+      .then((data) => {
+        if (active) {
+          setSystemStatus(data);
+          setBackendOnline(true);
+        }
+      })
+      .catch(() => {
+        if (active) setBackendOnline(false);
+      });
     return () => {
       active = false;
     };
@@ -299,11 +314,11 @@ export default function HomePage() {
               </span>
             </div>
             <div className="text-xs">
-              <SystemRow icon={<Cpu className="size-3.5 text-cyan-200" />} label="OpenRouter" value="config local" tone="muted" />
-              <SystemRow icon={<Database className="size-3.5 text-violet-200" />} label="Memória" value="ativa" tone="ok" />
-              <SystemRow icon={<Mic className="size-3.5 text-cyan-200" />} label="Voz" value="sob demanda" tone="muted" />
-              <SystemRow icon={<Music className="size-3.5 text-emerald-200" />} label="Spotify" value="config local" tone="muted" />
-              <SystemRow icon={<BookOpen className="size-3.5 text-blue-200" />} label="Obsidian" value="config local" tone="muted" />
+              <SystemRow icon={<Cpu className="size-3.5 text-cyan-200" />} label="OpenRouter" {...flag(systemStatus?.openrouter, "configurado")} />
+              <SystemRow icon={<Database className="size-3.5 text-violet-200" />} label="Memória" {...flag(systemStatus?.memory, "ativa")} />
+              <SystemRow icon={<Mic className="size-3.5 text-cyan-200" />} label="Voz" {...flag(systemStatus?.voice, "ativa")} />
+              <SystemRow icon={<Music className="size-3.5 text-emerald-200" />} label="Spotify" {...flag(systemStatus?.spotify, "configurado")} />
+              <SystemRow icon={<BookOpen className="size-3.5 text-blue-200" />} label="Obsidian" {...flag(systemStatus?.obsidian, "configurado")} />
             </div>
           </Card>
         </div>

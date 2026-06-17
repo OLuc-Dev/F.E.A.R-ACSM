@@ -58,6 +58,17 @@ class TapGesturePayload(BaseModel):
     speaker: str = "user"
 
 
+class StatusResponse(BaseModel):
+    """Which F.E.A.R. integrations are configured/active."""
+
+    assistant: str
+    openrouter: bool
+    memory: bool
+    voice: bool
+    spotify: bool
+    obsidian: bool
+
+
 def cors_origins() -> list[str]:
     """Read allowed CORS origins from FEAR_CORS_ORIGINS."""
     raw = os.getenv(
@@ -97,6 +108,10 @@ def get_memory(request: Request) -> PersonalMemory:
 
 def get_tts(request: Request) -> Any:
     return request.app.state.tts
+
+
+def get_settings(request: Request) -> Settings:
+    return request.app.state.settings
 
 
 async def process_text_command(application: FastAPI, text: str, speaker: str):
@@ -243,6 +258,23 @@ async def health() -> dict[str, str]:
     settings = getattr(app.state, "settings", None)
     assistant_name = settings.assistant_name if settings else "F.E.A.R."
     return {"status": "ok", "assistant": assistant_name}
+
+
+@app.get("/status", response_model=StatusResponse)
+async def status(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> StatusResponse:
+    """Report which integrations are configured/active (drives the system panel)."""
+    spotify = getattr(request.app.state, "spotify", None)
+    return StatusResponse(
+        assistant=settings.assistant_name,
+        openrouter=bool(settings.openrouter_api_key and settings.openrouter_chat_model),
+        memory=getattr(request.app.state, "memory", None) is not None,
+        voice=getattr(request.app.state, "voice_listener", None) is not None,
+        spotify=bool(spotify is not None and spotify.is_configured),
+        obsidian=getattr(request.app.state, "obsidian_watcher", None) is not None,
+    )
 
 
 @app.post("/command", response_model=CommandResponse)

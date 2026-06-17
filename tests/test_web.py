@@ -6,8 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from fear.brain.async_conversation import CommandResponse
+from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
-from fear.web.app import app, get_brain, get_memory, get_tts
+from fear.web.app import app, get_brain, get_memory, get_settings, get_tts
 
 
 class FakeBrain:
@@ -50,6 +51,7 @@ def client(brain: FakeBrain) -> Iterator[TestClient]:
     app.dependency_overrides[get_brain] = lambda: brain
     app.dependency_overrides[get_memory] = FakeMemory
     app.dependency_overrides[get_tts] = FakeTTS
+    app.dependency_overrides[get_settings] = Settings
     try:
         yield TestClient(app)
     finally:
@@ -60,6 +62,15 @@ def test_health(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_status(client: TestClient) -> None:
+    response = client.get("/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["assistant"] == "F.E.A.R."
+    assert body["openrouter"] is False  # no API key in defaults
+    assert set(body) == {"assistant", "openrouter", "memory", "voice", "spotify", "obsidian"}
 
 
 def test_command(client: TestClient) -> None:

@@ -25,6 +25,15 @@ export interface MemoryResponse {
   memories: MemoryItem[];
 }
 
+export interface StatusResponse {
+  assistant: string;
+  openrouter: boolean;
+  memory: boolean;
+  voice: boolean;
+  spotify: boolean;
+  obsidian: boolean;
+}
+
 export class ApiError extends Error {
   readonly status?: number;
 
@@ -53,6 +62,12 @@ export async function checkHealth(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function getStatus(): Promise<StatusResponse> {
+  const response = await fetch(`${API_BASE}/status`);
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  return (await response.json()) as StatusResponse;
 }
 
 export async function sendCommand(request: CommandRequest): Promise<CommandResponse> {
