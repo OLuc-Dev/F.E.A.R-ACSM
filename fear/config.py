@@ -1,46 +1,50 @@
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
-
 from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass(slots=True)
-class Settings:
-    """Runtime configuration for the F.E.A.R. desktop assistant."""
+class Settings(BaseSettings):
+    """Validated runtime configuration for the F.E.A.R. assistant.
 
-    assistant_name: str = "F.E.A.R."
+    Construct with ``Settings.from_env()`` to load ``.env`` + the environment.
+    A bare ``Settings()`` reads only the current process environment, which keeps
+    it predictable in tests (where init kwargs override everything).
+    """
 
-    host: str = "127.0.0.1"
-    port: int = 8765
+    model_config = SettingsConfigDict(populate_by_name=True, extra="ignore")
 
-    sample_rate: int = 16_000
-    chunk_size: int = 1_024
+    assistant_name: str = Field("F.E.A.R.", validation_alias="FEAR_ASSISTANT_NAME")
 
-    whisper_model_name: str = "base"
+    host: str = Field("127.0.0.1", validation_alias="FEAR_HOST")
+    port: int = Field(8765, validation_alias="FEAR_PORT", ge=1, le=65535)
 
-    chroma_path: str = "data/chroma"
-    chroma_collection_name: str = "fear_memory"
+    sample_rate: int = Field(16_000, validation_alias="FEAR_SAMPLE_RATE", gt=0)
+    chunk_size: int = Field(1_024, validation_alias="FEAR_CHUNK_SIZE", gt=0)
+
+    whisper_model_name: str = Field("base", validation_alias="WHISPER_MODEL")
+
+    chroma_path: str = Field("data/chroma", validation_alias="CHROMA_PATH")
+    chroma_collection_name: str = Field("fear_memory", validation_alias="CHROMA_COLLECTION")
 
     # OpenRouter is used through an OpenAI-compatible client interface.
-    # This does not require using OpenAI as the model provider.
-    openrouter_api_key: str = ""
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_chat_model: str = ""
-    openrouter_embedding_model: str = ""
-    openrouter_http_referer: str = "http://127.0.0.1:8765"
-    openrouter_app_title: str = "F.E.A.R."
+    openrouter_api_key: str = Field("", validation_alias="OPENROUTER_API_KEY")
+    openrouter_base_url: str = Field(
+        "https://openrouter.ai/api/v1", validation_alias="OPENROUTER_BASE_URL"
+    )
+    openrouter_chat_model: str = Field("", validation_alias="OPENROUTER_CHAT_MODEL")
+    openrouter_embedding_model: str = Field("", validation_alias="OPENROUTER_EMBEDDING_MODEL")
+    openrouter_http_referer: str = Field(
+        "http://127.0.0.1:8765", validation_alias="OPENROUTER_HTTP_REFERER"
+    )
+    openrouter_app_title: str = Field("F.E.A.R.", validation_alias="OPENROUTER_APP_TITLE")
 
-    clap_threshold: float = 0.1
+    clap_threshold: float = Field(0.1, validation_alias="CLAP_THRESHOLD", ge=0.0, le=1.0)
 
     # Conversation behaviour.
-    # persona_file: path to F.E.A.R.'s system persona (Markdown/text). Defaults to
-    #   the shipped persona; if the file is missing, the built-in persona is used.
-    # max_history_turns: how many recent messages (user + assistant) to keep in
-    #   the rolling per-speaker dialogue window sent to the model.
-    persona_file: str = "prompts/fear_persona.md"
-    max_history_turns: int = 12
+    persona_file: str = Field("prompts/fear_persona.md", validation_alias="FEAR_PERSONA_FILE")
+    max_history_turns: int = Field(12, validation_alias="FEAR_MAX_HISTORY_TURNS", ge=0)
 
     spotify_scope: str = (
         "user-read-playback-state user-modify-playback-state user-read-currently-playing"
@@ -48,31 +52,6 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        """Load settings from .env and environment variables."""
+        """Load .env into the environment, then read and validate settings."""
         load_dotenv()
-
-        return cls(
-            assistant_name=os.getenv("FEAR_ASSISTANT_NAME", "F.E.A.R."),
-            host=os.getenv("FEAR_HOST", "127.0.0.1"),
-            port=int(os.getenv("FEAR_PORT", "8765")),
-            sample_rate=int(os.getenv("FEAR_SAMPLE_RATE", "16000")),
-            chunk_size=int(os.getenv("FEAR_CHUNK_SIZE", "1024")),
-            whisper_model_name=os.getenv("WHISPER_MODEL", "base"),
-            chroma_path=os.getenv("CHROMA_PATH", "data/chroma"),
-            chroma_collection_name=os.getenv("CHROMA_COLLECTION", "fear_memory"),
-            openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
-            openrouter_base_url=os.getenv(
-                "OPENROUTER_BASE_URL",
-                "https://openrouter.ai/api/v1",
-            ),
-            openrouter_chat_model=os.getenv("OPENROUTER_CHAT_MODEL", ""),
-            openrouter_embedding_model=os.getenv("OPENROUTER_EMBEDDING_MODEL", ""),
-            openrouter_http_referer=os.getenv(
-                "OPENROUTER_HTTP_REFERER",
-                "http://127.0.0.1:8765",
-            ),
-            openrouter_app_title=os.getenv("OPENROUTER_APP_TITLE", "F.E.A.R."),
-            clap_threshold=float(os.getenv("CLAP_THRESHOLD", "0.1")),
-            persona_file=os.getenv("FEAR_PERSONA_FILE", "prompts/fear_persona.md"),
-            max_history_turns=int(os.getenv("FEAR_MAX_HISTORY_TURNS", "12")),
-        )
+        return cls()

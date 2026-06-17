@@ -87,7 +87,10 @@ class FailingClient:
 @pytest.mark.asyncio
 async def test_process_command_fallback_without_openrouter() -> None:
     memory = FakeMemory()
-    brain = AsyncConversationalBrain(settings=Settings(), memory=memory)  # type: ignore[arg-type]
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),
+        memory=memory,  # type: ignore[arg-type]
+    )
 
     result = await brain.process_command("remember this preference", "Lucas")
 
@@ -157,7 +160,7 @@ async def test_non_music_command_does_not_touch_spotify() -> None:
     memory = FakeMemory()
     spotify = FakeSpotify()
     brain = AsyncConversationalBrain(
-        settings=Settings(),
+        settings=Settings(openrouter_api_key=""),
         memory=memory,
         spotify=spotify,  # type: ignore[arg-type]
     )
@@ -258,7 +261,10 @@ def test_default_persona_is_the_shipped_council() -> None:
 
     # Settings() defaults persona_file to the shipped persona, and it must load
     # regardless of the current working directory.
-    brain = AsyncConversationalBrain(settings=Settings(), memory=FakeMemory())  # type: ignore[arg-type]
+    brain = AsyncConversationalBrain(
+        settings=Settings(persona_file="prompts/fear_persona.md"),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
 
     message = brain._build_system_message()
     assert "F.E.A.R." in message

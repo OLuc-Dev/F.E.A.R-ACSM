@@ -57,7 +57,9 @@ def client(brain: FakeBrain) -> Iterator[TestClient]:
     app.dependency_overrides[get_brain] = lambda: brain
     app.dependency_overrides[get_memory] = FakeMemory
     app.dependency_overrides[get_tts] = FakeTTS
-    app.dependency_overrides[get_settings] = Settings
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        openrouter_api_key="", openrouter_chat_model=""
+    )
     try:
         yield TestClient(app)
     finally:
