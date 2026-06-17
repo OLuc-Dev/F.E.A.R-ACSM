@@ -30,6 +30,8 @@ function HeadModel({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
   const leftEye = useRef<THREE.MeshStandardMaterial>(null);
   const rightEye = useRef<THREE.MeshStandardMaterial>(null);
+  const leftGlow = useRef<THREE.PointLight>(null);
+  const rightGlow = useRef<THREE.PointLight>(null);
   const { scene } = useGLTF(MODEL_URL);
 
   // Clone (the cached scene can't be parented twice) and re-skin every mesh in
@@ -88,9 +90,15 @@ function HeadModel({ status }: { status: PresenceStatus }) {
       : thinking
         ? Math.sin(t * 1.4) * 0.5
         : Math.sin(t * 1.6) * 0.18;
-    const pulse = base + sway;
+    // An occasional cold, instant "blink" — a brief dip every few seconds.
+    const blink = t % 6 < 0.1 ? 0.12 : 1;
+    const pulse = (base + sway) * blink;
     if (leftEye.current) leftEye.current.emissiveIntensity = pulse;
     if (rightEye.current) rightEye.current.emissiveIntensity = pulse;
+    // The eyes spill a faint red light onto the surrounding metal.
+    const glow = (0.5 + Math.max(0, sway) * 0.15) * blink;
+    if (leftGlow.current) leftGlow.current.intensity = glow;
+    if (rightGlow.current) rightGlow.current.intensity = glow;
   });
 
   return (
@@ -118,6 +126,14 @@ function HeadModel({ status }: { status: PresenceStatus }) {
               toneMapped={false}
             />
           </mesh>
+          <pointLight
+            ref={s < 0 ? leftGlow : rightGlow}
+            position={[0, 0, 0.12]}
+            color="#ff2412"
+            intensity={0.5}
+            distance={1.5}
+            decay={2}
+          />
         </group>
       ))}
     </group>
@@ -137,6 +153,8 @@ export function FearPresence({ status = "online" }: { status?: PresenceStatus })
       <pointLight position={[-4, -1, 3]} intensity={3.5} color="#3b5bff" />
       {/* Soft cool fill from the front so the face stays readable */}
       <pointLight position={[0, 0.6, 4.5]} intensity={1.8} color="#cdd6ff" />
+      {/* Cool rim from behind so the head separates from the dark backdrop */}
+      <directionalLight position={[-3, 4, -5]} intensity={1.2} color="#9fb4ff" />
 
       <Suspense fallback={null}>
         {/* Procedural environment so metal/skin has soft streaks to reflect */}
@@ -152,11 +170,11 @@ export function FearPresence({ status = "online" }: { status?: PresenceStatus })
           />
           <Lightformer
             form="rect"
-            intensity={1.0}
+            intensity={0.7}
             position={[4, -1, 1]}
             rotation={[0, -Math.PI / 4, 0]}
             scale={[2.5, 4, 1]}
-            color="#ff5a5a"
+            color="#ff6a5a"
           />
         </Environment>
 
