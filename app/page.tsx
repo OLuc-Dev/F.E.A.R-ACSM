@@ -6,6 +6,7 @@ import { AnimatePresence, motion, type Variants } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
+  ArrowDown,
   BookOpen,
   Brain,
   Cpu,
@@ -28,7 +29,7 @@ import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel } from "@/components/ui/settings-panel";
 import { getStatus, type StatusResponse } from "@/lib/api";
-import { fade, springSnappy } from "@/lib/motion";
+import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { type Status, useConversation } from "@/lib/use-conversation";
 
 const FearPresence = dynamic(
@@ -201,7 +202,17 @@ export default function HomePage() {
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
-  const { messages, status, isBusy, threadRef, send, handleAppAction } = useConversation();
+  const {
+    messages,
+    status,
+    isBusy,
+    threadRef,
+    atBottom,
+    handleThreadScroll,
+    scrollToLatest,
+    send,
+    handleAppAction,
+  } = useConversation();
 
   // Show the right modifier hint per platform (avoids a hydration mismatch by
   // starting from a stable default and correcting after mount).
@@ -313,30 +324,35 @@ export default function HomePage() {
         {/* Deck */}
         <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-6">
           {/* Conversation */}
-          <div className="panel flex h-[72vh] min-h-[460px] flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-auto">
-            <AnimatePresence mode="wait" initial={false}>
-              {showWelcome ? (
-                <motion.div
-                  key="welcome"
-                  className="flex flex-1 flex-col"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={fade}
-                >
-                  <WelcomeScreen onPick={(prompt) => void send(prompt, speaker)} busy={isBusy} />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="thread"
+          <div className="panel flex h-[72vh] min-h-[460px] flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[78vh]">
+            {/* No exit-wait here: the thread must mount immediately so a fast first
+                reply is pinned to the bottom (it would otherwise stream into a
+                not-yet-mounted element). */}
+            {showWelcome ? (
+              <motion.div
+                key="welcome"
+                className="flex flex-1 flex-col"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={fade}
+              >
+                <WelcomeScreen onPick={(prompt) => void send(prompt, speaker)} busy={isBusy} />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="thread"
+                className="relative flex min-h-0 flex-1 flex-col"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={fade}
+              >
+                <div
                   ref={threadRef}
                   role="log"
                   aria-live="polite"
                   aria-label="Conversa com a F.E.A.R."
-                  className="scrollbar-thin flex-1 space-y-3 overflow-y-auto px-1 py-1"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={fade}
+                  onScroll={handleThreadScroll}
+                  className="scrollbar-thin min-h-0 flex-1 space-y-3 overflow-y-auto px-1 py-1"
                 >
                   {messages.map((message) => (
                     <motion.div
@@ -354,9 +370,25 @@ export default function HomePage() {
                       )}
                     </motion.div>
                   ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
+                </div>
+
+                <AnimatePresence>
+                  {!atBottom && (
+                    <motion.button
+                      type="button"
+                      onClick={scrollToLatest}
+                      initial={{ opacity: 0, y: 8, scale: 0.9 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 8, scale: 0.9 }}
+                      transition={springSoft}
+                      className="tap absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/10 bg-card/85 px-3 py-1.5 text-[11px] font-medium text-foreground/80 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.7)] backdrop-blur"
+                    >
+                      <ArrowDown className="size-3.5 text-cyan-300" /> Ir ao fim
+                    </motion.button>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            )}
 
             {/* Composer */}
             <form onSubmit={submitCommand} className="mt-3 shrink-0">
@@ -403,7 +435,7 @@ export default function HomePage() {
           </div>
 
           {/* Presence + system */}
-          <div className="flex flex-col gap-5 lg:h-auto">
+          <div className="flex flex-col gap-5 lg:h-[78vh]">
             <div className="panel relative h-[38vh] overflow-hidden rounded-[1.4rem] lg:h-auto lg:flex-1">
               <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 pt-4">
                 <span className="label-tn text-rose-300/70">Presença</span>

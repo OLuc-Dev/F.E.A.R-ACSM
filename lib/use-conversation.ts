@@ -23,17 +23,36 @@ export function useConversation() {
   const idRef = useRef(1);
   const threadRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // "Following" means stuck to the bottom: we keep pinning to the latest line
+  // until the user actively scrolls up, then we leave them alone (and the page
+  // can offer a "jump to latest" affordance via `atBottom`).
+  const followingRef = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
 
   const nextId = useCallback(() => idRef.current++, []);
 
-  // Follow the latest message, but only when the reader is already near the
-  // bottom — so scrolling up to re-read isn't yanked back down mid-stream.
+  // Pin to the newest content while following.
   useEffect(() => {
     const el = threadRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 120) el.scrollTop = el.scrollHeight;
+    if (el && followingRef.current) el.scrollTop = el.scrollHeight;
   }, [messages]);
+
+  // Track whether the reader is at the bottom; drives following + the pill.
+  const handleThreadScroll = useCallback(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    followingRef.current = near;
+    setAtBottom(near);
+  }, []);
+
+  const scrollToLatest = useCallback(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    followingRef.current = true;
+    setAtBottom(true);
+  }, []);
 
   // Cancel any in-flight stream when the page unmounts.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -61,6 +80,9 @@ export function useConversation() {
       const trimmed = text.trim();
       if (!trimmed || isBusy) return;
 
+      // The user just acted — re-engage following so they see their message + reply.
+      followingRef.current = true;
+      setAtBottom(true);
       setIsBusy(true);
       setStatus("thinking");
       pushMessage("user", trimmed);
@@ -127,5 +149,15 @@ export function useConversation() {
     [nextId, pushMessage],
   );
 
-  return { messages, status, isBusy, threadRef, send, handleAppAction };
+  return {
+    messages,
+    status,
+    isBusy,
+    threadRef,
+    atBottom,
+    handleThreadScroll,
+    scrollToLatest,
+    send,
+    handleAppAction,
+  };
 }
