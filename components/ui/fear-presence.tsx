@@ -24,7 +24,7 @@ const MODEL_URL = "/models/fear-head.glb";
 
 // Glowing-eye placement as fractions of the head's half-extents (tuned visually),
 // so it follows the sockets regardless of the model's scale.
-const EYE = { fx: 0.4, fy: 0.14, fz: 0.96, r: 0.09 } as const;
+const EYE = { fx: 0.36, fy: 0.02, fz: 0.92, r: 0.085 } as const;
 
 function HeadModel({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
@@ -100,7 +100,7 @@ function HeadModel({ status }: { status: PresenceStatus }) {
         <mesh
           key={s}
           position={[s * half[0] * EYE.fx, half[1] * EYE.fy, half[2] * EYE.fz]}
-          scale={[1.5, 0.82, 1]}
+          scale={[1.8, 0.56, 1]}
         >
           <sphereGeometry args={[EYE.r, 24, 24]} />
           <meshStandardMaterial
