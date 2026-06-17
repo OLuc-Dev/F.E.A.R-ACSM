@@ -46,5 +46,7 @@ jobs:
         run: npm ci
       - name: Typecheck frontend
         run: npm run typecheck
+      - name: Test frontend
+        run: npm test
       - name: Build frontend
         run: npm run build
