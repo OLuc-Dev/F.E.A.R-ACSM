@@ -24,7 +24,7 @@ const MODEL_URL = "/models/fear-head.glb";
 
 // Glowing-eye placement as fractions of the head's half-extents (tuned visually),
 // so it follows the sockets regardless of the model's scale.
-const EYE = { fx: 0.36, fy: 0.02, fz: 0.92, r: 0.085 } as const;
+const EYE = { fx: 0.34, fy: -0.13, fz: 0.95, r: 0.085 } as const;
 
 function HeadModel({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
