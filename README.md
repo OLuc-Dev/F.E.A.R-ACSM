@@ -70,6 +70,9 @@ cat .env.advanced.example >> .env
 Preencha `OPENROUTER_API_KEY` e `OPENROUTER_CHAT_MODEL` para respostas completas.
 Sem eles, F.E.A.R. ainda escuta e lembra, mas responde em modo de fallback.
 
+Guia passo a passo de OpenRouter + Spotify (com o login one-time do Spotify):
+**[`docs/setup.md`](docs/setup.md)**. As chaves ficam só no seu `.env` local.
+
 ## Como rodar
 
 ```bash
