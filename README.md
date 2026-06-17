@@ -12,7 +12,8 @@ visível. Alguns apenas sabem.
 F.E.A.R. é um assistente pessoal **local-first**:
 
 - **Backend** em Python (FastAPI + asyncio) — `fear/`, servido por `fear.web.app`.
-- **Frontend** em Next.js / React / Tailwind — `app/`, `components/`, `lib/`.
+- **Frontend** em Next.js / React / Tailwind — uma thread de conversa em vidro com
+  streaming e uma presença 3D (`app/`, `components/`, `lib/`).
 - **UI estática legada** opcional em `frontend/`, servida em `/legacy`.
 
 O cérebro conversa via OpenRouter (API compatível com a do OpenAI), guarda
@@ -23,6 +24,11 @@ pode consultar uma biblioteca de notas em markdown.
 
 - **Diálogo com continuidade**: janela de conversa por interlocutor, então F.E.A.R.
   acompanha o assunto entre turnos em vez de tratar cada mensagem isolada.
+- **Streaming ao vivo**: as respostas chegam token a token (`/command/stream`), numa
+  thread de conversa — não num formulário.
+- **Conselho interno**: em pedidos estratégicos, responde com Leitura rápida, as vozes
+  (Contrarian/First-Principles/Expansionist/Outsider/Executor) em cards, Síntese do
+  Chairman e Próximo passo.
 - **Persona editável**: a personalidade da F.E.A.R. vive em `prompts/fear_persona.md`
   (carregado por `FEAR_PERSONA_FILE`). Edite esse arquivo para mudar a voz dele; sem
   ele, uma persona embutida é usada como fallback.
@@ -33,6 +39,8 @@ pode consultar uma biblioteca de notas em markdown.
 - **Voz** opcional (Whisper, push-to-talk) e **TTS** natural (ElevenLabs) com
   fallback offline (`pyttsx3`).
 - **Observador do Obsidian**: indexa notas do vault conforme você escreve.
+- **Presença 3D**: cabeça cromada com olhos vermelhos e boca que anima ao falar
+  (React Three Fiber), com um painel de status do sistema ao lado.
 
 ## Requisitos
 
@@ -84,7 +92,9 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | Método | Rota                  | Descrição                                   |
 | ------ | --------------------- | ------------------------------------------- |
 | GET    | `/health`             | Status do runtime.                          |
+| GET    | `/status`             | Integrações configuradas/ativas (painel Sistema). |
 | POST   | `/command`            | `{text, speaker, speak}` → `{reply, ...}`.  |
+| POST   | `/command/stream`     | Mesma entrada; resposta em streaming (texto).|
 | POST   | `/conversation/reset` | Limpa a janela de diálogo de um interlocutor. |
 | GET    | `/memory/{speaker}`   | Memórias recentes de um interlocutor.       |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |
@@ -94,9 +104,10 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 ## Desenvolvimento
 
 ```bash
-ruff check fear tests      # lint
+ruff check fear tests          # lint
+ruff format --check fear tests # formatação
 mypy fear --ignore-missing-imports
-pytest                     # testes
+pytest                         # testes (cérebro + endpoints web)
 npm run typecheck && npm run build
 ```
 
