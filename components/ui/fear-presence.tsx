@@ -6,31 +6,25 @@ import { ContactShadows, Environment, Float, Lightformer, RoundedBox, Sparkles }
 import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 
-// A code-controlled F.E.A.R. presence: a graphite robotic face with a defined
-// brow, nose, cheekbones and jaw, glowing red eyes and an Ultron-style grille
-// mouth that animates while she speaks. Fully ours, fully reactive — it drifts
-// on idle, tracks the cursor, and shifts its energy with the status.
+// A code-controlled F.E.A.R. presence inspired by Ultron: a bright brushed-steel
+// face defined by geometry — a scowling brow, deep-set almond eyes, a real nose,
+// cheek panels, a jaw, and a segmented metal mouth that parts while she speaks.
+// Fully ours, fully reactive — drifts on idle, tracks the cursor, shifts with status.
 
 export type PresenceStatus = "online" | "listening" | "thinking" | "speaking" | "error";
 
-// Material presets: dark graphite shell, brighter steel ridges that catch the
-// light and read as raised features, and a near-black socket recess.
-const GRAPHITE = {
-  color: "#5e636c",
-  metalness: 1,
-  roughness: 0.32,
-  clearcoat: 1,
-  clearcoatRoughness: 0.16,
-  envMapIntensity: 1.35,
-} as const;
+// One bright steel for the whole face (Ultron is monochrome metal; the features
+// read through form + light, not colour), plus a near-black recess for sockets,
+// seams and the mouth cavity.
 const STEEL = {
-  color: "#aab0b8",
+  color: "#c3c7cf",
   metalness: 1,
-  roughness: 0.22,
-  clearcoat: 1,
-  clearcoatRoughness: 0.12,
-  envMapIntensity: 1.2,
+  roughness: 0.36,
+  clearcoat: 0.6,
+  clearcoatRoughness: 0.28,
+  envMapIntensity: 1.25,
 } as const;
+const DARK = { color: "#08090c", metalness: 0.5, roughness: 0.6 } as const;
 
 function Head({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
@@ -69,115 +63,102 @@ function Head({ status }: { status: PresenceStatus }) {
     if (rightEye.current) rightEye.current.emissiveIntensity = pulse;
 
     if (mouth.current) {
-      const target = speaking ? 0.28 + Math.abs(Math.sin(t * 13)) * 0.95 : 0.18;
+      const target = speaking ? 0.45 + Math.abs(Math.sin(t * 13)) * 0.9 : 0.3;
       mouth.current.scale.y += (target - mouth.current.scale.y) * 0.4;
     }
     if (mouthGlow.current) {
-      const target = speaking ? 2.6 + Math.abs(Math.sin(t * 16)) * 1.6 : 0.9;
+      const target = speaking ? 2.4 + Math.abs(Math.sin(t * 16)) * 1.6 : 0.7;
       mouthGlow.current.emissiveIntensity += (target - mouthGlow.current.emissiveIntensity) * k;
     }
   });
 
   return (
     <group ref={group}>
-      {/* Graphite cranium — a polished metal ovoid */}
-      <mesh scale={[1.42, 1.8, 1.5]}>
+      {/* Cranium */}
+      <mesh scale={[1.32, 1.62, 1.46]}>
         <sphereGeometry args={[1, 96, 96]} />
-        <meshPhysicalMaterial {...GRAPHITE} />
+        <meshPhysicalMaterial {...STEEL} />
       </mesh>
 
-      {/* Brow ridge — two angled halves meeting low at center (a faint scowl) */}
+      {/* Jaw / chin — a narrower bulge at the lower front */}
+      <mesh position={[0, -0.86, 0.26]} scale={[1.04, 0.82, 1.04]}>
+        <sphereGeometry args={[1, 64, 64]} />
+        <meshPhysicalMaterial {...STEEL} />
+      </mesh>
+
+      {/* Brow ridge — two halves dipping to the centre for an angry scowl */}
       {[-1, 1].map((s) => (
         <RoundedBox
           key={`brow-${s}`}
-          args={[0.74, 0.17, 0.34]}
-          radius={0.07}
+          args={[0.76, 0.19, 0.34]}
+          radius={0.08}
           smoothness={4}
-          position={[s * 0.4, 0.6, 1.4]}
-          rotation={[0.34, s * -0.12, s * 0.16]}
+          position={[s * 0.35, 0.55, 1.36]}
+          rotation={[0.32, s * -0.08, s * 0.32]}
         >
           <meshPhysicalMaterial {...STEEL} />
         </RoundedBox>
       ))}
 
-      {/* Nose bridge + tip */}
-      <RoundedBox args={[0.15, 0.66, 0.2]} radius={0.06} smoothness={4} position={[0, 0.16, 1.6]}>
+      {/* Nose — bridge + tip, clearly protruding */}
+      <RoundedBox args={[0.17, 0.62, 0.26]} radius={0.07} smoothness={4} position={[0, 0.14, 1.52]}>
         <meshPhysicalMaterial {...STEEL} />
       </RoundedBox>
-      <RoundedBox args={[0.22, 0.18, 0.2]} radius={0.07} smoothness={4} position={[0, -0.2, 1.62]}>
+      <mesh position={[0, -0.18, 1.56]} scale={[1.2, 0.85, 1]}>
+        <sphereGeometry args={[0.17, 28, 28]} />
         <meshPhysicalMaterial {...STEEL} />
-      </RoundedBox>
+      </mesh>
 
-      {/* Cheekbones — short angled struts that define the mid-face */}
+      {/* Cheek panels — flat planes that flow into the jaw */}
       {[-1, 1].map((s) => (
         <RoundedBox
           key={`cheek-${s}`}
-          args={[0.16, 0.48, 0.22]}
-          radius={0.07}
+          args={[0.5, 0.64, 0.16]}
+          radius={0.12}
           smoothness={4}
-          position={[s * 0.6, -0.16, 1.36]}
-          rotation={[0, s * -0.2, s * 0.62]}
+          position={[s * 0.72, -0.22, 1.02]}
+          rotation={[0.06, s * -0.62, s * 0.12]}
         >
           <meshPhysicalMaterial {...STEEL} />
         </RoundedBox>
       ))}
 
-      {/* Eyes set into dark sockets */}
-      {[-0.42, 0.42].map((x, i) => (
-        <group key={x} position={[x, 0.26, 1.46]}>
-          <mesh position={[0, 0, -0.12]}>
-            <sphereGeometry args={[0.22, 28, 28]} />
-            <meshStandardMaterial color="#050507" metalness={0.5} roughness={0.55} />
+      {/* Deep-set almond eyes */}
+      {[-0.41, 0.41].map((x, i) => (
+        <group key={x} position={[x, 0.34, 1.32]} rotation={[0, 0, x < 0 ? 0.2 : -0.2]}>
+          <mesh position={[0, 0, -0.12]} scale={[1.6, 0.95, 1]}>
+            <sphereGeometry args={[0.2, 28, 28]} />
+            <meshStandardMaterial {...DARK} />
           </mesh>
-          <mesh>
-            <sphereGeometry args={[0.14, 32, 32]} />
+          <mesh scale={[1.55, 0.72, 1]}>
+            <sphereGeometry args={[0.15, 32, 32]} />
             <meshStandardMaterial
               ref={i === 0 ? leftEye : rightEye}
-              color="#ff2a2a"
-              emissive="#ff1414"
-              emissiveIntensity={2.2}
-              toneMapped={false}
-            />
-          </mesh>
-          <mesh position={[0, 0, 0.07]}>
-            <sphereGeometry args={[0.06, 24, 24]} />
-            <meshStandardMaterial
-              color="#fff1f1"
-              emissive="#ffd0d0"
-              emissiveIntensity={3.2}
+              color="#ff3a1e"
+              emissive="#ff2810"
+              emissiveIntensity={2.4}
               toneMapped={false}
             />
           </mesh>
         </group>
       ))}
 
-      {/* Defined jaw / chin */}
-      <RoundedBox
-        args={[0.92, 0.5, 0.66]}
-        radius={0.16}
-        smoothness={4}
-        position={[0, -1.04, 1.02]}
-        rotation={[-0.26, 0, 0]}
-      >
-        <meshPhysicalMaterial {...GRAPHITE} />
-      </RoundedBox>
-
-      {/* Mouth — a red-lit recess behind dark vertical grille bars (Ultron) */}
-      <group ref={mouth} position={[0, -0.62, 1.42]} scale={[1, 0.06, 1]}>
-        <mesh position={[0, 0, -0.04]}>
-          <planeGeometry args={[0.8, 0.42]} />
+      {/* Segmented metal mouth — silver teeth over a dark, faintly-red cavity */}
+      <group ref={mouth} position={[0, -0.5, 1.36]} scale={[1, 0.3, 1]}>
+        <mesh position={[0, 0, -0.06]}>
+          <planeGeometry args={[0.86, 0.5]} />
           <meshStandardMaterial
             ref={mouthGlow}
-            color="#ff2a2a"
-            emissive="#ff1414"
-            emissiveIntensity={1.3}
+            color="#ff2a14"
+            emissive="#ff1c0a"
+            emissiveIntensity={0.7}
             toneMapped={false}
           />
         </mesh>
-        {[-0.3, -0.15, 0, 0.15, 0.3].map((x) => (
-          <mesh key={x} position={[x, 0, 0.04]}>
-            <boxGeometry args={[0.06, 0.46, 0.1]} />
-            <meshStandardMaterial color="#1a1c20" metalness={0.9} roughness={0.4} />
+        {[-0.36, -0.24, -0.12, 0, 0.12, 0.24, 0.36].map((x) => (
+          <mesh key={x} position={[x, 0, 0.02]}>
+            <boxGeometry args={[0.07, 0.5, 0.12]} />
+            <meshPhysicalMaterial {...STEEL} />
           </mesh>
         ))}
       </group>
