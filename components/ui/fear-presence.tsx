@@ -22,21 +22,47 @@ export type PresenceStatus = "online" | "listening" | "thinking" | "speaking" | 
 
 const MODEL_URL = "/models/fear-head.glb";
 
+// Glowing-eye placement as fractions of the head's half-extents (tuned visually),
+// so it follows the sockets regardless of the model's scale.
+const EYE = { fx: 0.4, fy: 0.14, fz: 0.96, r: 0.09 } as const;
+
 function HeadModel({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
+  const leftEye = useRef<THREE.MeshStandardMaterial>(null);
+  const rightEye = useRef<THREE.MeshStandardMaterial>(null);
   const { scene } = useGLTF(MODEL_URL);
 
-  // Clone so the cached scene can't end up parented in two places, then measure
-  // it to derive a fit scale that works regardless of the model's export units.
-  const model = useMemo(() => scene.clone(true), [scene]);
-  const fit = useMemo(() => {
+  // Clone (the cached scene can't be parented twice) and re-skin every mesh in
+  // dark chrome so the sculpt reads as Ultron-style metal, not its base texture.
+  const model = useMemo(() => {
+    const cloned = scene.clone(true);
+    const metal = new THREE.MeshPhysicalMaterial({
+      color: "#7c818b",
+      metalness: 1,
+      roughness: 0.34,
+      clearcoat: 0.5,
+      clearcoatRoughness: 0.25,
+      envMapIntensity: 1.3,
+    });
+    cloned.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = metal;
+    });
+    return cloned;
+  }, [scene]);
+
+  // Fit scale from the bounding box (export units don't matter) plus the fitted
+  // half-extents, used to anchor the eyes proportionally.
+  const { fit, half } = useMemo(() => {
     const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    return 3.4 / maxDim;
+    const scale = 3.4 / maxDim;
+    return { fit: scale, half: [(size.x * scale) / 2, (size.y * scale) / 2, (size.z * scale) / 2] };
   }, [model]);
 
   const speaking = status === "speaking";
   const thinking = status === "thinking";
+  const error = status === "error";
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
@@ -53,6 +79,12 @@ function HeadModel({ status }: { status: PresenceStatus }) {
     const breath = speaking ? 0.02 : 0.012;
     const speed = speaking ? 2.2 : 1.4;
     group.current.scale.setScalar(1 + Math.sin(t * speed) * breath);
+
+    // Eyes pulse with the status: bright/quick speaking, brooding thinking, hot error.
+    const base = error ? 4.2 : speaking ? 3.2 : thinking ? 1.5 : 2.0;
+    const pulse = base + (thinking ? Math.sin(t * 1.6) * 0.7 : Math.sin(t * 3) * 0.5);
+    if (leftEye.current) leftEye.current.emissiveIntensity = pulse;
+    if (rightEye.current) rightEye.current.emissiveIntensity = pulse;
   });
 
   return (
@@ -62,6 +94,24 @@ function HeadModel({ status }: { status: PresenceStatus }) {
           <primitive object={model} />
         </Center>
       </group>
+
+      {/* Glowing eyes overlaid on the sculpt */}
+      {[-1, 1].map((s) => (
+        <mesh
+          key={s}
+          position={[s * half[0] * EYE.fx, half[1] * EYE.fy, half[2] * EYE.fz]}
+          scale={[1.5, 0.82, 1]}
+        >
+          <sphereGeometry args={[EYE.r, 24, 24]} />
+          <meshStandardMaterial
+            ref={s < 0 ? leftEye : rightEye}
+            color="#ff4a1e"
+            emissive="#ff360f"
+            emissiveIntensity={2.4}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
@@ -118,7 +168,7 @@ export function FearPresence({ status = "online" }: { status?: PresenceStatus })
       </Suspense>
 
       <EffectComposer>
-        <Bloom intensity={0.6} luminanceThreshold={0.7} luminanceSmoothing={0.2} mipmapBlur />
+        <Bloom intensity={0.7} luminanceThreshold={0.55} luminanceSmoothing={0.2} mipmapBlur />
         <Vignette offset={0.3} darkness={0.7} />
       </EffectComposer>
     </Canvas>
