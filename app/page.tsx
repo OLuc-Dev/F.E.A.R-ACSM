@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import {
@@ -198,8 +198,33 @@ export default function HomePage() {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modKey, setModKey] = useState("⌘");
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const { messages, status, isBusy, threadRef, send, handleAppAction } = useConversation();
+
+  // Show the right modifier hint per platform (avoids a hydration mismatch by
+  // starting from a stable default and correcting after mount).
+  useEffect(() => {
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+    if (!isMac) setModKey("Ctrl");
+  }, []);
+
+  // macOS-style shortcuts: ⌘K focuses the composer, ⌘, toggles settings.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (!settingsOpen) composerRef.current?.focus();
+      } else if (event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen((open) => !open);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [settingsOpen]);
 
   useEffect(() => {
     let active = true;
@@ -223,6 +248,8 @@ export default function HomePage() {
     if (isBusy || !text.trim()) return;
     const value = text;
     setText("");
+    // Collapse the auto-grown composer back to one line after sending.
+    if (composerRef.current) composerRef.current.style.height = "auto";
     void send(value, speaker);
   }
 
@@ -335,8 +362,15 @@ export default function HomePage() {
             <form onSubmit={submitCommand} className="mt-3 shrink-0">
               <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/[0.05] focus-within:shadow-[0_0_0_4px_rgba(34,211,238,0.07)]">
                 <textarea
+                  ref={composerRef}
                   value={text}
                   onChange={(event) => setText(event.target.value)}
+                  onInput={(event) => {
+                    // Grow with the content, capped, for a fluid composer.
+                    const el = event.currentTarget;
+                    el.style.height = "auto";
+                    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
@@ -361,9 +395,9 @@ export default function HomePage() {
                 <span className="text-[10px] text-muted-foreground/45">
                   Enter envia · Shift+Enter quebra linha
                 </span>
-                <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground/40">
-                  {STATUS_LABEL[status]}
-                </span>
+                <kbd className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/50">
+                  {modKey === "⌘" ? "⌘K" : "Ctrl+K"}
+                </kbd>
               </div>
             </form>
           </div>

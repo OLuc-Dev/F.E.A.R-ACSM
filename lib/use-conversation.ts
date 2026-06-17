@@ -26,10 +26,13 @@ export function useConversation() {
 
   const nextId = useCallback(() => idRef.current++, []);
 
-  // Keep the thread pinned to the latest message.
+  // Follow the latest message, but only when the reader is already near the
+  // bottom — so scrolling up to re-read isn't yanked back down mid-stream.
   useEffect(() => {
     const el = threadRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 120) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   // Cancel any in-flight stream when the page unmounts.
