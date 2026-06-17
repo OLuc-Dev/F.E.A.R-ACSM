@@ -382,7 +382,7 @@ export default function HomePage() {
                   {status === "speaking" ? "falando" : "latente"}
                 </span>
               </div>
-              <FearPresence speaking={status === "speaking"} />
+              <FearPresence status={status} />
             </div>
 
             <div className="panel rounded-[1.4rem] p-5">

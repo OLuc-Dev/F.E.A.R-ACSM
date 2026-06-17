@@ -7,25 +7,43 @@ import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 
 // A code-controlled F.E.A.R. presence: a liquid-chrome head with glowing red
-// eyes and a mouth that animates while she speaks. Fully ours, fully reactive.
+// eyes and a mouth that animates while she speaks. Fully ours, fully reactive —
+// it drifts on idle, tracks the cursor, and shifts its energy with the status.
 
-function Head({ speaking }: { speaking: boolean }) {
+export type PresenceStatus = "online" | "listening" | "thinking" | "speaking" | "error";
+
+function Head({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
   const mouth = useRef<THREE.Mesh>(null);
   const leftEye = useRef<THREE.MeshStandardMaterial>(null);
   const rightEye = useRef<THREE.MeshStandardMaterial>(null);
 
-  useFrame((state) => {
+  const speaking = status === "speaking";
+  const thinking = status === "thinking";
+  const error = status === "error";
+
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
+    // Frame-rate-independent smoothing factor.
+    const k = Math.min(1, delta * 3.2);
 
     if (group.current) {
-      group.current.rotation.y = Math.sin(t * 0.5) * 0.26;
-      group.current.rotation.x = Math.sin(t * 0.35) * 0.07;
-      group.current.scale.setScalar(1 + Math.sin(t * 1.4) * 0.012);
+      // Idle drift blended with a subtle parallax toward the pointer, so the
+      // head feels aware of where you are without being a puppet.
+      const targetY = Math.sin(t * 0.5) * 0.16 + state.pointer.x * 0.5;
+      const targetX = Math.sin(t * 0.35) * 0.05 - state.pointer.y * 0.28;
+      group.current.rotation.y += (targetY - group.current.rotation.y) * k;
+      group.current.rotation.x += (targetX - group.current.rotation.x) * k;
+      // Breathing — quicker and deeper while speaking.
+      const breath = speaking ? 0.02 : 0.012;
+      const speed = speaking ? 2.2 : 1.4;
+      group.current.scale.setScalar(1 + Math.sin(t * speed) * breath);
     }
 
-    const base = speaking ? 3.2 : 2.0;
-    const pulse = base + Math.sin(t * 3) * 0.5;
+    const base = error ? 4.2 : speaking ? 3.2 : thinking ? 1.5 : 2.0;
+    // Thinking broods on a slow wave; otherwise a steady pulse.
+    const wobble = thinking ? Math.sin(t * 1.6) * 0.7 : Math.sin(t * 3) * 0.5;
+    const pulse = base + wobble;
     if (leftEye.current) leftEye.current.emissiveIntensity = pulse;
     if (rightEye.current) rightEye.current.emissiveIntensity = pulse;
 
@@ -90,7 +108,7 @@ function Head({ speaking }: { speaking: boolean }) {
   );
 }
 
-export function FearPresence({ speaking = false }: { speaking?: boolean }) {
+export function FearPresence({ status = "online" }: { status?: PresenceStatus }) {
   return (
     <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true }}>
       <color attach="background" args={["#06070a"]} />
@@ -123,7 +141,7 @@ export function FearPresence({ speaking = false }: { speaking?: boolean }) {
         </Environment>
 
         <Float speed={1.3} rotationIntensity={0.22} floatIntensity={0.6}>
-          <Head speaking={speaking} />
+          <Head status={status} />
         </Float>
 
         <Sparkles count={42} scale={9} size={2.2} speed={0.3} color="#9ab4ff" opacity={0.5} />

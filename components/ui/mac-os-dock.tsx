@@ -206,7 +206,10 @@ const MacOSDock: React.FC<MacOSDockProps> = ({ apps, onAppClick, openApps = [], 
       className={`backdrop-blur-md ${className}`}
       style={{
         width: `${contentWidth + padding * 2}px`,
-        background: "rgba(20, 22, 30, 0.6)",
+        background: "rgba(20, 22, 30, 0.55)",
+        // macOS-style vibrancy: saturate the backdrop the dock floats over.
+        WebkitBackdropFilter: "blur(16px) saturate(170%)",
+        backdropFilter: "blur(16px) saturate(170%)",
         borderRadius: `${Math.max(12, baseIconSize * 0.4)}px`,
         border: "1px solid rgba(255, 255, 255, 0.12)",
         boxShadow: `
