@@ -24,7 +24,7 @@ const MODEL_URL = "/models/fear-head.glb";
 
 // Glowing-eye placement as fractions of the head's half-extents (tuned visually),
 // so it follows the sockets regardless of the model's scale.
-const EYE = { fx: 0.34, fy: -0.13, fz: 0.95, r: 0.085 } as const;
+const EYE = { fx: 0.34, fy: -0.08, fz: 0.95, r: 0.08 } as const;
 
 function HeadModel({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
@@ -80,9 +80,15 @@ function HeadModel({ status }: { status: PresenceStatus }) {
     const speed = speaking ? 2.2 : 1.4;
     group.current.scale.setScalar(1 + Math.sin(t * speed) * breath);
 
-    // Eyes pulse with the status: bright/quick speaking, brooding thinking, hot error.
-    const base = error ? 4.2 : speaking ? 3.2 : thinking ? 1.5 : 2.0;
-    const pulse = base + (thinking ? Math.sin(t * 1.6) * 0.7 : Math.sin(t * 3) * 0.5);
+    // Eyes hold a steady, cold glow at rest (barely breathing); they only get
+    // active for speaking/error, and brood slowly while thinking.
+    const base = error ? 4.4 : speaking ? 3.2 : thinking ? 1.6 : 2.1;
+    const sway = speaking
+      ? Math.sin(t * 9) * 0.6
+      : thinking
+        ? Math.sin(t * 1.4) * 0.5
+        : Math.sin(t * 1.6) * 0.18;
+    const pulse = base + sway;
     if (leftEye.current) leftEye.current.emissiveIntensity = pulse;
     if (rightEye.current) rightEye.current.emissiveIntensity = pulse;
   });
@@ -95,22 +101,24 @@ function HeadModel({ status }: { status: PresenceStatus }) {
         </Center>
       </group>
 
-      {/* Glowing eyes overlaid on the sculpt */}
+      {/* Deep-set, cold eyes: a dark recess framing a thin crimson LED slit */}
       {[-1, 1].map((s) => (
-        <mesh
-          key={s}
-          position={[s * half[0] * EYE.fx, half[1] * EYE.fy, half[2] * EYE.fz]}
-          scale={[1.8, 0.56, 1]}
-        >
-          <sphereGeometry args={[EYE.r, 24, 24]} />
-          <meshStandardMaterial
-            ref={s < 0 ? leftEye : rightEye}
-            color="#ff4a1e"
-            emissive="#ff360f"
-            emissiveIntensity={2.4}
-            toneMapped={false}
-          />
-        </mesh>
+        <group key={s} position={[s * half[0] * EYE.fx, half[1] * EYE.fy, half[2] * EYE.fz]}>
+          <mesh position={[0, 0, -0.05]} scale={[2.2, 1.05, 1]}>
+            <sphereGeometry args={[EYE.r, 20, 20]} />
+            <meshStandardMaterial color="#050507" metalness={0.4} roughness={0.7} />
+          </mesh>
+          <mesh scale={[1.95, 0.5, 1]}>
+            <sphereGeometry args={[EYE.r, 24, 24]} />
+            <meshStandardMaterial
+              ref={s < 0 ? leftEye : rightEye}
+              color="#ff2a16"
+              emissive="#ff1408"
+              emissiveIntensity={2.1}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
       ))}
     </group>
   );
