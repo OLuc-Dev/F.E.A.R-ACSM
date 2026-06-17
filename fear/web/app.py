@@ -20,6 +20,7 @@ from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_c
 from fear.library.reference_library import ReferenceLibrary
 from fear.logging_config import configure_logging
 from fear.memory.personal_memory import PersonalMemory
+from fear.runtime_state import load_runtime_config, save_runtime_config
 
 if TYPE_CHECKING:
     from fear.audio.voice_listener import TranscriptEvent
@@ -229,6 +230,19 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         reference_library=reference_library,
         spotify=spotify,
     )
+
+    # Re-apply the panel's last model/mode choice on top of the .env defaults.
+    overrides = load_runtime_config(settings.chroma_path)
+    model_override = overrides.get("model")
+    if isinstance(model_override, str):
+        application.state.brain.set_chat_model(model_override)
+    mode_override = overrides.get("persona_mode")
+    if isinstance(mode_override, str):
+        try:
+            application.state.brain.set_persona_mode(mode_override)
+        except ValueError:
+            logger.warning("Ignoring unknown persisted persona mode: %s", mode_override)
+
     application.state.loop = asyncio.get_running_loop()
     application.state.voice_listener = None
     application.state.obsidian_watcher = None
@@ -501,8 +515,9 @@ async def config_get(
 async def config_set(
     payload: ConfigUpdate,
     brain: AsyncConversationalBrain = Depends(get_brain),
+    settings: Settings = Depends(get_settings),
 ) -> ConfigResponse:
-    """Update the chat model and/or persona mode for this session (no secrets)."""
+    """Update the chat model and/or persona mode (no secrets); persisted across restarts."""
     if payload.model is not None:
         brain.set_chat_model(payload.model)
     if payload.persona_mode is not None:
@@ -510,6 +525,13 @@ async def config_set(
             brain.set_persona_mode(payload.persona_mode)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Modo de persona inválido.") from exc
+
+    config = brain.get_config()
+    save_runtime_config(
+        settings.chroma_path,
+        model=str(config["model"]),
+        persona_mode=str(config["persona_mode"]),
+    )
     return _config_response(brain)
 
 

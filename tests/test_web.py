@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -110,14 +111,15 @@ def library() -> FakeReferenceLibrary:
 
 
 @pytest.fixture
-def client(brain: FakeBrain, library: FakeReferenceLibrary) -> Iterator[TestClient]:
+def client(brain: FakeBrain, library: FakeReferenceLibrary, tmp_path: Path) -> Iterator[TestClient]:
     # Override the dependency providers and skip the lifespan (no hardware/ML deps).
+    # chroma_path points at a tmp dir so /config persistence writes land there.
     app.dependency_overrides[get_brain] = lambda: brain
     app.dependency_overrides[get_memory] = FakeMemory
     app.dependency_overrides[get_tts] = FakeTTS
     app.dependency_overrides[get_reference_library] = lambda: library
     app.dependency_overrides[get_settings] = lambda: Settings(
-        openrouter_api_key="", openrouter_chat_model=""
+        openrouter_api_key="", openrouter_chat_model="", chroma_path=str(tmp_path / "chroma")
     )
     try:
         yield TestClient(app)
