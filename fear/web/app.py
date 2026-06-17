@@ -372,7 +372,12 @@ async def command_stream(
         async for chunk in brain.stream_command(payload.text, payload.speaker):
             yield chunk
 
-    return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
+    # Disable proxy/browser buffering so tokens reach the client as they are produced.
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/memory/{speaker}", response_model=MemoryResponse)

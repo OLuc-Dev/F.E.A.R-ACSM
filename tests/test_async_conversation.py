@@ -273,6 +273,42 @@ def test_default_persona_is_the_shipped_council() -> None:
 
 
 @pytest.mark.asyncio
+async def test_general_memories_exclude_fear_replies() -> None:
+    class EchoMemory(FakeMemory):
+        def query_memories(self, query: str, n_results: int = 5, filter_by_speaker=None):
+            if filter_by_speaker is None:
+                return [
+                    PersonalMemoryResult(
+                        text="algo que o usuario disse",
+                        speaker="Lucas",
+                        source="conversation",
+                        timestamp=1.0,
+                    ),
+                    PersonalMemoryResult(
+                        text="algo que a propria FEAR respondeu",
+                        speaker="fear",
+                        source="assistant_reply",
+                        timestamp=2.0,
+                    ),
+                ]
+            return []
+
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=EchoMemory(),  # type: ignore[arg-type]
+    )
+    fake = FakeClient()
+    brain.client = fake  # type: ignore[assignment]
+
+    await brain.process_command("e aí", "Lucas")
+
+    system_content = fake.calls[0]["messages"][0]["content"]
+    assert "algo que o usuario disse" in system_content
+    # F.E.A.R.'s own prior reply must not be fed back as cross-speaker context.
+    assert "algo que a propria FEAR respondeu" not in system_content
+
+
+@pytest.mark.asyncio
 async def test_process_command_survives_llm_failure() -> None:
     memory = FakeMemory()
     brain = AsyncConversationalBrain(

@@ -49,6 +49,14 @@
     background: hsl(188 95% 55% / 0.28);
     color: hsl(210 40% 98%);
   }
+
+  /* Clean, consistent keyboard focus (mouse clicks stay quiet). */
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid hsl(188 95% 55% / 0.6);
+    outline-offset: 2px;
+  }
 }
 
 @layer utilities {
@@ -91,6 +99,32 @@
 
   .label-tn {
     @apply text-[10px] font-semibold uppercase tracking-[0.32em] text-muted-foreground/70;
+  }
+
+  /* Tactile press feedback (macOS/iOS-style). */
+  .tap {
+    transition:
+      transform 150ms ease,
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease,
+      box-shadow 150ms ease,
+      opacity 150ms ease;
+  }
+  .tap:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* Respect users who prefer less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

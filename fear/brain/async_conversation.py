@@ -267,12 +267,16 @@ class AsyncConversationalBrain:
         str,
     ]:
         """Fetch speaker facts, related/general memories, and reference notes concurrently."""
-        return await asyncio.gather(
+        speaker_facts, related_memories, general_memories, reference_context = await asyncio.gather(
             asyncio.to_thread(self.memory.get_facts_about_speaker, speaker, 8),
             asyncio.to_thread(self.memory.query_memories, text, 5, speaker),
-            asyncio.to_thread(self.memory.query_memories, text, 3, None),
+            asyncio.to_thread(self.memory.query_memories, text, 6, None),
             asyncio.to_thread(self._get_reference_context_sync, text),
         )
+        # Keep F.E.A.R.'s own past replies out of the cross-speaker bucket so its
+        # context is grounded in what people said, not an echo of what it answered.
+        general_memories = [memory for memory in general_memories if memory.speaker != "fear"][:3]
+        return speaker_facts, related_memories, general_memories, reference_context
 
     def _build_messages(
         self,

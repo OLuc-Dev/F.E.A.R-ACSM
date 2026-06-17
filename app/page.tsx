@@ -2,7 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion, type Variants } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
@@ -28,6 +28,7 @@ import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel } from "@/components/ui/settings-panel";
 import { getStatus, type StatusResponse } from "@/lib/api";
+import { fade, springSnappy } from "@/lib/motion";
 import { type Status, useConversation } from "@/lib/use-conversation";
 
 const FearPresence = dynamic(
@@ -75,6 +76,14 @@ const SUGGESTIONS: { icon: ReactNode; text: string }[] = [
   { icon: <Split className="size-3.5" />, text: "Me ajude a decidir entre dois caminhos." },
   { icon: <Swords className="size-3.5" />, text: "Desafie minha suposição mais forte." },
 ];
+
+const chipsContainer = {
+  show: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } },
+} satisfies Variants;
+const chipItem = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0 },
+} satisfies Variants;
 
 function Backdrop() {
   return (
@@ -159,20 +168,26 @@ function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; bus
         Diga o próximo movimento. Eu encontro as rachaduras antes que elas te encontrem.
       </p>
 
-      <div className="mt-8 grid w-full max-w-md gap-2 sm:grid-cols-2">
+      <motion.div
+        className="mt-8 grid w-full max-w-md gap-2 sm:grid-cols-2"
+        variants={chipsContainer}
+        initial="hidden"
+        animate="show"
+      >
         {SUGGESTIONS.map((suggestion) => (
-          <button
+          <motion.button
             key={suggestion.text}
             type="button"
+            variants={chipItem}
             onClick={() => onPick(suggestion.text)}
             disabled={busy}
-            className="group flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.025] px-3.5 py-2.5 text-left text-[13px] leading-5 text-foreground/80 transition hover:border-cyan-300/30 hover:bg-cyan-300/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            className="tap group flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.025] px-3.5 py-2.5 text-left text-[13px] leading-5 text-foreground/80 hover:border-cyan-300/30 hover:bg-cyan-300/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="text-cyan-300/70 transition group-hover:text-cyan-300">{suggestion.icon}</span>
             <span>{suggestion.text}</span>
-          </button>
+          </motion.button>
         ))}
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -261,7 +276,7 @@ export default function HomePage() {
               onClick={() => setSettingsOpen(true)}
               aria-label="Configuração"
               title="Configuração"
-              className="grid size-9 place-items-center rounded-full border border-white/10 bg-white/[0.03] text-muted-foreground transition hover:border-cyan-300/40 hover:text-cyan-200"
+              className="tap grid size-9 place-items-center rounded-full border border-white/10 bg-white/[0.03] text-muted-foreground hover:border-cyan-300/40 hover:text-cyan-200"
             >
               <Settings className="size-4" />
             </button>
@@ -272,34 +287,49 @@ export default function HomePage() {
         <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-6">
           {/* Conversation */}
           <div className="panel flex h-[72vh] min-h-[460px] flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-auto">
-            {showWelcome ? (
-              <WelcomeScreen onPick={(prompt) => void send(prompt, speaker)} busy={isBusy} />
-            ) : (
-              <div
-                ref={threadRef}
-                role="log"
-                aria-live="polite"
-                aria-label="Conversa com a F.E.A.R."
-                className="scrollbar-thin flex-1 space-y-3 overflow-y-auto px-1 py-1"
-              >
-                {messages.map((message) => (
-                  <motion.div
-                    key={message.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.26, ease: "easeOut" }}
-                  >
-                    {message.role === "user" ? (
-                      <UserMessage content={message.content} />
-                    ) : message.role === "system" ? (
-                      <SystemMessage content={message.content} />
-                    ) : (
-                      <AssistantMessage content={message.content} />
-                    )}
-                  </motion.div>
-                ))}
-              </div>
-            )}
+            <AnimatePresence mode="wait" initial={false}>
+              {showWelcome ? (
+                <motion.div
+                  key="welcome"
+                  className="flex flex-1 flex-col"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={fade}
+                >
+                  <WelcomeScreen onPick={(prompt) => void send(prompt, speaker)} busy={isBusy} />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="thread"
+                  ref={threadRef}
+                  role="log"
+                  aria-live="polite"
+                  aria-label="Conversa com a F.E.A.R."
+                  className="scrollbar-thin flex-1 space-y-3 overflow-y-auto px-1 py-1"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={fade}
+                >
+                  {messages.map((message) => (
+                    <motion.div
+                      key={message.id}
+                      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={springSnappy}
+                    >
+                      {message.role === "user" ? (
+                        <UserMessage content={message.content} />
+                      ) : message.role === "system" ? (
+                        <SystemMessage content={message.content} />
+                      ) : (
+                        <AssistantMessage content={message.content} />
+                      )}
+                    </motion.div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {/* Composer */}
             <form onSubmit={submitCommand} className="mt-3 shrink-0">
@@ -322,7 +352,7 @@ export default function HomePage() {
                   type="submit"
                   disabled={isBusy || !text.trim()}
                   aria-label="Enviar"
-                  className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-cyan-300 text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="tap inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isBusy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 </button>
