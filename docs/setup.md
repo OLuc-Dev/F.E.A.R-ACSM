@@ -14,13 +14,15 @@ cat .env.advanced.example >> .env   # optional: ElevenLabs, Obsidian, book libra
 
 1. Get a key: https://openrouter.ai/keys
 2. Pick a model: https://openrouter.ai/models
-3. In `.env`:
+3. In `.env` (the default model is the free GPT-OSS 120B):
    ```
    OPENROUTER_API_KEY=sk-or-...
-   OPENROUTER_CHAT_MODEL=anthropic/claude-3.5-sonnet
+   OPENROUTER_CHAT_MODEL=openai/gpt-oss-120b:free
    ```
 
-Without these, F.E.A.R. still listens and remembers, but replies in fallback mode.
+Without an API key, F.E.A.R. still listens and remembers, but replies in fallback
+mode. Free models can be rate-limited and may require enabling the free-model /
+data-sharing setting in your OpenRouter account.
 
 ## 3. Spotify (playback control)
 
