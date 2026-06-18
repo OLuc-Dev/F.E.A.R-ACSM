@@ -50,7 +50,7 @@ pode consultar uma biblioteca de notas em markdown.
 
 ## Requisitos
 
-- Python **3.11–3.13**
+- Python **3.11**
 - Node **18+** (para o frontend)
 - `portaudio` no sistema para o `pyaudio` (recursos de áudio).
   No Debian/Ubuntu: `sudo apt-get install portaudio19-dev`.

@@ -7,7 +7,7 @@ name = "fear-acsm"
 version = "0.1.0"
 description = "F.E.A.R. desktop assistant backend"
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.12"
 dependencies = [
   "openai>=1.55,<2",
   "openai-whisper>=20231117,<20250626",
