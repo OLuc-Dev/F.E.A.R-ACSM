@@ -45,8 +45,9 @@ pode consultar uma biblioteca de notas em markdown.
 - **Voz** opcional (Whisper, push-to-talk) e **TTS** natural (ElevenLabs) com
   fallback offline (`pyttsx3`).
 - **Observador do Obsidian**: indexa notas do vault conforme você escreve.
-- **Presença 3D**: cabeça cromada com olhos vermelhos e boca que anima ao falar
-  (React Three Fiber), com um painel de status do sistema ao lado.
+- **Presença 3D**: uma cabeça de metal esculpida (modelo glTF) com olhos vermelhos
+  profundos que reagem ao estado e seguem o cursor (React Three Fiber), com um
+  painel de status do sistema ao lado.
 
 ## Requisitos
 
@@ -56,6 +57,9 @@ pode consultar uma biblioteca de notas em markdown.
   No Debian/Ubuntu: `sudo apt-get install portaudio19-dev`.
 
 ## Instalação
+
+Guia completo e multiplataforma (Windows incluso, venv e solução de problemas):
+**[`INSTALL.md`](INSTALL.md)**. Versão curta:
 
 ```bash
 # Backend
