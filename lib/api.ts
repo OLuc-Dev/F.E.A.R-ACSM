@@ -45,6 +45,7 @@ export interface StatusResponse {
   voice: boolean;
   spotify: boolean;
   obsidian: boolean;
+  calendar: boolean;
 }
 
 export interface KnowledgeSource {

@@ -68,6 +68,7 @@ class StatusResponse(BaseModel):
     voice: bool
     spotify: bool
     obsidian: bool
+    calendar: bool
 
 
 class KnowledgeTextRequest(BaseModel):
@@ -201,6 +202,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     from fear.audio.natural_tts import NaturalTTS
     from fear.audio.voice_listener import VoiceListener
     from fear.input.clap_detector import ClapDetector
+    from fear.integrations.google_calendar import GoogleCalendarClient
     from fear.integrations.spotify_client import SpotifyClient
     from fear.memory.obsidian_watcher import ObsidianWatcher
 
@@ -219,16 +221,27 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     spotify = SpotifyClient(scope=settings.spotify_scope)
     await spotify.load()
 
+    # Loads only after a one-time google_login.py has cached a token; else inert.
+    calendar = GoogleCalendarClient(
+        credentials_file=settings.google_credentials_file,
+        token_file=settings.google_token_file,
+        calendar_id=settings.google_calendar_id,
+        scope=settings.google_calendar_scope,
+    )
+    await calendar.load()
+
     application.state.settings = settings
     application.state.memory = memory
     application.state.reference_library = reference_library
     application.state.spotify = spotify
+    application.state.calendar = calendar
     application.state.tts = NaturalTTS()
     application.state.brain = AsyncConversationalBrain(
         settings=settings,
         memory=memory,
         reference_library=reference_library,
         spotify=spotify,
+        calendar=calendar,
     )
 
     # Re-apply the panel's last model/mode choice on top of the .env defaults.
@@ -349,6 +362,7 @@ async def status(
 ) -> StatusResponse:
     """Report which integrations are configured/active (drives the system panel)."""
     spotify = getattr(request.app.state, "spotify", None)
+    calendar = getattr(request.app.state, "calendar", None)
     return StatusResponse(
         assistant=settings.assistant_name,
         openrouter=bool(settings.openrouter_api_key and settings.openrouter_chat_model),
@@ -356,6 +370,7 @@ async def status(
         voice=getattr(request.app.state, "voice_listener", None) is not None,
         spotify=bool(spotify is not None and spotify.is_configured),
         obsidian=getattr(request.app.state, "obsidian_watcher", None) is not None,
+        calendar=bool(calendar is not None and calendar.is_configured),
     )
 
 

@@ -139,7 +139,15 @@ def test_status(client: TestClient) -> None:
     body = response.json()
     assert body["assistant"] == "F.E.A.R."
     assert body["openrouter"] is False  # no API key in defaults
-    assert set(body) == {"assistant", "openrouter", "memory", "voice", "spotify", "obsidian"}
+    assert set(body) == {
+        "assistant",
+        "openrouter",
+        "memory",
+        "voice",
+        "spotify",
+        "obsidian",
+        "calendar",
+    }
 
 
 def test_command(client: TestClient) -> None:

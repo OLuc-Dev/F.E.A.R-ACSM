@@ -233,6 +233,9 @@ pnpm-debug.log*
 # Local secrets and runtime data
 .env.advanced.local
 data/
+# Google OAuth client secret + cached token (never commit these)
+credentials.json
+token.pickle
 
 # The Python "lib/" ignore above is for build artifacts, not the frontend lib.
 !/lib/

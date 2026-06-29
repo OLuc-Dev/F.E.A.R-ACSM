@@ -39,13 +39,14 @@ const MODE_META: Record<string, { label: string; desc: string }> = {
   cirurgico: { label: "Cirúrgico", desc: "Sem teatro. Diagnóstico, decisão, ação." },
 };
 
-type StatusFlag = "openrouter" | "memory" | "spotify" | "obsidian" | "voice";
+type StatusFlag = "openrouter" | "memory" | "spotify" | "obsidian" | "voice" | "calendar";
 
 const INTEGRATIONS: { key: StatusFlag; label: string; hint: string }[] = [
   { key: "openrouter", label: "OpenRouter", hint: "OPENROUTER_API_KEY no .env" },
   { key: "memory", label: "Memória", hint: "local, ativa por padrão" },
   { key: "spotify", label: "Spotify", hint: "python scripts/spotify_login.py" },
   { key: "obsidian", label: "Obsidian", hint: "OBSIDIAN_VAULT_PATH no .env" },
+  { key: "calendar", label: "Agenda", hint: "python scripts/google_login.py" },
   { key: "voice", label: "Voz", hint: "FEAR_ENABLE_VOICE_LISTENER=1" },
 ];
 

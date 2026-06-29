@@ -15,6 +15,7 @@ from fear.library.reference_library import ReferenceLibrary
 from fear.memory.personal_memory import PersonalMemory, PersonalMemoryResult
 
 if TYPE_CHECKING:
+    from fear.integrations.google_calendar import GoogleCalendarClient
     from fear.integrations.spotify_client import SpotifyClient
 
 
@@ -27,6 +28,18 @@ LLM_ERROR_REPLY = "Tive um problema para processar isso agora. Tenta de novo em 
 # assistant from hijacking ordinary conversation that happens to contain a verb
 # like "play" or "stop".
 SPOTIFY_HINTS = ("spotify", "music", "song", "track", "playback")
+
+# Route to the calendar only on a clear agenda question (read-only), so ordinary
+# chat that happens to mention a meeting isn't hijacked.
+CALENDAR_HINTS = (
+    "agenda",
+    "calendário",
+    "calendario",
+    "compromisso",
+    "meus eventos",
+    "calendar",
+    "schedule",
+)
 
 # Persona modes layered on top of the base persona. They only adjust tone; the
 # persona file's loyalty and safety rails always take precedence.
@@ -86,11 +99,13 @@ class AsyncConversationalBrain:
         memory: PersonalMemory,
         reference_library: ReferenceLibrary | None = None,
         spotify: SpotifyClient | None = None,
+        calendar: GoogleCalendarClient | None = None,
     ) -> None:
         self.settings = settings
         self.memory = memory
         self.reference_library = reference_library
         self.spotify = spotify
+        self.calendar = calendar
         self.client: AsyncOpenAI | None = None
 
         self._persona = self._load_persona(settings)
@@ -129,6 +144,12 @@ class AsyncConversationalBrain:
             await self._remember(clean_text, clean_speaker, "spotify")
             self._record_turn(clean_speaker, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
+
+        calendar_reply = await self._try_calendar(clean_text)
+        if calendar_reply:
+            await self._remember(clean_text, clean_speaker, "calendar")
+            self._record_turn(clean_speaker, clean_text, calendar_reply)
+            return CommandResponse(reply=calendar_reply, speaker=clean_speaker, remembered=True)
 
         (
             speaker_facts,
@@ -193,6 +214,13 @@ class AsyncConversationalBrain:
             await self._remember(clean_text, clean_speaker, "spotify")
             self._record_turn(clean_speaker, clean_text, spotify_reply)
             yield spotify_reply
+            return
+
+        calendar_reply = await self._try_calendar(clean_text)
+        if calendar_reply:
+            await self._remember(clean_text, clean_speaker, "calendar")
+            self._record_turn(clean_speaker, clean_text, calendar_reply)
+            yield calendar_reply
             return
 
         (
@@ -321,6 +349,21 @@ class AsyncConversationalBrain:
         except Exception:
             logger.exception("Spotify intent failed")
             return "Não consegui falar com o Spotify agora."
+
+    async def _try_calendar(self, text: str) -> str:
+        """Route clear agenda questions to the calendar (read-only); "" otherwise."""
+        if self.calendar is None:
+            return ""
+
+        lowered = text.lower()
+        if not any(hint in lowered for hint in CALENDAR_HINTS):
+            return ""
+
+        try:
+            return await self.calendar.handle_intent(lowered)
+        except Exception:
+            logger.exception("Calendar intent failed")
+            return "Não consegui acessar sua agenda agora."
 
     def _build_system_message(self) -> str:
         """Return F.E.A.R.'s persona (a custom one from settings.persona_file, or the default)."""

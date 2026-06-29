@@ -50,6 +50,15 @@ class FakeSpotify:
         return ""
 
 
+class FakeCalendar:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def handle_intent(self, text: str) -> str:
+        self.calls.append(text)
+        return "Seus próximos compromissos:\n• 30/06 14:00 — Reunião com o time"
+
+
 class FakeClient:
     """Minimal stand-in for AsyncOpenAI that records calls and can stream."""
 
@@ -153,6 +162,37 @@ async def test_music_command_routes_to_spotify() -> None:
     assert result.remembered is True
     assert spotify.calls == ["next spotify song"]
     assert memory.added == [("next Spotify song", "Lucas", "spotify")]
+
+
+@pytest.mark.asyncio
+async def test_calendar_command_routes_to_calendar() -> None:
+    memory = FakeMemory()
+    calendar = FakeCalendar()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),
+        memory=memory,
+        calendar=calendar,  # type: ignore[arg-type]
+    )
+
+    result = await brain.process_command("o que tem na minha agenda hoje?", "Lucas")
+
+    assert "compromissos" in result.reply.lower()
+    assert calendar.calls == ["o que tem na minha agenda hoje?"]
+    assert memory.added == [("o que tem na minha agenda hoje?", "Lucas", "calendar")]
+
+
+@pytest.mark.asyncio
+async def test_non_calendar_command_does_not_touch_calendar() -> None:
+    calendar = FakeCalendar()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),
+        memory=FakeMemory(),
+        calendar=calendar,  # type: ignore[arg-type]
+    )
+
+    await brain.process_command("como você está hoje?", "Lucas")
+
+    assert calendar.calls == []
 
 
 @pytest.mark.asyncio

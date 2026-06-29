@@ -9,6 +9,7 @@ import {
   ArrowDown,
   BookOpen,
   Brain,
+  CalendarDays,
   Cpu,
   Crosshair,
   Database,
@@ -511,6 +512,11 @@ export default function HomePage() {
                   icon={<BookOpen className="size-3.5 text-blue-200" />}
                   label="Obsidian"
                   {...flag(systemStatus?.obsidian, "configurado")}
+                />
+                <SystemRow
+                  icon={<CalendarDays className="size-3.5 text-amber-200" />}
+                  label="Agenda"
+                  {...flag(systemStatus?.calendar, "conectada")}
                 />
               </div>
             </div>

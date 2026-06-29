@@ -57,6 +57,15 @@ class Settings(BaseSettings):
         "user-read-playback-state user-modify-playback-state user-read-currently-playing"
     )
 
+    # Google Calendar (read-only). credentials.json comes from the Google Cloud
+    # OAuth "Desktop" client; the token is created once via scripts/google_login.py.
+    google_credentials_file: str = Field(
+        "credentials.json", validation_alias="GOOGLE_CREDENTIALS_FILE"
+    )
+    google_token_file: str = Field("data/google_token.json", validation_alias="GOOGLE_TOKEN_FILE")
+    google_calendar_id: str = Field("primary", validation_alias="GOOGLE_CALENDAR_ID")
+    google_calendar_scope: str = "https://www.googleapis.com/auth/calendar.readonly"
+
     @classmethod
     def from_env(cls) -> Settings:
         """Load .env into the environment, then read and validate settings."""
