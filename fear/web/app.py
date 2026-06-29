@@ -311,10 +311,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="F.E.A.R. Unified API", lifespan=lifespan)
+allowed_origins = cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins(),
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    # The CORS spec forbids wildcard origins with credentials; F.E.A.R. doesn't
+    # use cookies, so when FEAR_CORS_ORIGINS="*" (handy for testing from a phone
+    # on the same Wi-Fi) we drop credentials to keep browsers happy.
+    allow_credentials="*" not in allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -1,6 +1,19 @@
 // Typed client for the F.E.A.R. backend: one place for endpoints, shapes and errors.
 
-export const API_BASE = process.env.NEXT_PUBLIC_FEAR_API_BASE ?? "http://127.0.0.1:8765";
+// Resolve the backend base URL. An explicit NEXT_PUBLIC_FEAR_API_BASE always
+// wins; otherwise, in the browser, talk to the same host that served the page —
+// so opening the app from a phone at http://<pc-ip>:3000 just reaches the
+// backend at http://<pc-ip>:8765 with no config. Falls back to localhost (SSR).
+function resolveApiBase(): string {
+  const explicit = process.env.NEXT_PUBLIC_FEAR_API_BASE;
+  if (explicit) return explicit;
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    return `${window.location.protocol}//${window.location.hostname}:8765`;
+  }
+  return "http://127.0.0.1:8765";
+}
+
+export const API_BASE = resolveApiBase();
 
 export interface CommandRequest {
   text: string;
