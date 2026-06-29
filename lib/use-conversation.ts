@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { captureVoiceOnce, getMemory, resetConversation, sendCommand, streamCommand } from "@/lib/api";
+import { primeSpeech, speak, stopSpeaking } from "@/lib/speech";
 
 export type Role = "user" | "fear" | "system";
 export type Status = "online" | "listening" | "thinking" | "speaking" | "error";
@@ -28,8 +29,22 @@ export function useConversation() {
   // can offer a "jump to latest" affordance via `atBottom`).
   const followingRef = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
+  // When on, F.E.A.R. speaks its replies aloud via the browser (Web Speech API).
+  const [voiceOn, setVoiceOn] = useState(false);
+  const voiceOnRef = useRef(false);
 
   const nextId = useCallback(() => idRef.current++, []);
+
+  const toggleVoice = useCallback(() => {
+    setVoiceOn((on) => {
+      const next = !on;
+      voiceOnRef.current = next;
+      // Prime within the user gesture (unlocks mobile); stop any speech when off.
+      if (next) primeSpeech();
+      else stopSpeaking();
+      return next;
+    });
+  }, []);
 
   // Pin to the newest content while following.
   useEffect(() => {
@@ -54,8 +69,14 @@ export function useConversation() {
     setAtBottom(true);
   }, []);
 
-  // Cancel any in-flight stream when the page unmounts.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // Cancel any in-flight stream and stop speech when the page unmounts.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      stopSpeaking();
+    },
+    [],
+  );
 
   const pushMessage = useCallback(
     (role: Role, content: string) => {
@@ -91,8 +112,10 @@ export function useConversation() {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      stopSpeaking();
       try {
         let started = false;
+        let full = "";
         await streamCommand(
           { text: trimmed, speaker: speaker || "user" },
           (chunk) => {
@@ -100,11 +123,14 @@ export function useConversation() {
               setStatus("speaking");
               started = true;
             }
+            full += chunk;
             appendToLastFear(chunk);
           },
           controller.signal,
         );
         setStatus("online");
+        // Speak the finished reply if the voice is on.
+        if (voiceOnRef.current) speak(full);
       } catch (error) {
         if (controller.signal.aborted) return;
         appendToLastFear(error instanceof Error ? `Erro: ${error.message}` : "Falha ao falar com o backend.");
@@ -157,6 +183,8 @@ export function useConversation() {
     atBottom,
     handleThreadScroll,
     scrollToLatest,
+    voiceOn,
+    toggleVoice,
     send,
     handleAppAction,
   };

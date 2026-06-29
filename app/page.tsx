@@ -21,6 +21,8 @@ import {
   Split,
   Swords,
   User,
+  Volume2,
+  VolumeX,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -210,6 +212,8 @@ export default function HomePage() {
     atBottom,
     handleThreadScroll,
     scrollToLatest,
+    voiceOn,
+    toggleVoice,
     send,
     handleAppAction,
   } = useConversation();
@@ -310,6 +314,19 @@ export default function HomePage() {
               )}
               <span className="hidden sm:inline">{backendValue}</span>
             </div>
+            <button
+              onClick={toggleVoice}
+              aria-label="Voz da F.E.A.R."
+              aria-pressed={voiceOn}
+              title={voiceOn ? "Voz: ligada" : "Voz: desligada"}
+              className={`tap grid size-9 place-items-center rounded-full border transition ${
+                voiceOn
+                  ? "border-cyan-300/50 bg-cyan-300/10 text-cyan-200"
+                  : "border-white/10 bg-white/[0.03] text-muted-foreground hover:border-cyan-300/40 hover:text-cyan-200"
+              }`}
+            >
+              {voiceOn ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+            </button>
             <button
               onClick={() => setSettingsOpen(true)}
               aria-label="Configuração"
