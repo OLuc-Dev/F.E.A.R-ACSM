@@ -145,11 +145,12 @@ class AsyncConversationalBrain:
             self._record_turn(clean_speaker, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
-        calendar_reply = await self._try_calendar(clean_text)
-        if calendar_reply:
+        calendar_summary = await self._try_calendar(clean_text)
+        # Without a model, hand back the raw agenda; with one, F.E.A.R. phrases it below.
+        if calendar_summary and self.client is None:
             await self._remember(clean_text, clean_speaker, "calendar")
-            self._record_turn(clean_speaker, clean_text, calendar_reply)
-            return CommandResponse(reply=calendar_reply, speaker=clean_speaker, remembered=True)
+            self._record_turn(clean_speaker, clean_text, calendar_summary)
+            return CommandResponse(reply=calendar_summary, speaker=clean_speaker, remembered=True)
 
         (
             speaker_facts,
@@ -177,6 +178,7 @@ class AsyncConversationalBrain:
             related_memories,
             general_memories,
             reference_context,
+            calendar_summary,
         )
 
         try:
@@ -216,11 +218,11 @@ class AsyncConversationalBrain:
             yield spotify_reply
             return
 
-        calendar_reply = await self._try_calendar(clean_text)
-        if calendar_reply:
+        calendar_summary = await self._try_calendar(clean_text)
+        if calendar_summary and self.client is None:
             await self._remember(clean_text, clean_speaker, "calendar")
-            self._record_turn(clean_speaker, clean_text, calendar_reply)
-            yield calendar_reply
+            self._record_turn(clean_speaker, clean_text, calendar_summary)
+            yield calendar_summary
             return
 
         (
@@ -251,6 +253,7 @@ class AsyncConversationalBrain:
             related_memories,
             general_memories,
             reference_context,
+            calendar_summary,
         )
         # Persist the user input up front so it survives an early client disconnect.
         await self._remember(clean_text, clean_speaker, "conversation")
@@ -314,6 +317,7 @@ class AsyncConversationalBrain:
         related_memories: list[PersonalMemoryResult],
         general_memories: list[PersonalMemoryResult],
         reference_context: str,
+        calendar_summary: str = "",
     ) -> list[dict[str, str]]:
         """Assemble system(persona + memory) + rolling history + the new user message."""
         context = self._build_context(
@@ -322,6 +326,7 @@ class AsyncConversationalBrain:
             related_memories=related_memories,
             general_memories=general_memories,
             reference_context=reference_context,
+            calendar_summary=calendar_summary,
         )
         directive = PERSONA_MODES.get(self._persona_mode, "")
         persona_block = self._persona if not directive else f"{self._persona}\n\n{directive}"
@@ -445,6 +450,7 @@ class AsyncConversationalBrain:
         related_memories: list[PersonalMemoryResult],
         general_memories: list[PersonalMemoryResult],
         reference_context: str,
+        calendar_summary: str = "",
     ) -> str:
         sections = [f"Current speaker: {speaker_name}"]
 
@@ -459,6 +465,12 @@ class AsyncConversationalBrain:
 
         sections.append("\nLocal reference notes:")
         sections.append(reference_context or "- none")
+
+        if calendar_summary:
+            sections.append(
+                "\nLive calendar (answer from this in your own voice; never invent events):"
+            )
+            sections.append(calendar_summary)
 
         return "\n".join(sections)
 

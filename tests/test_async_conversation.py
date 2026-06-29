@@ -182,6 +182,25 @@ async def test_calendar_command_routes_to_calendar() -> None:
 
 
 @pytest.mark.asyncio
+async def test_calendar_is_phrased_by_the_model_when_available() -> None:
+    calendar = FakeCalendar()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=FakeMemory(),
+        calendar=calendar,  # type: ignore[arg-type]
+    )
+    fake = FakeClient(reply="Você tem um compromisso hoje. Não desperdice.")
+    brain.client = fake  # type: ignore[assignment]
+
+    result = await brain.process_command("o que tem na minha agenda?", "Lucas")
+
+    # F.E.A.R. speaks (the model's reply); the raw events are handed to it as context.
+    assert result.reply == "Você tem um compromisso hoje. Não desperdice."
+    system_content = fake.calls[0]["messages"][0]["content"]
+    assert "Reunião com o time" in system_content
+
+
+@pytest.mark.asyncio
 async def test_non_calendar_command_does_not_touch_calendar() -> None:
     calendar = FakeCalendar()
     brain = AsyncConversationalBrain(
