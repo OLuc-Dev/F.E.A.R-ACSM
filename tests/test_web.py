@@ -60,9 +60,12 @@ class FakeMemory:
     ) -> list[PersonalMemoryResult]:
         return [
             PersonalMemoryResult(
-                text="uma lembrança", speaker=speaker, source="voice", timestamp=1.0
+                id="m-1", text="uma lembrança", speaker=speaker, source="voice", timestamp=1.0
             )
         ]
+
+    def forget(self, memory_id: str) -> bool:
+        return bool(memory_id)
 
 
 class FakeTTS:
@@ -168,6 +171,13 @@ def test_memory(client: TestClient) -> None:
     body = response.json()
     assert body["speaker"] == "Lucas"
     assert body["memories"][0]["text"] == "uma lembrança"
+    assert body["memories"][0]["id"] == "m-1"
+
+
+def test_memory_forget(client: TestClient) -> None:
+    response = client.post("/memory/forget", json={"memory_id": "m-1"})
+    assert response.status_code == 200
+    assert response.json() == {"forgotten": True, "id": "m-1"}
 
 
 def test_wearable_tap(client: TestClient) -> None:

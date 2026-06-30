@@ -50,6 +50,12 @@ class MemoryResponse(BaseModel):
     memories: list[dict[str, object]]
 
 
+class ForgetRequest(BaseModel):
+    """Request body for /memory/forget."""
+
+    memory_id: str
+
+
 class TapGesturePayload(BaseModel):
     """Request body for /wearable/tap."""
 
@@ -424,10 +430,20 @@ async def memory_for_speaker(
     return MemoryResponse(
         speaker=speaker,
         memories=[
-            {"text": item.text, "source": item.source, "timestamp": item.timestamp}
+            {"id": item.id, "text": item.text, "source": item.source, "timestamp": item.timestamp}
             for item in facts
         ],
     )
+
+
+@app.post("/memory/forget")
+async def memory_forget(
+    payload: ForgetRequest,
+    memory: PersonalMemory = Depends(get_memory),
+) -> dict[str, object]:
+    """Delete a single memory by id."""
+    forgotten = await asyncio.to_thread(memory.forget, payload.memory_id)
+    return {"forgotten": forgotten, "id": payload.memory_id}
 
 
 @app.get("/knowledge", response_model=KnowledgeListResponse)

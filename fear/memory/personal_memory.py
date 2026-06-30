@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -13,6 +14,7 @@ class PersonalMemoryResult:
     speaker: str
     source: str
     timestamp: float
+    id: str = ""
     distance: float | None = None
     metadata: dict[str, Any] | None = None
 
@@ -62,20 +64,23 @@ class PersonalMemory:
         self._collection = self._client.get_or_create_collection(name=self.collection_name)
 
     def add_memory(self, text: str, speaker: str, source: str) -> str:
-        """Store one memory and return its id."""
+        """Store one memory (deduped by content) and return its id."""
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("text cannot be empty")
 
         now = time.time()
-        memory_id = f"{speaker}-{source}-{time.time_ns()}"
+        # Content-addressed id: re-saying the same thing updates that entry in
+        # place instead of piling up duplicates that later crowd out real recall.
+        digest = hashlib.sha1(clean_text.encode("utf-8")).hexdigest()[:16]
+        memory_id = f"{speaker}-{source}-{digest}"
         metadata = {
             "speaker": speaker,
             "source": source,
             "timestamp": now,
         }
 
-        self._collection.add(
+        self._collection.upsert(
             ids=[memory_id],
             documents=[clean_text],
             embeddings=[self.embedding.embed(clean_text)],
@@ -83,6 +88,13 @@ class PersonalMemory:
         )
 
         return memory_id
+
+    def forget(self, memory_id: str) -> bool:
+        """Delete a single memory by id; returns False for a blank id."""
+        if not memory_id:
+            return False
+        self._collection.delete(ids=[memory_id])
+        return True
 
     def query_memories(
         self,
@@ -117,11 +129,13 @@ class PersonalMemory:
 
         documents = raw.get("documents", []) or []
         metadatas = raw.get("metadatas", []) or []
+        ids = raw.get("ids", []) or []
         results: list[PersonalMemoryResult] = []
 
         for index, document in enumerate(documents):
             metadata = metadatas[index] if index < len(metadatas) else {}
-            results.append(self._result_from_document(str(document), metadata, None))
+            memory_id = str(ids[index]) if index < len(ids) else ""
+            results.append(self._result_from_document(str(document), metadata, None, memory_id))
 
         results.sort(key=lambda item: item.timestamp, reverse=True)
         return results[:n_results]
@@ -130,12 +144,14 @@ class PersonalMemory:
         documents = raw.get("documents", [[]])[0] or []
         metadatas = raw.get("metadatas", [[]])[0] or []
         distances = raw.get("distances", [[]])[0] or []
+        ids = raw.get("ids", [[]])[0] or []
 
         results: list[PersonalMemoryResult] = []
         for index, document in enumerate(documents):
             metadata = metadatas[index] if index < len(metadatas) else {}
             distance = distances[index] if index < len(distances) else None
-            results.append(self._result_from_document(str(document), metadata, distance))
+            memory_id = str(ids[index]) if index < len(ids) else ""
+            results.append(self._result_from_document(str(document), metadata, distance, memory_id))
 
         return results
 
@@ -144,6 +160,7 @@ class PersonalMemory:
         document: str,
         metadata: dict[str, Any] | None,
         distance: float | None,
+        memory_id: str = "",
     ) -> PersonalMemoryResult:
         metadata = metadata or {}
         return PersonalMemoryResult(
@@ -151,6 +168,7 @@ class PersonalMemory:
             speaker=str(metadata.get("speaker", "unknown")),
             source=str(metadata.get("source", "unknown")),
             timestamp=float(metadata.get("timestamp", 0.0)),
+            id=memory_id,
             distance=distance,
             metadata=metadata,
         )

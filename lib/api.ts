@@ -28,6 +28,7 @@ export interface CommandResponse {
 }
 
 export interface MemoryItem {
+  id: string;
   text: string;
   source: string;
   timestamp: number;
@@ -151,6 +152,10 @@ export async function getMemory(speaker: string): Promise<MemoryResponse> {
   const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(speaker)}`);
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as MemoryResponse;
+}
+
+export async function forgetMemory(memoryId: string): Promise<void> {
+  await postJson("/memory/forget", { memory_id: memoryId });
 }
 
 export async function resetConversation(speaker: string): Promise<void> {

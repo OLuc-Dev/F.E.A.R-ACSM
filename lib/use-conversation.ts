@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { captureVoiceOnce, getMemory, resetConversation, sendCommand, streamCommand } from "@/lib/api";
+import { captureVoiceOnce, resetConversation, sendCommand, streamCommand } from "@/lib/api";
 import { primeSpeech, speak, stopSpeaking } from "@/lib/speech";
 
 export type Role = "user" | "fear" | "system";
@@ -156,9 +156,6 @@ export function useConversation() {
           await captureVoiceOnce();
           pushMessage("system", "Escutando um trecho de voz…");
           setStatus("online");
-        } else if (appId === "memory") {
-          const data = await getMemory(who);
-          pushMessage("system", `${data.memories.length} memória(s) recente(s) sobre ${who}.`);
         } else if (appId === "reset") {
           await resetConversation(who);
           setMessages([

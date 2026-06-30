@@ -30,7 +30,7 @@ import {
 
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
-import { SettingsPanel } from "@/components/ui/settings-panel";
+import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
 import { getStatus, type StatusResponse } from "@/lib/api";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { type Status, useConversation } from "@/lib/use-conversation";
@@ -202,8 +202,16 @@ export default function HomePage() {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("conhecimento");
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Open the settings drawer on a specific tab (the gear opens Conhecimento,
+  // the dock's Memória icon jumps straight to the memory inspector).
+  function openSettings(tab: SettingsTab = "conhecimento") {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  }
 
   const {
     messages,
@@ -329,7 +337,7 @@ export default function HomePage() {
               {voiceOn ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
             </button>
             <button
-              onClick={() => setSettingsOpen(true)}
+              onClick={() => openSettings()}
               aria-label="Configuração"
               title="Configuração"
               className="tap grid size-9 place-items-center rounded-full border border-white/10 bg-white/[0.03] text-muted-foreground hover:border-cyan-300/40 hover:text-cyan-200"
@@ -526,12 +534,24 @@ export default function HomePage() {
 
       <MacOSDock
         apps={fearApps}
-        onAppClick={(appId) => (appId === "config" ? setSettingsOpen(true) : handleAppAction(appId, speaker))}
-        openApps={settingsOpen ? ["config"] : []}
+        onAppClick={(appId) =>
+          appId === "config"
+            ? openSettings()
+            : appId === "memory"
+              ? openSettings("memoria")
+              : handleAppAction(appId, speaker)
+        }
+        openApps={settingsOpen ? [settingsTab === "memoria" ? "memory" : "config"] : []}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} status={systemStatus} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        status={systemStatus}
+        speaker={speaker}
+        initialTab={settingsTab}
+      />
     </main>
   );
 }
