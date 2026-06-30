@@ -18,6 +18,7 @@ dependencies = [
   "pydantic>=2.8,<3",
   "pydantic-settings>=2.4,<3",
   "python-dotenv>=1,<2",
+  "cryptography>=42,<46",
   "requests>=2.32,<3",
   "watchdog>=5,<7",
   "sentence-transformers>=3,<4",

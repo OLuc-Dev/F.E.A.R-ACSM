@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,8 +12,10 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from fear.auth import EmailTaken, Security, TokenError, User, UserStore
 from fear.brain.async_conversation import AsyncConversationalBrain
 from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
@@ -120,6 +123,43 @@ class ConfigUpdate(BaseModel):
     persona_mode: str | None = None
 
 
+class RegisterRequest(BaseModel):
+    """Request body for /auth/register."""
+
+    email: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    """Request body for /auth/login."""
+
+    email: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    """A user's public account state (never includes the password or raw key)."""
+
+    id: str
+    email: str
+    has_openrouter_key: bool
+    chat_model: str
+    persona_mode: str
+
+
+class AuthResponse(BaseModel):
+    """A session token plus the authenticated user."""
+
+    token: str
+    user: UserResponse
+
+
+class OpenRouterKeyRequest(BaseModel):
+    """Request body for storing a user's own OpenRouter key (BYO key)."""
+
+    api_key: str
+
+
 def cors_origins() -> list[str]:
     """Read allowed CORS origins from FEAR_CORS_ORIGINS."""
     raw = os.getenv(
@@ -157,6 +197,60 @@ def get_settings(request: Request) -> Settings:
 def get_reference_library(request: Request) -> ReferenceLibrary | None:
     """Return the reference library, or None when it could not be initialized."""
     return getattr(request.app.state, "reference_library", None)
+
+
+def get_user_store(request: Request) -> UserStore:
+    return request.app.state.user_store
+
+
+def get_security(request: Request) -> Security:
+    return request.app.state.security
+
+
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    store: UserStore = Depends(get_user_store),
+    security: Security = Depends(get_security),
+    settings: Settings = Depends(get_settings),
+) -> User:
+    """Resolve the logged-in user from the `Authorization: Bearer <token>` header.
+
+    Raises 401 for a missing, malformed, expired, or stale token.
+    """
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Autenticação necessária.")
+    try:
+        user_id = security.read_session_token(
+            credentials.credentials, settings.session_max_age_days * 86_400
+        )
+    except TokenError as exc:
+        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.") from exc
+    user = await asyncio.to_thread(store.get_by_id, user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
+    return user
+
+
+def _user_response(user: User) -> UserResponse:
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        has_openrouter_key=user.has_openrouter_key,
+        chat_model=user.chat_model,
+        persona_mode=user.persona_mode,
+    )
+
+
+def _normalize_email(email: str) -> str:
+    """Lowercase + validate an email's shape (without the email-validator dep)."""
+    cleaned = email.strip().lower()
+    local, _, domain = cleaned.partition("@")
+    if not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
+        raise HTTPException(status_code=422, detail="E-mail inválido.")
+    return cleaned
 
 
 def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibrary:
@@ -233,11 +327,27 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     )
     await calendar.load()
 
+    # Multi-user auth: one secret signs session tokens and encrypts each user's
+    # stored OpenRouter key. An unset FEAR_SECRET_KEY gets an ephemeral one,
+    # which is fine for local dev but resets sessions and stored keys on restart.
+    secret_key = settings.secret_key
+    if not secret_key:
+        secret_key = secrets.token_urlsafe(32)
+        logger.warning(
+            "FEAR_SECRET_KEY is not set; using an ephemeral secret. Logins and "
+            "stored OpenRouter keys will reset on restart. Set FEAR_SECRET_KEY "
+            "for anything beyond local development."
+        )
+    security = Security(secret_key)
+    user_store = await asyncio.to_thread(UserStore, path=settings.users_db_path, security=security)
+
     application.state.settings = settings
     application.state.memory = memory
     application.state.reference_library = reference_library
     application.state.spotify = spotify
     application.state.calendar = calendar
+    application.state.security = security
+    application.state.user_store = user_store
     application.state.tts = NaturalTTS()
     application.state.brain = AsyncConversationalBrain(
         settings=settings,
@@ -330,6 +440,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         if active_clap_detector is not None:
             active_clap_detector.stop()
 
+        active_store = getattr(application.state, "user_store", None)
+        if active_store is not None:
+            active_store.close()
+
 
 app = FastAPI(title="F.E.A.R. Unified API", lifespan=lifespan)
 allowed_origins = cors_origins()
@@ -352,6 +466,56 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     return JSONResponse(
         status_code=500, content={"detail": "Internal error. The incident was logged."}
     )
+
+
+@app.post("/auth/register", response_model=AuthResponse)
+async def auth_register(
+    payload: RegisterRequest,
+    store: UserStore = Depends(get_user_store),
+    security: Security = Depends(get_security),
+) -> AuthResponse:
+    """Create an account and return a session token."""
+    email = _normalize_email(payload.email)
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=422, detail="A senha precisa de ao menos 8 caracteres.")
+    try:
+        user = await asyncio.to_thread(store.create_user, email, payload.password)
+    except EmailTaken as exc:
+        raise HTTPException(status_code=409, detail="Esse e-mail já está cadastrado.") from exc
+    return AuthResponse(token=security.make_session_token(user.id), user=_user_response(user))
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def auth_login(
+    payload: LoginRequest,
+    store: UserStore = Depends(get_user_store),
+    security: Security = Depends(get_security),
+) -> AuthResponse:
+    """Exchange email + password for a session token."""
+    user = await asyncio.to_thread(
+        store.verify_credentials, payload.email.strip().lower(), payload.password
+    )
+    if user is None:
+        raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
+    return AuthResponse(token=security.make_session_token(user.id), user=_user_response(user))
+
+
+@app.get("/auth/me", response_model=UserResponse)
+async def auth_me(user: User = Depends(get_current_user)) -> UserResponse:
+    """Return the authenticated user's account state."""
+    return _user_response(user)
+
+
+@app.post("/auth/openrouter-key", response_model=UserResponse)
+async def auth_set_openrouter_key(
+    payload: OpenRouterKeyRequest,
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+) -> UserResponse:
+    """Store (or clear) the user's own OpenRouter key, encrypted at rest."""
+    await asyncio.to_thread(store.set_openrouter_key, user.id, payload.api_key.strip())
+    refreshed = await asyncio.to_thread(store.get_by_id, user.id)
+    return _user_response(refreshed or user)
 
 
 @app.get("/health")

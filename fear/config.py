@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     chroma_path: str = Field("data/chroma", validation_alias="CHROMA_PATH")
     chroma_collection_name: str = Field("fear_memory", validation_alias="CHROMA_COLLECTION")
 
+    # Multi-user accounts. The secret signs session tokens and encrypts each
+    # user's stored OpenRouter key; keep it stable and private in production. An
+    # empty value makes the server mint an ephemeral one (fine for local dev,
+    # but logins and stored keys then reset on every restart).
+    secret_key: str = Field("", validation_alias="FEAR_SECRET_KEY")
+    users_db_path: str = Field("data/users.db", validation_alias="FEAR_USERS_DB")
+    session_max_age_days: int = Field(30, validation_alias="FEAR_SESSION_MAX_AGE_DAYS", ge=1)
+
     # OpenRouter is used through an OpenAI-compatible client interface.
     openrouter_api_key: str = Field("", validation_alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(
