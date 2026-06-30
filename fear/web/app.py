@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from fear.brain.async_conversation import AsyncConversationalBrain
@@ -132,17 +131,6 @@ def env_bool(name: str, *, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def mount_static_frontend(application: FastAPI) -> None:
-    """Serve the legacy static UI at /legacy when the folder exists."""
-    frontend_path = Path(__file__).resolve().parents[2] / "frontend"
-    if frontend_path.exists():
-        application.mount(
-            "/legacy",
-            StaticFiles(directory=str(frontend_path), html=True),
-            name="legacy",
-        )
-
-
 # --- Dependency providers (read app state; overridable in tests) ---
 def get_brain(request: Request) -> AsyncConversationalBrain:
     return request.app.state.brain
@@ -200,8 +188,6 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # Hardware/IO-heavy modules are imported here so importing this module (and
     # testing the HTTP layer) does not require the audio/ML stack to be present.
     from fear.audio.natural_tts import NaturalTTS
-    from fear.audio.voice_listener import VoiceListener
-    from fear.input.clap_detector import ClapDetector
     from fear.integrations.google_calendar import GoogleCalendarClient
     from fear.integrations.spotify_client import SpotifyClient
     from fear.memory.obsidian_watcher import ObsidianWatcher
@@ -272,6 +258,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.obsidian_watcher = watcher
 
     if env_bool("FEAR_ENABLE_VOICE_LISTENER", default=False):
+        # Imported here so the heavy audio stack (whisper, pyaudio) is only
+        # needed when voice input is explicitly enabled — install it with
+        # `pip install -e ".[audio]"`.
+        from fear.audio.voice_listener import VoiceListener
 
         def on_transcript(event: TranscriptEvent) -> None:
             loop = application.state.loop
@@ -289,6 +279,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.voice_listener = listener
 
     if env_bool("FEAR_ENABLE_CLAP_DETECTOR", default=False):
+        from fear.input.clap_detector import ClapDetector
 
         def on_double_clap() -> None:
             loop = application.state.loop
@@ -335,7 +326,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-mount_static_frontend(app)
 
 
 @app.exception_handler(Exception)

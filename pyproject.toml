@@ -10,11 +10,9 @@ readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "openai>=1.55,<2",
-  "openai-whisper>=20231117,<20250626",
   "pyttsx3>=2.90,<3",
   "chromadb>=0.5,<1",
   "spotipy>=2.24,<3",
-  "pyaudio>=0.2.14,<0.3",
   "fastapi>=0.115,<0.116",
   "uvicorn[standard]>=0.30,<0.35",
   "pydantic>=2.8,<3",
@@ -36,6 +34,12 @@ dev = [
   "ruff>=0.8,<1",
   "mypy>=1.13,<2",
   "types-requests>=2.32,<3",
+]
+# Optional microphone voice input (push-to-talk + clap detector). Needs the
+# system portaudio library for pyaudio. Install with `pip install -e ".[audio]"`.
+audio = [
+  "openai-whisper>=20231117,<20250626",
+  "pyaudio>=0.2.14,<0.3",
 ]
 
 [tool.setuptools.packages.find]

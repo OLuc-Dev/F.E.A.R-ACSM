@@ -6,7 +6,8 @@ Guia completo pra rodar localmente em **macOS, Linux e Windows**.
 
 - **Python 3.11**
 - **Node 18+** (vem com o npm)
-- **portaudio** — o pacote `pyaudio` compila em cima dele, então é necessário mesmo com o áudio desligado:
+- **portaudio** — _opcional_, só se você for usar **entrada de voz por microfone**
+  (`pip install -e ".[audio]"`). Sem ele, tudo funciona; só a captura de voz fica desligada.
   - macOS: `brew install portaudio`
   - Ubuntu/Debian: `sudo apt-get install -y portaudio19-dev`
   - Windows: normalmente instala via wheel; se falhar, `pip install pipwin && pipwin install pyaudio`
@@ -96,7 +97,7 @@ Abra **http://localhost:3000**. O painel **Sistema** fica verde conforme as inte
 
 ## Solução de problemas
 
-- **Falha ao instalar `pyaudio`** → faltou o `portaudio` (veja Pré-requisitos).
+- **Falha ao instalar `pyaudio`** → só acontece ao instalar o extra de voz (`.[audio]`); faltou o `portaudio` (veja Pré-requisitos). A instalação normal (`pip install -e .`) não precisa dele.
 - **`npm run dev` dá _"Couldn't find a pages directory"_** → cópia incompleta do repo **ou** o Next foi quebrado por `npm audit fix --force`. Conserto:
   ```powershell
   git checkout -- package.json package-lock.json

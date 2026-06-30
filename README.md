@@ -14,7 +14,6 @@ F.E.A.R. é um assistente pessoal **local-first**:
 - **Backend** em Python (FastAPI + asyncio) — `fear/`, servido por `fear.web.app`.
 - **Frontend** em Next.js / React / Tailwind — uma thread de conversa em vidro com
   streaming e uma presença 3D (`app/`, `components/`, `lib/`).
-- **UI estática legada** opcional em `frontend/`, servida em `/legacy`.
 
 O cérebro conversa via OpenRouter (API compatível com a do OpenAI), guarda
 memória pessoal em ChromaDB com embeddings locais (`sentence-transformers`) e
@@ -53,8 +52,9 @@ pode consultar uma biblioteca de notas em markdown.
 
 - Python **3.11**
 - Node **18+** (para o frontend)
-- `portaudio` no sistema para o `pyaudio` (recursos de áudio).
-  No Debian/Ubuntu: `sudo apt-get install portaudio19-dev`.
+- _Opcional_ — só para **entrada de voz por microfone** (`pip install -e ".[audio]"`):
+  `portaudio` no sistema. No Debian/Ubuntu: `sudo apt-get install portaudio19-dev`.
+  Sem isso, tudo funciona — só a captura de voz fica desligada.
 
 ## Instalação
 
