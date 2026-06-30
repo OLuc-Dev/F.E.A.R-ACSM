@@ -218,6 +218,13 @@ def test_knowledge_delete(client: TestClient, library: FakeReferenceLibrary) -> 
     assert "Antigo" not in library.sources
 
 
+def test_knowledge_path_blocked_for_non_local_client(client: TestClient) -> None:
+    # The TestClient is treated as a non-local caller (e.g. a phone on the LAN),
+    # so indexing an arbitrary server path is refused.
+    response = client.post("/knowledge/path", json={"path": "/tmp/whatever"})
+    assert response.status_code == 403
+
+
 def test_knowledge_unavailable_returns_503(client: TestClient) -> None:
     # Simulate the library failing to initialize (e.g. ML deps missing).
     app.dependency_overrides[get_reference_library] = lambda: None

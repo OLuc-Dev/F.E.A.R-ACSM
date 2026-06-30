@@ -166,6 +166,17 @@ def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibr
     return library
 
 
+def require_local_client(request: Request) -> None:
+    """Block filesystem-reading actions from non-local callers (e.g. a phone on the
+    LAN), so arbitrary server paths can only be indexed from the host machine."""
+    host = request.client.host if request.client else ""
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Indexar um caminho local só é permitido a partir da própria máquina.",
+        )
+
+
 async def process_text_command(application: FastAPI, text: str, speaker: str):
     """Process a text command through the configured brain (used by /ws and callbacks)."""
     return await application.state.brain.process_command(text, speaker)
@@ -452,10 +463,12 @@ async def knowledge_add_text(
 
 @app.post("/knowledge/path", response_model=KnowledgeSource)
 async def knowledge_add_path(
+    request: Request,
     payload: KnowledgePathRequest,
     library: ReferenceLibrary | None = Depends(get_reference_library),
 ) -> KnowledgeSource:
     """Index a local folder of markdown notes, or a single markdown file."""
+    require_local_client(request)
     store = require_reference_library(library)
     path = Path(payload.path.strip()).expanduser()
     source = (payload.source or "").strip() or (path.stem or "fonte")
