@@ -26,6 +26,7 @@ export function AuthPanel({
   onSignUp,
   onSignOut,
   onSaveKey,
+  mandatory = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -34,6 +35,9 @@ export function AuthPanel({
   onSignUp: (email: string, password: string) => Promise<void>;
   onSignOut: () => void;
   onSaveKey: (apiKey: string) => Promise<void>;
+  // When true the panel is a login gate: it can't be dismissed (no backdrop
+  // click, no close button, no Escape) because the app requires an account.
+  mandatory?: boolean;
 }) {
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
@@ -52,11 +56,11 @@ export function AuthPanel({
   }, [open, user]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || mandatory) return;
     const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, mandatory]);
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -100,11 +104,15 @@ export function AuthPanel({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
         >
-          <button
-            aria-label="Fechar"
-            onClick={onClose}
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-          />
+          {mandatory ? (
+            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          ) : (
+            <button
+              aria-label="Fechar"
+              onClick={onClose}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+          )}
 
           <motion.div
             role="dialog"
@@ -128,13 +136,15 @@ export function AuthPanel({
                   <p className="label-tn">F.E.A.R.</p>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                aria-label="Fechar"
-                className="tap grid size-8 place-items-center rounded-lg border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
-              >
-                <X className="size-4" />
-              </button>
+              {!mandatory && (
+                <button
+                  onClick={onClose}
+                  aria-label="Fechar"
+                  className="tap grid size-8 place-items-center rounded-lg border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                >
+                  <X className="size-4" />
+                </button>
+              )}
             </div>
 
             {error && (

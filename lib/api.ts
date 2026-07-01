@@ -150,10 +150,8 @@ export async function streamCommand(
   }
 }
 
-export async function getMemory(speaker: string): Promise<MemoryResponse> {
-  const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(speaker)}`, {
-    headers: authHeaders(),
-  });
+export async function getMemory(): Promise<MemoryResponse> {
+  const response = await fetch(`${API_BASE}/memory`, { headers: authHeaders() });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as MemoryResponse;
 }
@@ -162,8 +160,8 @@ export async function forgetMemory(memoryId: string): Promise<void> {
   await postJson("/memory/forget", { memory_id: memoryId });
 }
 
-export async function resetConversation(speaker: string): Promise<void> {
-  await postJson(`/conversation/reset?speaker=${encodeURIComponent(speaker)}`, {});
+export async function resetConversation(): Promise<void> {
+  await postJson("/conversation/reset", {});
 }
 
 export async function captureVoiceOnce(): Promise<void> {
@@ -180,11 +178,6 @@ export async function listKnowledge(): Promise<KnowledgeListResponse> {
 
 export async function addKnowledgeText(name: string, content: string): Promise<KnowledgeSource> {
   const response = await postJson("/knowledge/text", { name, content });
-  return (await response.json()) as KnowledgeSource;
-}
-
-export async function addKnowledgePath(path: string, source?: string): Promise<KnowledgeSource> {
-  const response = await postJson("/knowledge/path", { path, source: source || null });
   return (await response.json()) as KnowledgeSource;
 }
 

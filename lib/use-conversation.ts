@@ -157,7 +157,7 @@ export function useConversation() {
           pushMessage("system", "Escutando um trecho de voz…");
           setStatus("online");
         } else if (appId === "reset") {
-          await resetConversation(who);
+          await resetConversation();
           setMessages([
             { id: nextId(), role: "system", content: "Conversa reiniciada. Memória pessoal mantida." },
           ]);

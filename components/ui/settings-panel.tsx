@@ -9,7 +9,6 @@ import {
   Cpu,
   Database,
   FileText,
-  FolderPlus,
   Loader2,
   Plug,
   Plus,
@@ -19,7 +18,6 @@ import {
 } from "lucide-react";
 
 import {
-  addKnowledgePath,
   addKnowledgeText,
   deleteKnowledge,
   forgetMemory,
@@ -115,8 +113,6 @@ export function SettingsPanel({
 
   const [textName, setTextName] = useState("");
   const [textContent, setTextContent] = useState("");
-  const [pathValue, setPathValue] = useState("");
-  const [pathName, setPathName] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -143,12 +139,12 @@ export function SettingsPanel({
 
   const refreshMemories = useCallback(async () => {
     try {
-      const data = await getMemory(speaker || "user");
+      const data = await getMemory();
       setMemories(data.memories);
     } catch {
       setMemories([]);
     }
-  }, [speaker]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -202,16 +198,6 @@ export function SettingsPanel({
       await addKnowledgeText(textName.trim() || "Nota", textContent.trim());
       setTextName("");
       setTextContent("");
-    });
-  }
-
-  function submitPath(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!pathValue.trim()) return;
-    void run(async () => {
-      await addKnowledgePath(pathValue.trim(), pathName.trim() || undefined);
-      setPathValue("");
-      setPathName("");
     });
   }
 
@@ -399,40 +385,6 @@ export function SettingsPanel({
                         >
                           {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
                           Adicionar
-                        </button>
-                      </form>
-
-                      <form
-                        onSubmit={submitPath}
-                        className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] p-3.5"
-                      >
-                        <SectionLabel icon={<FolderPlus className="size-3.5" />}>
-                          Conectar pasta ou arquivo
-                        </SectionLabel>
-                        <Field
-                          value={pathValue}
-                          onChange={(event) => setPathValue(event.target.value)}
-                          placeholder="/caminho/para/notas (pasta ou .md)"
-                        />
-                        <Field
-                          value={pathName}
-                          onChange={(event) => setPathName(event.target.value)}
-                          placeholder="Nome da fonte (opcional)"
-                        />
-                        <p className="text-[11px] leading-4 text-muted-foreground/60">
-                          Caminho no computador onde o backend roda. Indexa todos os .md de uma pasta.
-                        </p>
-                        <button
-                          type="submit"
-                          disabled={busy || !pathValue.trim()}
-                          className="tap inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] text-sm font-medium text-foreground hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {busy ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <FolderPlus className="size-4" />
-                          )}
-                          Indexar caminho
                         </button>
                       </form>
                     </>

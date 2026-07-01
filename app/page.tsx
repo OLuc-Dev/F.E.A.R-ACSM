@@ -210,7 +210,7 @@ export default function HomePage() {
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
-  const { user, signIn, signUp, signOut, saveOpenRouterKey } = useAuth();
+  const { user, ready, signIn, signUp, signOut, saveOpenRouterKey } = useAuth();
 
   // Open the settings drawer on a specific tab (the gear opens Conhecimento,
   // the dock's Memória icon jumps straight to the memory inspector).
@@ -287,6 +287,37 @@ export default function HomePage() {
   const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
   // The greeting is the only message until the first exchange; show the welcome hero instead.
   const showWelcome = messages.length === 1 && messages[0].id === 0;
+
+  // Login is required. Wait for the session check, then gate the whole app
+  // behind the (non-dismissible) account panel until the user signs in.
+  if (!ready) {
+    return (
+      <main className="relative grid min-h-screen place-items-center text-foreground">
+        <Backdrop />
+        <span className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" /> carregando…
+        </span>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="relative grid min-h-screen place-items-center text-foreground">
+        <Backdrop />
+        <AuthPanel
+          open
+          mandatory
+          onClose={() => {}}
+          user={null}
+          onSignIn={signIn}
+          onSignUp={signUp}
+          onSignOut={signOut}
+          onSaveKey={saveOpenRouterKey}
+        />
+      </main>
+    );
+  }
 
   return (
     <main className="relative min-h-screen text-foreground">
