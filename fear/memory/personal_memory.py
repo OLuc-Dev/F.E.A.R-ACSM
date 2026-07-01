@@ -122,6 +122,32 @@ class PersonalMemory:
         self._collection.delete(ids=[memory_id])
         return True
 
+    def claim_unowned(self, user_id: str) -> int:
+        """Attach every un-owned memory (no user_id) to a user; return the count.
+
+        A one-time migration for memories created before accounts existed, so a
+        user can keep the history F.E.A.R. already had for them.
+        """
+        if not user_id:
+            return 0
+
+        raw = self._collection.get(include=["metadatas"])
+        ids = raw.get("ids", []) or []
+        metadatas = raw.get("metadatas", []) or []
+
+        claim_ids: list[str] = []
+        claim_metadatas: list[dict[str, Any]] = []
+        for index, memory_id in enumerate(ids):
+            metadata = dict(metadatas[index] or {}) if index < len(metadatas) else {}
+            if not metadata.get("user_id"):
+                metadata["user_id"] = user_id
+                claim_ids.append(str(memory_id))
+                claim_metadatas.append(metadata)
+
+        if claim_ids:
+            self._collection.update(ids=claim_ids, metadatas=claim_metadatas)
+        return len(claim_ids)
+
     def query_memories(
         self,
         query: str,
