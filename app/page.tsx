@@ -22,17 +22,20 @@ import {
   Split,
   Swords,
   User,
+  UserRound,
   Volume2,
   VolumeX,
   Wifi,
   WifiOff,
 } from "lucide-react";
 
+import { AuthPanel } from "@/components/ui/auth-panel";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
 import { getStatus, type StatusResponse } from "@/lib/api";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
+import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 
 const FearPresence = dynamic(
@@ -203,8 +206,11 @@ export default function HomePage() {
   const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("conhecimento");
+  const [authOpen, setAuthOpen] = useState(false);
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  const { user, signIn, signUp, signOut, saveOpenRouterKey } = useAuth();
 
   // Open the settings drawer on a specific tab (the gear opens Conhecimento,
   // the dock's Memória icon jumps straight to the memory inspector).
@@ -335,6 +341,18 @@ export default function HomePage() {
               }`}
             >
               {voiceOn ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+            </button>
+            <button
+              onClick={() => setAuthOpen(true)}
+              aria-label={user ? "Sua conta" : "Entrar"}
+              title={user ? user.email : "Entrar"}
+              className={`tap grid size-9 place-items-center rounded-full border transition ${
+                user
+                  ? "border-cyan-300/50 bg-cyan-300/10 text-cyan-200"
+                  : "border-white/10 bg-white/[0.03] text-muted-foreground hover:border-cyan-300/40 hover:text-cyan-200"
+              }`}
+            >
+              <UserRound className="size-4" />
             </button>
             <button
               onClick={() => openSettings()}
@@ -551,6 +569,16 @@ export default function HomePage() {
         status={systemStatus}
         speaker={speaker}
         initialTab={settingsTab}
+      />
+
+      <AuthPanel
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        user={user}
+        onSignIn={signIn}
+        onSignUp={signUp}
+        onSignOut={signOut}
+        onSaveKey={saveOpenRouterKey}
       />
     </main>
   );

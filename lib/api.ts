@@ -1,5 +1,7 @@
 // Typed client for the F.E.A.R. backend: one place for endpoints, shapes and errors.
 
+import { authHeaders } from "@/lib/auth";
+
 // Resolve the backend base URL. An explicit NEXT_PUBLIC_FEAR_API_BASE always
 // wins; otherwise, in the browser, talk to the same host that served the page —
 // so opening the app from a phone at http://<pc-ip>:3000 just reaches the
@@ -95,7 +97,7 @@ async function errorDetail(response: Response): Promise<string> {
 async function postJson(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
     signal,
   });
@@ -105,7 +107,7 @@ async function postJson(path: string, body: unknown, signal?: AbortSignal): Prom
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/health`);
+    const response = await fetch(`${API_BASE}/health`, { headers: authHeaders() });
     return response.ok;
   } catch {
     return false;
@@ -113,7 +115,7 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 export async function getStatus(): Promise<StatusResponse> {
-  const response = await fetch(`${API_BASE}/status`);
+  const response = await fetch(`${API_BASE}/status`, { headers: authHeaders() });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as StatusResponse;
 }
@@ -132,7 +134,7 @@ export async function streamCommand(
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/command/stream`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders() },
     body: JSON.stringify({ speak: false, ...request }),
     signal,
   });
@@ -149,7 +151,9 @@ export async function streamCommand(
 }
 
 export async function getMemory(speaker: string): Promise<MemoryResponse> {
-  const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(speaker)}`);
+  const response = await fetch(`${API_BASE}/memory/${encodeURIComponent(speaker)}`, {
+    headers: authHeaders(),
+  });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as MemoryResponse;
 }
@@ -169,7 +173,7 @@ export async function captureVoiceOnce(): Promise<void> {
 // --- Knowledge sources (the settings panel) ---
 
 export async function listKnowledge(): Promise<KnowledgeListResponse> {
-  const response = await fetch(`${API_BASE}/knowledge`);
+  const response = await fetch(`${API_BASE}/knowledge`, { headers: authHeaders() });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as KnowledgeListResponse;
 }
@@ -187,6 +191,7 @@ export async function addKnowledgePath(path: string, source?: string): Promise<K
 export async function deleteKnowledge(source: string): Promise<void> {
   const response = await fetch(`${API_BASE}/knowledge/${encodeURIComponent(source)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
 }
@@ -194,7 +199,7 @@ export async function deleteKnowledge(source: string): Promise<void> {
 // --- Runtime behaviour config (model + persona mode; never secrets) ---
 
 export async function getConfig(): Promise<ConfigResponse> {
-  const response = await fetch(`${API_BASE}/config`);
+  const response = await fetch(`${API_BASE}/config`, { headers: authHeaders() });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as ConfigResponse;
 }
@@ -202,4 +207,40 @@ export async function getConfig(): Promise<ConfigResponse> {
 export async function updateConfig(update: ConfigUpdate): Promise<ConfigResponse> {
   const response = await postJson("/config", update);
   return (await response.json()) as ConfigResponse;
+}
+
+// --- Accounts (multi-user; the session token is attached automatically) ---
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  has_openrouter_key: boolean;
+  chat_model: string;
+  persona_mode: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}
+
+export async function register(email: string, password: string): Promise<AuthResponse> {
+  const response = await postJson("/auth/register", { email, password });
+  return (await response.json()) as AuthResponse;
+}
+
+export async function login(email: string, password: string): Promise<AuthResponse> {
+  const response = await postJson("/auth/login", { email, password });
+  return (await response.json()) as AuthResponse;
+}
+
+export async function fetchMe(): Promise<AuthUser> {
+  const response = await fetch(`${API_BASE}/auth/me`, { headers: authHeaders() });
+  if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
+  return (await response.json()) as AuthUser;
+}
+
+export async function setOpenRouterKey(apiKey: string): Promise<AuthUser> {
+  const response = await postJson("/auth/openrouter-key", { api_key: apiKey });
+  return (await response.json()) as AuthUser;
 }
