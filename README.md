@@ -19,6 +19,15 @@ O cérebro conversa via OpenRouter (API compatível com a do OpenAI), guarda
 memória pessoal em ChromaDB com embeddings locais (`sentence-transformers`) e
 pode consultar uma biblioteca de notas em markdown.
 
+## Contas e multiusuário
+
+Cada pessoa tem **login** (e-mail + senha), com **memória, chave do OpenRouter e
+configuração isoladas** — ninguém enxerga os dados do outro. As chaves ficam
+criptografadas no servidor (derivado de `FEAR_SECRET_KEY`) e cada usuário traz a
+própria chave do OpenRouter. Rodando local, o login é opcional; publicado, é
+exigido. Para colocar no ar como site (API no Fly.io + tela no Vercel), veja
+**[DEPLOY.md](DEPLOY.md)**.
+
 ## Funcionalidades
 
 - **Diálogo com continuidade**: janela de conversa por interlocutor, então F.E.A.R.
@@ -35,10 +44,10 @@ pode consultar uma biblioteca de notas em markdown.
   cirurgico) e o **modelo** do OpenRouter ao vivo; o padrão fixo fica no `.env`
   (`FEAR_PERSONA_MODE`, `OPENROUTER_CHAT_MODEL`).
 - **Memória persistente por interlocutor** (`PersonalMemory`, ChromaDB).
-- **Fontes de conhecimento configuráveis**: pelo painel **Configuração** (ícone de
-  engrenagem / app no dock) você adiciona conhecimento por texto colado ou aponta
-  uma pasta/arquivo markdown local. Tudo é indexado na `ReferenceLibrary` e F.E.A.R.
-  consulta sozinho ao responder.
+- **Fontes de conhecimento por conta**: pelo painel **Configuração** (ícone de
+  engrenagem / app no dock) você adiciona conhecimento por texto colado. Tudo é
+  indexado na `ReferenceLibrary` (isolado por usuário) e F.E.A.R. consulta sozinho
+  ao responder.
 - **Spotify** por linguagem natural, palmas e toques de wearable.
 - **Percepção de palmas** (`ClapDetector`) e **toques de wearable** (`/wearable/tap`).
 - **Voz** opcional (Whisper, push-to-talk) e **TTS** natural (ElevenLabs) com

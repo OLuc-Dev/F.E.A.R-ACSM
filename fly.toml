@@ -1,0 +1,38 @@
+# Fly.io config for the F.E.A.R. backend (the API). The frontend goes to Vercel.
+# One-time setup (see DEPLOY.md for the full walkthrough):
+#   fly launch --no-deploy            # choose an app name + region
+#   fly volumes create fear_data -s 1 # 1 GB persistent disk for /data
+#   fly secrets set FEAR_SECRET_KEY=... FEAR_CORS_ORIGINS=https://<frontend>.vercel.app
+#   fly deploy
+#
+# Rename "fear-backend" to the app name you pick during `fly launch`.
+app = "fear-backend"
+primary_region = "gru" # São Paulo
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  FEAR_PORT = "8765"
+  CHROMA_PATH = "/data/chroma"
+  FEAR_USERS_DB = "/data/users.db"
+
+# Persistent disk for the memory store + the users database.
+[[mounts]]
+  source = "fear_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8765
+  force_https = true
+  # Sleep the machine when idle and wake it on the next request, to keep costs
+  # low for a small group. Remove auto_stop if you want it always warm.
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+# torch + the embedding model need real memory; 2 GB is a safe starting point.
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 1

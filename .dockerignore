@@ -1,0 +1,16 @@
+# Keep the backend build context small: no frontend, no local data, no caches.
+.git
+node_modules
+.next
+out
+data
+*.db
+*.sqlite
+**/__pycache__
+.venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.env
+credentials.json
+token.pickle
