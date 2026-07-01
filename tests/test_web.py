@@ -66,12 +66,10 @@ class FakeBrain:
 
 
 class FakeMemory:
-    def get_facts_about_speaker(
-        self, speaker: str, n_results: int = 10
-    ) -> list[PersonalMemoryResult]:
+    def recent_for_user(self, user_id: str, n_results: int = 20) -> list[PersonalMemoryResult]:
         return [
             PersonalMemoryResult(
-                id="m-1", text="uma lembrança", speaker=speaker, source="voice", timestamp=1.0
+                id="m-1", text="uma lembrança", speaker="voz", source="voice", timestamp=1.0
             )
         ]
 
@@ -94,23 +92,17 @@ class FakeReferenceLibrary:
     def __init__(self) -> None:
         self.sources: dict[str, int] = {}
 
-    def index_text(self, text: str, *, source: str, section: str = "nota") -> int:
+    def index_text(
+        self, text: str, *, source: str, section: str = "nota", user_id: str = ""
+    ) -> int:
         chunks = max(1, len(text) // 80)
         self.sources[source] = chunks
         return chunks
 
-    def index_folder(self, folder: object, *, source: str) -> int:
-        self.sources[source] = 3
-        return 3
-
-    def index_file(self, path: object, *, source: str) -> int:
-        self.sources[source] = 1
-        return 1
-
-    def list_sources(self) -> list[dict[str, object]]:
+    def list_sources(self, user_id: str = "") -> list[dict[str, object]]:
         return [{"source": name, "chunks": count} for name, count in sorted(self.sources.items())]
 
-    def delete_source(self, source: str) -> int:
+    def delete_source(self, source: str, user_id: str = "") -> int:
         return self.sources.pop(source, 0)
 
 
@@ -146,6 +138,14 @@ def client(brain: FakeBrain, library: FakeReferenceLibrary, tmp_path: Path) -> I
         user_store.close()
 
 
+def _register(
+    client: TestClient, email: str = "t@example.com", password: str = "longenough"
+) -> tuple[dict[str, object], dict[str, str]]:
+    """Register a user; return (user dict, Authorization header) for authed calls."""
+    body = client.post("/auth/register", json={"email": email, "password": password}).json()
+    return body["user"], {"Authorization": f"Bearer {body['token']}"}
+
+
 def test_health(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
@@ -169,54 +169,56 @@ def test_status(client: TestClient) -> None:
     }
 
 
-def test_command(client: TestClient) -> None:
+def test_command_requires_auth(client: TestClient) -> None:
     response = client.post("/command", json={"text": "oi", "speaker": "Lucas", "speak": False})
-    assert response.status_code == 200
-    assert response.json() == {"reply": "echo: oi", "speaker": "Lucas", "audio_file": None}
+    assert response.status_code == 401
 
 
-def test_command_anonymous_has_no_user_context(client: TestClient, brain: FakeBrain) -> None:
-    client.post("/command", json={"text": "oi", "speaker": "Lucas", "speak": False})
-    # No token -> the brain runs in shared, single-user mode.
-    assert brain.last_user is None
-
-
-def test_command_logged_in_passes_user_context(client: TestClient, brain: FakeBrain) -> None:
-    registered = client.post(
-        "/auth/register", json={"email": "u@example.com", "password": "longenough"}
-    ).json()
-    token = registered["token"]
-
+def test_command(client: TestClient, brain: FakeBrain) -> None:
+    user, headers = _register(client)
     response = client.post(
-        "/command",
-        json={"text": "oi", "speaker": "u", "speak": False},
-        headers={"Authorization": f"Bearer {token}"},
+        "/command", json={"text": "oi", "speaker": "Lucas", "speak": False}, headers=headers
     )
     assert response.status_code == 200
-    # The route resolved the token to a user and handed the brain their context.
+    assert response.json() == {"reply": "echo: oi", "speaker": "Lucas", "audio_file": None}
+    # The route resolved the token and handed the brain that user's context.
     assert brain.last_user is not None
-    assert brain.last_user.user_id == registered["user"]["id"]
+    assert brain.last_user.user_id == user["id"]
 
 
 def test_command_stream(client: TestClient) -> None:
-    response = client.post("/command/stream", json={"text": "oi", "speaker": "Lucas"})
+    _, headers = _register(client)
+    response = client.post(
+        "/command/stream", json={"text": "oi", "speaker": "Lucas"}, headers=headers
+    )
     assert response.status_code == 200
     assert response.text == "parte 1 parte 2"
 
 
+def test_memory_requires_auth(client: TestClient) -> None:
+    assert client.get("/memory").status_code == 401
+
+
 def test_memory(client: TestClient) -> None:
-    response = client.get("/memory/Lucas")
+    user, headers = _register(client)
+    response = client.get("/memory", headers=headers)
     assert response.status_code == 200
     body = response.json()
-    assert body["speaker"] == "Lucas"
+    assert body["speaker"] == user["email"]
     assert body["memories"][0]["text"] == "uma lembrança"
     assert body["memories"][0]["id"] == "m-1"
 
 
-def test_memory_forget(client: TestClient) -> None:
-    response = client.post("/memory/forget", json={"memory_id": "m-1"})
+def test_memory_forget_only_own(client: TestClient) -> None:
+    user, headers = _register(client)
+    mine = f"{user['id']}-voice-abc"
+    response = client.post("/memory/forget", json={"memory_id": mine}, headers=headers)
     assert response.status_code == 200
-    assert response.json() == {"forgotten": True, "id": "m-1"}
+    assert response.json() == {"forgotten": True, "id": mine}
+
+    # An id not prefixed with this user's id (someone else's) is refused.
+    other = client.post("/memory/forget", json={"memory_id": "other-user-xyz"}, headers=headers)
+    assert other.json() == {"forgotten": False, "id": "other-user-xyz"}
 
 
 def test_wearable_tap(client: TestClient) -> None:
@@ -227,14 +229,21 @@ def test_wearable_tap(client: TestClient) -> None:
 
 
 def test_conversation_reset(client: TestClient, brain: FakeBrain) -> None:
-    response = client.post("/conversation/reset", params={"speaker": "Lucas"})
+    user, headers = _register(client)
+    response = client.post("/conversation/reset", headers=headers)
     assert response.status_code == 200
-    assert response.json() == {"status": "reset", "speaker": "Lucas"}
-    assert brain.reset_calls == ["Lucas"]
+    assert response.json() == {"status": "reset", "speaker": user["email"]}
+    # History is reset by the user's id, not a free-text speaker.
+    assert brain.reset_calls == [user["id"]]
+
+
+def test_knowledge_requires_auth(client: TestClient) -> None:
+    assert client.get("/knowledge").status_code == 401
 
 
 def test_knowledge_list_starts_empty(client: TestClient) -> None:
-    response = client.get("/knowledge")
+    _, headers = _register(client)
+    response = client.get("/knowledge", headers=headers)
     assert response.status_code == 200
     body = response.json()
     assert body["available"] is True
@@ -242,71 +251,77 @@ def test_knowledge_list_starts_empty(client: TestClient) -> None:
 
 
 def test_knowledge_add_text_then_list(client: TestClient) -> None:
+    _, headers = _register(client)
     response = client.post(
-        "/knowledge/text",
-        json={"name": "Manifesto", "content": "ideia " * 100},
+        "/knowledge/text", json={"name": "Manifesto", "content": "ideia " * 100}, headers=headers
     )
     assert response.status_code == 200
     assert response.json()["source"] == "Manifesto"
     assert response.json()["chunks"] >= 1
 
-    listed = client.get("/knowledge").json()
+    listed = client.get("/knowledge", headers=headers).json()
     assert "Manifesto" in [item["source"] for item in listed["sources"]]
 
 
 def test_knowledge_add_text_rejects_empty_content(client: TestClient) -> None:
-    response = client.post("/knowledge/text", json={"name": "x", "content": "   "})
+    _, headers = _register(client)
+    response = client.post("/knowledge/text", json={"name": "x", "content": "   "}, headers=headers)
     assert response.status_code == 422
 
 
 def test_knowledge_delete(client: TestClient, library: FakeReferenceLibrary) -> None:
+    _, headers = _register(client)
     library.sources["Antigo"] = 4
-    response = client.delete("/knowledge/Antigo")
+    response = client.delete("/knowledge/Antigo", headers=headers)
     assert response.status_code == 200
     assert response.json() == {"source": "Antigo", "deleted": 4}
     assert "Antigo" not in library.sources
 
 
-def test_knowledge_path_blocked_for_non_local_client(client: TestClient) -> None:
-    # The TestClient is treated as a non-local caller (e.g. a phone on the LAN),
-    # so indexing an arbitrary server path is refused.
-    response = client.post("/knowledge/path", json={"path": "/tmp/whatever"})
-    assert response.status_code == 403
-
-
 def test_knowledge_unavailable_returns_503(client: TestClient) -> None:
     # Simulate the library failing to initialize (e.g. ML deps missing).
+    _, headers = _register(client)
     app.dependency_overrides[get_reference_library] = lambda: None
 
-    listed = client.get("/knowledge").json()
+    listed = client.get("/knowledge", headers=headers).json()
     assert listed == {"available": False, "sources": []}
 
-    response = client.post("/knowledge/text", json={"name": "x", "content": "y"})
+    response = client.post("/knowledge/text", json={"name": "x", "content": "y"}, headers=headers)
     assert response.status_code == 503
 
 
+def test_config_requires_auth(client: TestClient) -> None:
+    assert client.get("/config").status_code == 401
+
+
 def test_config_get(client: TestClient) -> None:
-    response = client.get("/config")
+    _, headers = _register(client)
+    response = client.get("/config", headers=headers)
     assert response.status_code == 200
     body = response.json()
-    assert body["persona_mode"] == "equilibrio"
+    assert body["persona_mode"] == "equilibrio"  # default until the user changes it
     assert "sombrio" in body["persona_modes"]
     assert body["model_default"]
 
 
-def test_config_set_model_and_mode(client: TestClient, brain: FakeBrain) -> None:
+def test_config_set_model_and_mode_persists_per_user(client: TestClient) -> None:
+    _, headers = _register(client)
     response = client.post(
         "/config",
         json={"model": "deepseek/deepseek-chat", "persona_mode": "sombrio"},
+        headers=headers,
     )
     assert response.status_code == 200
     body = response.json()
     assert body["model"] == "deepseek/deepseek-chat"
     assert body["persona_mode"] == "sombrio"
-    assert brain.model == "deepseek/deepseek-chat"
-    assert brain.persona_mode == "sombrio"
+    # The choice is saved on the account: a fresh read returns it.
+    reread = client.get("/config", headers=headers).json()
+    assert reread["model"] == "deepseek/deepseek-chat"
+    assert reread["persona_mode"] == "sombrio"
 
 
 def test_config_rejects_invalid_mode(client: TestClient) -> None:
-    response = client.post("/config", json={"persona_mode": "caotico"})
+    _, headers = _register(client)
+    response = client.post("/config", json={"persona_mode": "caotico"}, headers=headers)
     assert response.status_code == 422

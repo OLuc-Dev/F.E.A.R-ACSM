@@ -6,7 +6,6 @@ import os
 import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -16,13 +15,18 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from fear.auth import EmailTaken, Security, TokenError, User, UserStore
-from fear.brain.async_conversation import AsyncConversationalBrain, UserContext
+from fear.brain.async_conversation import (
+    DEFAULT_PERSONA_MODE,
+    PERSONA_MODES,
+    AsyncConversationalBrain,
+    UserContext,
+)
 from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
 from fear.library.reference_library import ReferenceLibrary
 from fear.logging_config import configure_logging
 from fear.memory.personal_memory import PersonalMemory
-from fear.runtime_state import load_runtime_config, save_runtime_config
+from fear.runtime_state import load_runtime_config
 
 if TYPE_CHECKING:
     from fear.audio.voice_listener import TranscriptEvent
@@ -84,13 +88,6 @@ class KnowledgeTextRequest(BaseModel):
 
     name: str
     content: str
-
-
-class KnowledgePathRequest(BaseModel):
-    """Request body for indexing a local folder or markdown file as knowledge."""
-
-    path: str
-    source: str | None = None
 
 
 class KnowledgeSource(BaseModel):
@@ -253,28 +250,6 @@ def _normalize_email(email: str) -> str:
     return cleaned
 
 
-async def get_optional_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
-    store: UserStore = Depends(get_user_store),
-    security: Security = Depends(get_security),
-    settings: Settings = Depends(get_settings),
-) -> User | None:
-    """Like get_current_user, but returns None instead of 401 for anonymous callers.
-
-    This lets a route serve both logged-in (isolated) and anonymous (shared) use
-    while the service is still single-user by default — no token, no problem.
-    """
-    if credentials is None:
-        return None
-    try:
-        user_id = security.read_session_token(
-            credentials.credentials, settings.session_max_age_days * 86_400
-        )
-    except TokenError:
-        return None
-    return await asyncio.to_thread(store.get_by_id, user_id)
-
-
 async def _user_context(user: User | None, store: UserStore) -> UserContext | None:
     """Build the brain's per-user context, including the decrypted OpenRouter key."""
     if user is None:
@@ -299,17 +274,6 @@ def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibr
             ),
         )
     return library
-
-
-def require_local_client(request: Request) -> None:
-    """Block filesystem-reading actions from non-local callers (e.g. a phone on the
-    LAN), so arbitrary server paths can only be indexed from the host machine."""
-    host = request.client.host if request.client else ""
-    if host not in {"127.0.0.1", "::1", "localhost"}:
-        raise HTTPException(
-            status_code=403,
-            detail="Indexar um caminho local só é permitido a partir da própria máquina.",
-        )
 
 
 async def process_text_command(application: FastAPI, text: str, speaker: str):
@@ -585,7 +549,7 @@ async def command(
     payload: CommandRequest,
     brain: AsyncConversationalBrain = Depends(get_brain),
     tts: Any = Depends(get_tts),
-    user: User | None = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
 ) -> CommandResponse:
     """Process a text command and optionally speak it locally."""
@@ -607,7 +571,7 @@ async def command(
 async def command_stream(
     payload: CommandRequest,
     brain: AsyncConversationalBrain = Depends(get_brain),
-    user: User | None = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
 ) -> StreamingResponse:
     """Stream the reply as plain-text chunks as the model produces them."""
@@ -625,15 +589,15 @@ async def command_stream(
     )
 
 
-@app.get("/memory/{speaker}", response_model=MemoryResponse)
-async def memory_for_speaker(
-    speaker: str,
+@app.get("/memory", response_model=MemoryResponse)
+async def memory_list(
+    user: User = Depends(get_current_user),
     memory: PersonalMemory = Depends(get_memory),
 ) -> MemoryResponse:
-    """Return recent memories for a speaker."""
-    facts = await asyncio.to_thread(memory.get_facts_about_speaker, speaker)
+    """Return the signed-in user's own recent memories."""
+    facts = await asyncio.to_thread(memory.recent_for_user, user.id)
     return MemoryResponse(
-        speaker=speaker,
+        speaker=user.email,
         memories=[
             {"id": item.id, "text": item.text, "source": item.source, "timestamp": item.timestamp}
             for item in facts
@@ -644,22 +608,28 @@ async def memory_for_speaker(
 @app.post("/memory/forget")
 async def memory_forget(
     payload: ForgetRequest,
+    user: User = Depends(get_current_user),
     memory: PersonalMemory = Depends(get_memory),
 ) -> dict[str, object]:
-    """Delete a single memory by id."""
+    """Delete one of the signed-in user's memories by id."""
+    # Owned-memory ids are prefixed with the user id; refuse anything else so a
+    # user can only ever forget their own memories.
+    if not payload.memory_id.startswith(f"{user.id}-"):
+        return {"forgotten": False, "id": payload.memory_id}
     forgotten = await asyncio.to_thread(memory.forget, payload.memory_id)
     return {"forgotten": forgotten, "id": payload.memory_id}
 
 
 @app.get("/knowledge", response_model=KnowledgeListResponse)
 async def knowledge_list(
+    user: User = Depends(get_current_user),
     library: ReferenceLibrary | None = Depends(get_reference_library),
 ) -> KnowledgeListResponse:
-    """List the knowledge sources F.E.A.R. can draw on."""
+    """List the signed-in user's own knowledge sources."""
     if library is None:
         return KnowledgeListResponse(available=False, sources=[])
 
-    sources = await asyncio.to_thread(library.list_sources)
+    sources = await asyncio.to_thread(library.list_sources, user.id)
     return KnowledgeListResponse(
         available=True,
         sources=[KnowledgeSource(source=item["source"], chunks=item["chunks"]) for item in sources],
@@ -669,49 +639,29 @@ async def knowledge_list(
 @app.post("/knowledge/text", response_model=KnowledgeSource)
 async def knowledge_add_text(
     payload: KnowledgeTextRequest,
+    user: User = Depends(get_current_user),
     library: ReferenceLibrary | None = Depends(get_reference_library),
 ) -> KnowledgeSource:
-    """Add a free-text knowledge source (a named, editable note)."""
+    """Add a free-text knowledge source (a named, editable note) owned by the user."""
     store = require_reference_library(library)
     name = payload.name.strip() or "nota"
     content = payload.content.strip()
     if not content:
         raise HTTPException(status_code=422, detail="O conteúdo não pode ser vazio.")
 
-    chunks = await asyncio.to_thread(store.index_text, content, source=name)
+    chunks = await asyncio.to_thread(store.index_text, content, source=name, user_id=user.id)
     return KnowledgeSource(source=name, chunks=chunks)
-
-
-@app.post("/knowledge/path", response_model=KnowledgeSource)
-async def knowledge_add_path(
-    request: Request,
-    payload: KnowledgePathRequest,
-    library: ReferenceLibrary | None = Depends(get_reference_library),
-) -> KnowledgeSource:
-    """Index a local folder of markdown notes, or a single markdown file."""
-    require_local_client(request)
-    store = require_reference_library(library)
-    path = Path(payload.path.strip()).expanduser()
-    source = (payload.source or "").strip() or (path.stem or "fonte")
-
-    if path.is_dir():
-        chunks = await asyncio.to_thread(store.index_folder, path, source=source)
-    elif path.is_file():
-        chunks = await asyncio.to_thread(store.index_file, path, source=source)
-    else:
-        raise HTTPException(status_code=404, detail=f"Caminho não encontrado: {path}")
-
-    return KnowledgeSource(source=source, chunks=chunks)
 
 
 @app.delete("/knowledge/{source}")
 async def knowledge_delete(
     source: str,
+    user: User = Depends(get_current_user),
     library: ReferenceLibrary | None = Depends(get_reference_library),
 ) -> dict[str, object]:
-    """Remove a knowledge source and all of its chunks."""
+    """Remove one of the user's knowledge sources and all of its chunks."""
     store = require_reference_library(library)
-    deleted = await asyncio.to_thread(store.delete_source, source)
+    deleted = await asyncio.to_thread(store.delete_source, source, user.id)
     return {"source": source, "deleted": deleted}
 
 
@@ -728,54 +678,52 @@ async def wearable_tap(
 
 @app.post("/conversation/reset")
 async def conversation_reset(
-    speaker: str = "user",
+    user: User = Depends(get_current_user),
     brain: AsyncConversationalBrain = Depends(get_brain),
 ) -> dict[str, str]:
-    """Clear the in-memory dialogue window for a speaker (persistent memory is kept)."""
-    brain.reset_conversation(speaker)
-    return {"status": "reset", "speaker": speaker}
+    """Clear the signed-in user's dialogue window (persistent memory is kept)."""
+    brain.reset_conversation(user.id)
+    return {"status": "reset", "speaker": user.email}
 
 
-def _config_response(brain: AsyncConversationalBrain) -> ConfigResponse:
-    config = brain.get_config()
+def _user_config(user: User) -> ConfigResponse:
+    """A user's effective model + persona mode (their choice, or the defaults)."""
     return ConfigResponse(
-        model=config["model"],
+        model=user.chat_model or DEFAULT_CHAT_MODEL,
         model_default=DEFAULT_CHAT_MODEL,
-        persona_mode=config["persona_mode"],
-        persona_modes=config["persona_modes"],
+        persona_mode=user.persona_mode or DEFAULT_PERSONA_MODE,
+        persona_modes=list(PERSONA_MODES.keys()),
     )
 
 
 @app.get("/config", response_model=ConfigResponse)
-async def config_get(
-    brain: AsyncConversationalBrain = Depends(get_brain),
-) -> ConfigResponse:
-    """Return the live, non-secret runtime configuration."""
-    return _config_response(brain)
+async def config_get(user: User = Depends(get_current_user)) -> ConfigResponse:
+    """Return the signed-in user's own model + persona choices."""
+    return _user_config(user)
 
 
 @app.post("/config", response_model=ConfigResponse)
 async def config_set(
     payload: ConfigUpdate,
-    brain: AsyncConversationalBrain = Depends(get_brain),
-    settings: Settings = Depends(get_settings),
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
 ) -> ConfigResponse:
-    """Update the chat model and/or persona mode (no secrets); persisted across restarts."""
+    """Update the user's own chat model and/or persona mode (no secrets)."""
+    model: str | None = None
+    persona_mode: str | None = None
     if payload.model is not None:
-        brain.set_chat_model(payload.model)
+        model = payload.model.strip()
     if payload.persona_mode is not None:
-        try:
-            brain.set_persona_mode(payload.persona_mode)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail="Modo de persona inválido.") from exc
+        persona_mode = payload.persona_mode.strip().lower()
+        if persona_mode not in PERSONA_MODES:
+            raise HTTPException(status_code=422, detail="Modo de persona inválido.")
 
-    config = brain.get_config()
-    save_runtime_config(
-        settings.chroma_path,
-        model=str(config["model"]),
-        persona_mode=str(config["persona_mode"]),
-    )
-    return _config_response(brain)
+    if model is not None or persona_mode is not None:
+        await asyncio.to_thread(
+            store.set_preferences, user.id, chat_model=model, persona_mode=persona_mode
+        )
+    refreshed = await asyncio.to_thread(store.get_by_id, user.id)
+    return _user_config(refreshed or user)
 
 
 @app.post("/voice/start")
