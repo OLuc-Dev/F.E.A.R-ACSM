@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from fear.brain.async_conversation import AsyncConversationalBrain
+from fear.brain.async_conversation import AsyncConversationalBrain, UserContext
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
 
@@ -13,8 +13,9 @@ from fear.memory.personal_memory import PersonalMemoryResult
 class FakeMemory:
     def __init__(self) -> None:
         self.added: list[tuple[str, str, str]] = []
+        self.user_ids: list[str] = []
 
-    def get_facts_about_speaker(self, speaker: str, n_results: int = 10):
+    def get_facts_about_speaker(self, speaker: str, n_results: int = 10, user_id: str = ""):
         return [
             PersonalMemoryResult(
                 text="Lucas likes dark, minimal interfaces.",
@@ -24,7 +25,9 @@ class FakeMemory:
             )
         ]
 
-    def query_memories(self, query: str, n_results: int = 5, filter_by_speaker=None):
+    def query_memories(
+        self, query: str, n_results: int = 5, filter_by_speaker=None, user_id: str = ""
+    ):
         return [
             PersonalMemoryResult(
                 text="F.E.A.R. should be quiet and direct.",
@@ -34,8 +37,9 @@ class FakeMemory:
             )
         ]
 
-    def add_memory(self, text: str, speaker: str, source: str) -> str:
+    def add_memory(self, text: str, speaker: str, source: str, user_id: str = "") -> str:
         self.added.append((text, speaker, source))
+        self.user_ids.append(user_id)
         return f"fake-{len(self.added)}"
 
 
@@ -334,7 +338,9 @@ def test_default_persona_is_the_shipped_council() -> None:
 @pytest.mark.asyncio
 async def test_general_memories_exclude_fear_replies() -> None:
     class EchoMemory(FakeMemory):
-        def query_memories(self, query: str, n_results: int = 5, filter_by_speaker=None):
+        def query_memories(
+            self, query: str, n_results: int = 5, filter_by_speaker=None, user_id: str = ""
+        ):
             if filter_by_speaker is None:
                 return [
                     PersonalMemoryResult(
@@ -365,6 +371,56 @@ async def test_general_memories_exclude_fear_replies() -> None:
     assert "algo que o usuario disse" in system_content
     # F.E.A.R.'s own prior reply must not be fed back as cross-speaker context.
     assert "algo que a propria FEAR respondeu" not in system_content
+
+
+@pytest.mark.asyncio
+async def test_user_context_uses_own_key_model_and_memory_scope() -> None:
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="global-model"),
+        memory=memory,  # type: ignore[arg-type]
+    )
+    brain.client = FakeClient(reply="anon")  # the shared/anonymous client
+    user_client = FakeClient(reply="user-specific")
+    brain._clients_by_key["user-key"] = user_client  # seed the per-user client (BYO key)
+
+    ctx = UserContext(user_id="u1", api_key="user-key", chat_model="user-model")
+    result = await brain.process_command("oi", "Lucas", user=ctx)
+
+    assert result.reply == "user-specific"  # used the user's own client, not the shared one
+    assert user_client.calls[0]["model"] == "user-model"  # and the user's own model
+    # Every memory write is tagged with the user's id, isolating their memory.
+    assert memory.user_ids and all(uid == "u1" for uid in memory.user_ids)
+
+
+@pytest.mark.asyncio
+async def test_user_history_is_keyed_by_user_not_speaker() -> None:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = FakeClient(reply="r")  # no api_key on the context -> shared client
+
+    await brain.process_command("lembra disso", "Lucas", user=UserContext(user_id="u1"))
+
+    assert "u1" in brain._history  # history is isolated under the user id
+    assert "Lucas" not in brain._history
+
+
+@pytest.mark.asyncio
+async def test_anonymous_command_is_unchanged_by_multiuser() -> None:
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=memory,  # type: ignore[arg-type]
+    )
+    brain.client = FakeClient(reply="r")
+
+    await brain.process_command("oi", "Lucas")  # no user -> single-user path
+
+    assert "Lucas" in brain._history  # keyed by speaker, as before
+    # Both writes (user input + assistant reply) carry an empty (unscoped) user id.
+    assert memory.user_ids == ["", ""]
 
 
 @pytest.mark.asyncio

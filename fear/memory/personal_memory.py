@@ -63,8 +63,13 @@ class PersonalMemory:
         self._client = chromadb.PersistentClient(path=self.path)
         self._collection = self._client.get_or_create_collection(name=self.collection_name)
 
-    def add_memory(self, text: str, speaker: str, source: str) -> str:
-        """Store one memory (deduped by content) and return its id."""
+    def add_memory(self, text: str, speaker: str, source: str, user_id: str = "") -> str:
+        """Store one memory (deduped by content) and return its id.
+
+        When ``user_id`` is set the memory belongs to that user: it is stored
+        under a user-scoped id and only surfaces in that user's queries. An empty
+        ``user_id`` keeps the original single-user behaviour (and id shape).
+        """
         clean_text = text.strip()
         if not clean_text:
             raise ValueError("text cannot be empty")
@@ -72,12 +77,15 @@ class PersonalMemory:
         now = time.time()
         # Content-addressed id: re-saying the same thing updates that entry in
         # place instead of piling up duplicates that later crowd out real recall.
+        # The user prefix keeps two people who say the same thing separate.
         digest = hashlib.sha1(clean_text.encode("utf-8")).hexdigest()[:16]
-        memory_id = f"{speaker}-{source}-{digest}"
+        prefix = f"{user_id}-" if user_id else ""
+        memory_id = f"{prefix}{speaker}-{source}-{digest}"
         metadata = {
             "speaker": speaker,
             "source": source,
             "timestamp": now,
+            "user_id": user_id,
         }
 
         self._collection.upsert(
@@ -88,6 +96,24 @@ class PersonalMemory:
         )
 
         return memory_id
+
+    @staticmethod
+    def _scope(user_id: str, speaker: str | None) -> dict[str, Any] | None:
+        """Build a Chroma ``where`` filter from an optional user id + speaker.
+
+        Chroma wants a single condition or an explicit ``$and`` of several, so
+        this returns None (no filter), one condition, or the ``$and`` of both.
+        """
+        conditions: list[dict[str, Any]] = []
+        if user_id:
+            conditions.append({"user_id": user_id})
+        if speaker:
+            conditions.append({"speaker": speaker})
+        if not conditions:
+            return None
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$and": conditions}
 
     def forget(self, memory_id: str) -> bool:
         """Delete a single memory by id; returns False for a blank id."""
@@ -101,29 +127,29 @@ class PersonalMemory:
         query: str,
         n_results: int = 5,
         filter_by_speaker: str | None = None,
+        user_id: str = "",
     ) -> list[PersonalMemoryResult]:
-        """Search memories by semantic similarity."""
+        """Search memories by semantic similarity, optionally scoped to a user."""
         if not query.strip():
             return []
 
-        where = {"speaker": filter_by_speaker} if filter_by_speaker else None
         raw = self._collection.query(
             query_embeddings=[self.embedding.embed(query)],
             n_results=n_results,
-            where=where,
+            where=self._scope(user_id, filter_by_speaker),
         )
 
         return self._format_results(raw)
 
     def get_facts_about_speaker(
-        self, speaker: str, n_results: int = 10
+        self, speaker: str, n_results: int = 10, user_id: str = ""
     ) -> list[PersonalMemoryResult]:
-        """Return the most recent memories from a specific speaker."""
+        """Return the most recent memories from a speaker, optionally scoped to a user."""
         # Fetch all of the speaker's memories, then sort by timestamp and take
         # the newest. Applying a Chroma `limit` before sorting would return an
         # arbitrary subset rather than the most recent facts.
         raw = self._collection.get(
-            where={"speaker": speaker},
+            where=self._scope(user_id, speaker),
             include=["documents", "metadatas"],
         )
 

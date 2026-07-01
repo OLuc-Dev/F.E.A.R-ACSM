@@ -83,6 +83,21 @@ class CommandResponse:
     remembered: bool
 
 
+@dataclass(slots=True)
+class UserContext:
+    """Per-request identity for multi-user mode.
+
+    When present, the conversation uses this user's own OpenRouter key + model
+    and reads/writes only this user's memory. When absent, the brain runs in its
+    original single-user mode (shared key, shared model, shared memory).
+    """
+
+    user_id: str
+    api_key: str = ""
+    chat_model: str = ""
+    persona_mode: str = ""
+
+
 class AsyncConversationalBrain:
     """
     Async-safe conversational layer for F.E.A.R.
@@ -107,6 +122,9 @@ class AsyncConversationalBrain:
         self.spotify = spotify
         self.calendar = calendar
         self.client: AsyncOpenAI | None = None
+        # Per-user OpenRouter clients (BYO key), cached by the key itself so a
+        # changed key transparently yields a fresh client.
+        self._clients_by_key: dict[str, AsyncOpenAI] = {}
 
         self._persona = self._load_persona(settings)
         # Live persona mode, seeded from settings (FEAR_PERSONA_MODE); an unknown
@@ -131,7 +149,26 @@ class AsyncConversationalBrain:
                 },
             )
 
-    async def process_command(self, user_text: str, speaker_name: str = "user") -> CommandResponse:
+    def _client_for(self, user: UserContext | None) -> AsyncOpenAI | None:
+        """Pick the OpenRouter client: the user's own (BYO key) or the shared one."""
+        if user is None or not user.api_key:
+            return self.client
+        cached = self._clients_by_key.get(user.api_key)
+        if cached is None:
+            cached = AsyncOpenAI(
+                api_key=user.api_key,
+                base_url=self.settings.openrouter_base_url,
+                default_headers={
+                    "HTTP-Referer": self.settings.openrouter_http_referer,
+                    "X-Title": self.settings.openrouter_app_title,
+                },
+            )
+            self._clients_by_key[user.api_key] = cached
+        return cached
+
+    async def process_command(
+        self, user_text: str, speaker_name: str = "user", user: UserContext | None = None
+    ) -> CommandResponse:
         """Process one memory-aware command without blocking the event loop."""
         clean_text = user_text.strip()
         clean_speaker = speaker_name.strip() or "user"
@@ -139,17 +176,25 @@ class AsyncConversationalBrain:
         if not clean_text:
             return CommandResponse(reply="", speaker=clean_speaker, remembered=False)
 
+        client = self._client_for(user)
+        model = user.chat_model if user and user.chat_model else self.settings.openrouter_chat_model
+        persona_mode = user.persona_mode if user and user.persona_mode else self._persona_mode
+        # Memory scope + history key: isolated per user when logged in, shared
+        # (by speaker) otherwise.
+        scope = user.user_id if user else ""
+        history_key = user.user_id if user else clean_speaker
+
         spotify_reply = await self._try_spotify(clean_text)
         if spotify_reply:
-            await self._remember(clean_text, clean_speaker, "spotify")
-            self._record_turn(clean_speaker, clean_text, spotify_reply)
+            await self._remember(clean_text, clean_speaker, "spotify", scope)
+            self._record_turn(history_key, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
         calendar_summary = await self._try_calendar(clean_text)
         # Without a model, hand back the raw agenda; with one, F.E.A.R. phrases it below.
-        if calendar_summary and self.client is None:
-            await self._remember(clean_text, clean_speaker, "calendar")
-            self._record_turn(clean_speaker, clean_text, calendar_summary)
+        if calendar_summary and client is None:
+            await self._remember(clean_text, clean_speaker, "calendar", scope)
+            self._record_turn(history_key, clean_text, calendar_summary)
             return CommandResponse(reply=calendar_summary, speaker=clean_speaker, remembered=True)
 
         (
@@ -157,18 +202,20 @@ class AsyncConversationalBrain:
             related_memories,
             general_memories,
             reference_context,
-        ) = await self._gather_context(clean_text, clean_speaker)
+        ) = await self._gather_context(clean_text, clean_speaker, scope)
 
-        if self.client is None:
+        if client is None:
             fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
-            await self._remember(clean_text, clean_speaker, "conversation")
-            self._record_turn(clean_speaker, clean_text, fallback)
+            await self._remember(clean_text, clean_speaker, "conversation", scope)
+            self._record_turn(history_key, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
-        if not self.settings.openrouter_chat_model:
-            fallback = "OpenRouter is configured, but OPENROUTER_CHAT_MODEL is empty. Pick a model when ready."
-            await self._remember(clean_text, clean_speaker, "conversation")
-            self._record_turn(clean_speaker, clean_text, fallback)
+        if not model:
+            fallback = (
+                "OpenRouter is configured, but no chat model is set. Pick a model when ready."
+            )
+            await self._remember(clean_text, clean_speaker, "conversation", scope)
+            self._record_turn(history_key, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
         messages = self._build_messages(
@@ -179,11 +226,13 @@ class AsyncConversationalBrain:
             general_memories,
             reference_context,
             calendar_summary,
+            history_key=history_key,
+            persona_mode=persona_mode,
         )
 
         try:
-            response = await self.client.chat.completions.create(
-                model=self.settings.openrouter_chat_model,
+            response = await client.chat.completions.create(
+                model=model,
                 # Plain role/content dicts; cast past the client's TypedDict param.
                 messages=cast(Any, messages),
             )
@@ -194,15 +243,15 @@ class AsyncConversationalBrain:
             reply = LLM_ERROR_REPLY
             failed = True
 
-        await self._remember(clean_text, clean_speaker, "conversation")
+        await self._remember(clean_text, clean_speaker, "conversation", scope)
         if reply and not failed:
-            await self._remember(reply, "fear", "assistant_reply")
+            await self._remember(reply, "fear", "assistant_reply", scope)
 
-        self._record_turn(clean_speaker, clean_text, reply)
+        self._record_turn(history_key, clean_text, reply)
         return CommandResponse(reply=reply, speaker=clean_speaker, remembered=True)
 
     async def stream_command(
-        self, user_text: str, speaker_name: str = "user"
+        self, user_text: str, speaker_name: str = "user", user: UserContext | None = None
     ) -> AsyncIterator[str]:
         """Stream a reply chunk-by-chunk, persisting memory and recording the turn at the end."""
         clean_text = user_text.strip()
@@ -211,17 +260,23 @@ class AsyncConversationalBrain:
         if not clean_text:
             return
 
+        client = self._client_for(user)
+        model = user.chat_model if user and user.chat_model else self.settings.openrouter_chat_model
+        persona_mode = user.persona_mode if user and user.persona_mode else self._persona_mode
+        scope = user.user_id if user else ""
+        history_key = user.user_id if user else clean_speaker
+
         spotify_reply = await self._try_spotify(clean_text)
         if spotify_reply:
-            await self._remember(clean_text, clean_speaker, "spotify")
-            self._record_turn(clean_speaker, clean_text, spotify_reply)
+            await self._remember(clean_text, clean_speaker, "spotify", scope)
+            self._record_turn(history_key, clean_text, spotify_reply)
             yield spotify_reply
             return
 
         calendar_summary = await self._try_calendar(clean_text)
-        if calendar_summary and self.client is None:
-            await self._remember(clean_text, clean_speaker, "calendar")
-            self._record_turn(clean_speaker, clean_text, calendar_summary)
+        if calendar_summary and client is None:
+            await self._remember(clean_text, clean_speaker, "calendar", scope)
+            self._record_turn(history_key, clean_text, calendar_summary)
             yield calendar_summary
             return
 
@@ -230,19 +285,21 @@ class AsyncConversationalBrain:
             related_memories,
             general_memories,
             reference_context,
-        ) = await self._gather_context(clean_text, clean_speaker)
+        ) = await self._gather_context(clean_text, clean_speaker, scope)
 
-        if self.client is None:
+        if client is None:
             fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
-            await self._remember(clean_text, clean_speaker, "conversation")
-            self._record_turn(clean_speaker, clean_text, fallback)
+            await self._remember(clean_text, clean_speaker, "conversation", scope)
+            self._record_turn(history_key, clean_text, fallback)
             yield fallback
             return
 
-        if not self.settings.openrouter_chat_model:
-            fallback = "OpenRouter is configured, but OPENROUTER_CHAT_MODEL is empty. Pick a model when ready."
-            await self._remember(clean_text, clean_speaker, "conversation")
-            self._record_turn(clean_speaker, clean_text, fallback)
+        if not model:
+            fallback = (
+                "OpenRouter is configured, but no chat model is set. Pick a model when ready."
+            )
+            await self._remember(clean_text, clean_speaker, "conversation", scope)
+            self._record_turn(history_key, clean_text, fallback)
             yield fallback
             return
 
@@ -254,14 +311,16 @@ class AsyncConversationalBrain:
             general_memories,
             reference_context,
             calendar_summary,
+            history_key=history_key,
+            persona_mode=persona_mode,
         )
         # Persist the user input up front so it survives an early client disconnect.
-        await self._remember(clean_text, clean_speaker, "conversation")
+        await self._remember(clean_text, clean_speaker, "conversation", scope)
 
         parts: list[str] = []
         try:
-            stream = await self.client.chat.completions.create(
-                model=self.settings.openrouter_chat_model,
+            stream = await client.chat.completions.create(
+                model=model,
                 messages=cast(Any, messages),
                 stream=True,
             )
@@ -273,35 +332,39 @@ class AsyncConversationalBrain:
         except Exception:
             logger.exception("OpenRouter streaming failed")
             if not parts:
-                self._record_turn(clean_speaker, clean_text, LLM_ERROR_REPLY)
+                self._record_turn(history_key, clean_text, LLM_ERROR_REPLY)
                 yield LLM_ERROR_REPLY
                 return
 
         reply = "".join(parts)
         if reply:
-            await self._remember(reply, "fear", "assistant_reply")
-        self._record_turn(clean_speaker, clean_text, reply)
+            await self._remember(reply, "fear", "assistant_reply", scope)
+        self._record_turn(history_key, clean_text, reply)
 
-    async def _remember(self, text: str, speaker: str, source: str) -> None:
+    async def _remember(self, text: str, speaker: str, source: str, user_id: str = "") -> None:
         """Persist a memory; a storage failure must not break the conversation."""
         try:
-            await asyncio.to_thread(self.memory.add_memory, text, speaker, source)
+            await asyncio.to_thread(self.memory.add_memory, text, speaker, source, user_id)
         except Exception:
             logger.exception("Failed to persist memory (speaker=%s, source=%s)", speaker, source)
 
     async def _gather_context(
-        self, text: str, speaker: str
+        self, text: str, speaker: str, user_id: str = ""
     ) -> tuple[
         list[PersonalMemoryResult],
         list[PersonalMemoryResult],
         list[PersonalMemoryResult],
         str,
     ]:
-        """Fetch speaker facts, related/general memories, and reference notes concurrently."""
+        """Fetch speaker facts, related/general memories, and reference notes concurrently.
+
+        All memory reads are scoped to ``user_id`` when set, so a logged-in user's
+        "other relevant memories" bucket still stays within their own memory.
+        """
         speaker_facts, related_memories, general_memories, reference_context = await asyncio.gather(
-            asyncio.to_thread(self.memory.get_facts_about_speaker, speaker, 8),
-            asyncio.to_thread(self.memory.query_memories, text, 5, speaker),
-            asyncio.to_thread(self.memory.query_memories, text, 6, None),
+            asyncio.to_thread(self.memory.get_facts_about_speaker, speaker, 8, user_id),
+            asyncio.to_thread(self.memory.query_memories, text, 5, speaker, user_id),
+            asyncio.to_thread(self.memory.query_memories, text, 6, None, user_id),
             asyncio.to_thread(self._get_reference_context_sync, text),
         )
         # Keep F.E.A.R.'s own past replies out of the cross-speaker bucket so its
@@ -318,6 +381,8 @@ class AsyncConversationalBrain:
         general_memories: list[PersonalMemoryResult],
         reference_context: str,
         calendar_summary: str = "",
+        history_key: str | None = None,
+        persona_mode: str | None = None,
     ) -> list[dict[str, str]]:
         """Assemble system(persona + memory) + rolling history + the new user message."""
         context = self._build_context(
@@ -328,7 +393,8 @@ class AsyncConversationalBrain:
             reference_context=reference_context,
             calendar_summary=calendar_summary,
         )
-        directive = PERSONA_MODES.get(self._persona_mode, "")
+        mode = persona_mode if persona_mode is not None else self._persona_mode
+        directive = PERSONA_MODES.get(mode, "")
         persona_block = self._persona if not directive else f"{self._persona}\n\n{directive}"
         system_content = (
             f"{persona_block}\n\n"
@@ -336,7 +402,7 @@ class AsyncConversationalBrain:
             f"{context}"
         )
         messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
-        messages.extend(self._history_for(speaker))
+        messages.extend(self._history_for(history_key if history_key is not None else speaker))
         messages.append({"role": "user", "content": text})
         return messages
 
