@@ -224,6 +224,7 @@ export default function HomePage() {
     messages,
     status,
     isBusy,
+    memoryTick,
     threadRef,
     atBottom,
     handleThreadScroll,
@@ -541,7 +542,7 @@ export default function HomePage() {
                   {status === "speaking" ? "falando" : "latente"}
                 </span>
               </div>
-              <FearPresence status={status} />
+              <FearPresence status={status} pulse={memoryTick} />
             </div>
 
             <div className="panel rounded-[1.4rem] p-5">

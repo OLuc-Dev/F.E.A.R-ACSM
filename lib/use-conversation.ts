@@ -20,6 +20,9 @@ export function useConversation() {
   const [messages, setMessages] = useState<Message[]>([GREETING]);
   const [status, setStatus] = useState<Status>("online");
   const [isBusy, setIsBusy] = useState(false);
+  // Bumps once each time a new memory is formed (a completed exchange), so the
+  // presence can flare its filigree when F.E.A.R. takes something in.
+  const [memoryTick, setMemoryTick] = useState(0);
 
   const idRef = useRef(1);
   const threadRef = useRef<HTMLDivElement>(null);
@@ -129,6 +132,8 @@ export function useConversation() {
           controller.signal,
         );
         setStatus("online");
+        // A fresh exchange just landed in memory — flare the presence.
+        setMemoryTick((tick) => tick + 1);
         // Speak the finished reply if the voice is on.
         if (voiceOnRef.current) speak(full);
       } catch (error) {
@@ -176,6 +181,7 @@ export function useConversation() {
     messages,
     status,
     isBusy,
+    memoryTick,
     threadRef,
     atBottom,
     handleThreadScroll,

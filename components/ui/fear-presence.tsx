@@ -31,9 +31,18 @@ const EYE = { fx: 0.34, fy: -0.08, fz: 0.95, r: 0.08 } as const;
 // The energy core that surrounds the head: a soft additive halo, two counter-
 // rotating wireframe shells (the "filigree"), and warm embers. Purely ambient —
 // it reads hotter while F.E.A.R. speaks or errors.
-function EnergyCore({ status }: { status: PresenceStatus }) {
+// How long (seconds) a "new memory" surge takes to bloom and settle back.
+const PULSE_SECONDS = 3.2;
+
+function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: number }) {
   const shell = useRef<THREE.Group>(null);
   const innerShell = useRef<THREE.Mesh>(null);
+  // The surge shell: normally invisible, it flares through the filigree whenever
+  // a new memory arrives, then fades to nothing over PULSE_SECONDS.
+  const surge = useRef<THREE.Group>(null);
+  const surgeMat = useRef<THREE.MeshBasicMaterial>(null);
+  const pulseStart = useRef(-1000);
+  const lastPulse = useRef(0);
   const hot = status === "speaking" || status === "error";
 
   useFrame((state, delta) => {
@@ -43,6 +52,18 @@ function EnergyCore({ status }: { status: PresenceStatus }) {
       shell.current.rotation.x = Math.sin(t * 0.2) * 0.15;
     }
     if (innerShell.current) innerShell.current.rotation.y -= delta * (hot ? 0.5 : 0.3);
+
+    // A new memory bumped the counter — start the surge from now.
+    if (pulse !== lastPulse.current) {
+      lastPulse.current = pulse;
+      pulseStart.current = t;
+    }
+    const since = t - pulseStart.current;
+    const p = since >= 0 && since < PULSE_SECONDS ? 1 - since / PULSE_SECONDS : 0;
+    const eased = p * p; // ease-out: quick bloom, gentle settle
+    if (surgeMat.current) surgeMat.current.opacity = eased * 0.6;
+    // The light ripples outward through the web as it fades, then rests.
+    if (surge.current) surge.current.scale.setScalar(p > 0 ? 1 + (1 - p) * 0.14 : 1);
   });
 
   return (
@@ -88,6 +109,23 @@ function EnergyCore({ status }: { status: PresenceStatus }) {
           blending={THREE.AdditiveBlending}
         />
       </mesh>
+
+      {/* Surge shell: a bright flare through the filigree on each new memory */}
+      <group ref={surge}>
+        <mesh>
+          <icosahedronGeometry args={[2.35, 2]} />
+          <meshBasicMaterial
+            ref={surgeMat}
+            color="#fff2cf"
+            wireframe
+            transparent
+            opacity={0}
+            depthWrite={false}
+            toneMapped={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      </group>
 
       {/* Embers: dense fine motes + a few slow, bright sparks */}
       <Sparkles count={90} scale={[7, 7, 7]} size={1.6} speed={0.3} color="#ffb861" opacity={0.6} />
@@ -214,7 +252,7 @@ function HeadModel({ status }: { status: PresenceStatus }) {
 
 useGLTF.preload(MODEL_URL);
 
-export function FearPresence({ status = "online" }: { status?: PresenceStatus }) {
+export function FearPresence({ status = "online", pulse = 0 }: { status?: PresenceStatus; pulse?: number }) {
   return (
     <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true }}>
       <color attach="background" args={["#080502"]} />
@@ -251,7 +289,7 @@ export function FearPresence({ status = "online" }: { status?: PresenceStatus })
           />
         </Environment>
 
-        <EnergyCore status={status} />
+        <EnergyCore status={status} pulse={pulse} />
 
         <Float speed={1.2} rotationIntensity={0} floatIntensity={0.5}>
           <HeadModel status={status} />
