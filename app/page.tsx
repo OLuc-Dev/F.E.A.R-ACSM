@@ -13,6 +13,7 @@ import {
   Cpu,
   Crosshair,
   Database,
+  KeyRound,
   Loader2,
   Mic,
   Music,
@@ -395,6 +396,23 @@ export default function HomePage() {
             </button>
           </div>
         </header>
+
+        {/* Nudge a signed-in user to add their OpenRouter key, without which
+            F.E.A.R. can't reply. Disappears the moment the key is saved. */}
+        {!user.has_openrouter_key && (
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] px-3.5 py-2.5 text-[13px] text-amber-200/90">
+            <span className="flex items-center gap-2">
+              <KeyRound className="size-4 shrink-0" />
+              Cole sua chave do OpenRouter pra F.E.A.R. responder.
+            </span>
+            <button
+              onClick={() => setAuthOpen(true)}
+              className="tap shrink-0 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-300/20"
+            >
+              Adicionar chave
+            </button>
+          </div>
+        )}
 
         {/* Deck */}
         <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-6">

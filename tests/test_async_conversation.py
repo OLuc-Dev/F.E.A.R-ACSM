@@ -394,6 +394,24 @@ async def test_user_context_uses_own_key_model_and_memory_scope() -> None:
 
 
 @pytest.mark.asyncio
+async def test_logged_in_without_key_is_prompted_to_add_one() -> None:
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),  # no shared client either
+        memory=memory,  # type: ignore[arg-type]
+    )
+
+    # A signed-in user who hasn't added their key gets an in-voice nudge, not the
+    # env-var message meant for local single-user setup.
+    result = await brain.process_command("oi", "Lucas", user=UserContext(user_id="u1"))
+
+    assert "chave" in result.reply.lower()
+    assert "OPENROUTER_API_KEY" not in result.reply
+    assert result.remembered is True
+    assert memory.user_ids == ["u1"]  # still saved, scoped to the user
+
+
+@pytest.mark.asyncio
 async def test_user_history_is_keyed_by_user_not_speaker() -> None:
     brain = AsyncConversationalBrain(
         settings=Settings(openrouter_chat_model="m"),

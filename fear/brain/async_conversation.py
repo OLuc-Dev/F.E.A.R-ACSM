@@ -205,7 +205,11 @@ class AsyncConversationalBrain:
         ) = await self._gather_context(clean_text, clean_speaker, scope)
 
         if client is None:
-            fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
+            fallback = (
+                self._needs_key_reply(clean_speaker)
+                if user is not None
+                else self._fallback_reply(clean_text, clean_speaker, speaker_facts)
+            )
             await self._remember(clean_text, clean_speaker, "conversation", scope)
             self._record_turn(history_key, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
@@ -288,7 +292,11 @@ class AsyncConversationalBrain:
         ) = await self._gather_context(clean_text, clean_speaker, scope)
 
         if client is None:
-            fallback = self._fallback_reply(clean_text, clean_speaker, speaker_facts)
+            fallback = (
+                self._needs_key_reply(clean_speaker)
+                if user is not None
+                else self._fallback_reply(clean_text, clean_speaker, speaker_facts)
+            )
             await self._remember(clean_text, clean_speaker, "conversation", scope)
             self._record_turn(history_key, clean_text, fallback)
             yield fallback
@@ -550,6 +558,15 @@ class AsyncConversationalBrain:
 
         return "\n".join(
             f"- [{result.source} / {result.section}] {result.text}" for result in results
+        )
+
+    @staticmethod
+    def _needs_key_reply(speaker_name: str) -> str:
+        """Shown to a signed-in user who hasn't added their own OpenRouter key yet."""
+        return (
+            f"Estou aqui, {speaker_name} — mas sem uma chave eu não penso. "
+            "Abra sua conta no ícone de pessoa, lá em cima, e cole sua chave do "
+            "OpenRouter. Faça isso e eu acordo."
         )
 
     @staticmethod
