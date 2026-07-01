@@ -75,11 +75,31 @@ class ReferenceLibrary:
 
         return len(chunks)
 
-    def index_text(self, text: str, *, source: str, section: str = "nota") -> int:
-        """Index a free-text knowledge snippet under a named source.
+    @staticmethod
+    def _scope(user_id: str, source: str | None) -> dict[str, Any] | None:
+        """Build a Chroma ``where`` filter from an optional owner + source name.
 
-        Re-indexing the same ``source`` replaces its previous chunks, so a named
-        source behaves like one editable document.
+        Knowledge is per-user: an owned note only surfaces in that user's list
+        and retrieval. An empty ``user_id`` keeps the original shared behaviour.
+        """
+        conditions: list[dict[str, Any]] = []
+        if user_id:
+            conditions.append({"user_id": user_id})
+        if source:
+            conditions.append({"source": source})
+        if not conditions:
+            return None
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$and": conditions}
+
+    def index_text(
+        self, text: str, *, source: str, section: str = "nota", user_id: str = ""
+    ) -> int:
+        """Index a free-text knowledge snippet under a named source, owned by a user.
+
+        Re-indexing the same ``source`` (for the same user) replaces its previous
+        chunks, so a named source behaves like one editable document.
         """
         clean = text.strip()
         if not clean:
@@ -91,12 +111,16 @@ class ReferenceLibrary:
             # small notes still become searchable knowledge.
             chunks = [clean]
 
-        # Replace any existing chunks for this source (edit semantics).
-        self._collection.delete(where={"source": source})
+        # Replace this user's existing chunks for this source (edit semantics).
+        self._collection.delete(where=self._scope(user_id, source))
 
-        ids = [f"ref-{source}-{index}" for index, _ in enumerate(chunks)]
+        prefix = f"{user_id}-" if user_id else ""
+        ids = [f"ref-{prefix}{source}-{index}" for index, _ in enumerate(chunks)]
         embeddings = self._embedding_model.encode(chunks, normalize_embeddings=True).tolist()
-        metadatas = [{"source": source, "section": section, "origin": "text"} for _ in chunks]
+        metadatas = [
+            {"source": source, "section": section, "origin": "text", "user_id": user_id}
+            for _ in chunks
+        ]
 
         self._collection.upsert(
             ids=ids,
@@ -107,9 +131,9 @@ class ReferenceLibrary:
 
         return len(chunks)
 
-    def list_sources(self) -> list[dict[str, Any]]:
-        """Return the indexed sources with their chunk counts, sorted by name."""
-        raw = self._collection.get(include=["metadatas"])
+    def list_sources(self, user_id: str = "") -> list[dict[str, Any]]:
+        """Return a user's indexed sources with their chunk counts, sorted by name."""
+        raw = self._collection.get(where=self._scope(user_id, None), include=["metadatas"])
         metadatas = raw.get("metadatas", []) or []
 
         counts: dict[str, int] = {}
@@ -119,27 +143,26 @@ class ReferenceLibrary:
 
         return [{"source": source, "chunks": count} for source, count in sorted(counts.items())]
 
-    def delete_source(self, source: str) -> int:
-        """Remove every chunk belonging to a source; return how many were removed."""
-        existing = self._collection.get(where={"source": source})
+    def delete_source(self, source: str, user_id: str = "") -> int:
+        """Remove every chunk of a user's source; return how many were removed."""
+        existing = self._collection.get(where=self._scope(user_id, source))
         ids = existing.get("ids", []) or []
         if ids:
             self._collection.delete(ids=ids)
         return len(ids)
 
     def retrieve(
-        self, query: str, *, n_results: int = 3, source: str | None = None
+        self, query: str, *, n_results: int = 3, source: str | None = None, user_id: str = ""
     ) -> list[ReferenceResult]:
-        """Retrieve relevant local reference notes."""
+        """Retrieve a user's relevant local reference notes."""
         if not query.strip():
             return []
 
-        where = {"source": source} if source else None
         query_embedding = self._embedding_model.encode(query, normalize_embeddings=True).tolist()
         raw = self._collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,
-            where=where,
+            where=self._scope(user_id, source),
         )
 
         return self._format_results(raw)

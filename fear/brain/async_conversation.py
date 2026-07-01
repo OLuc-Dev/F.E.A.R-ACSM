@@ -365,7 +365,7 @@ class AsyncConversationalBrain:
             asyncio.to_thread(self.memory.get_facts_about_speaker, speaker, 8, user_id),
             asyncio.to_thread(self.memory.query_memories, text, 5, speaker, user_id),
             asyncio.to_thread(self.memory.query_memories, text, 6, None, user_id),
-            asyncio.to_thread(self._get_reference_context_sync, text),
+            asyncio.to_thread(self._get_reference_context_sync, text, user_id),
         )
         # Keep F.E.A.R.'s own past replies out of the cross-speaker bucket so its
         # context is grounded in what people said, not an echo of what it answered.
@@ -540,11 +540,11 @@ class AsyncConversationalBrain:
 
         return "\n".join(sections)
 
-    def _get_reference_context_sync(self, topic: str) -> str:
+    def _get_reference_context_sync(self, topic: str, user_id: str = "") -> str:
         if self.reference_library is None:
             return ""
 
-        results = self.reference_library.retrieve(topic, n_results=3)
+        results = self.reference_library.retrieve(topic, n_results=3, user_id=user_id)
         if not results:
             return ""
 

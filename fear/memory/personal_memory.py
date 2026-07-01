@@ -145,13 +145,21 @@ class PersonalMemory:
         self, speaker: str, n_results: int = 10, user_id: str = ""
     ) -> list[PersonalMemoryResult]:
         """Return the most recent memories from a speaker, optionally scoped to a user."""
-        # Fetch all of the speaker's memories, then sort by timestamp and take
-        # the newest. Applying a Chroma `limit` before sorting would return an
+        return self._recent(self._scope(user_id, speaker), n_results)
+
+    def recent_for_user(self, user_id: str, n_results: int = 20) -> list[PersonalMemoryResult]:
+        """Return all of a user's memories (any speaker), newest first.
+
+        Powers the memory inspector, where a signed-in user should see everything
+        they've told F.E.A.R. regardless of the speaker label on each entry.
+        """
+        return self._recent(self._scope(user_id, None), n_results)
+
+    def _recent(self, where: dict[str, Any] | None, n_results: int) -> list[PersonalMemoryResult]:
+        # Fetch the matching memories, then sort by timestamp and take the
+        # newest. Applying a Chroma `limit` before sorting would return an
         # arbitrary subset rather than the most recent facts.
-        raw = self._collection.get(
-            where=self._scope(user_id, speaker),
-            include=["documents", "metadatas"],
-        )
+        raw = self._collection.get(where=where, include=["documents", "metadatas"])
 
         documents = raw.get("documents", []) or []
         metadatas = raw.get("metadatas", []) or []
