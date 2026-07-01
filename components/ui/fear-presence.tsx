@@ -61,7 +61,7 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
     const since = t - pulseStart.current;
     const p = since >= 0 && since < PULSE_SECONDS ? 1 - since / PULSE_SECONDS : 0;
     const eased = p * p; // ease-out: quick bloom, gentle settle
-    if (surgeMat.current) surgeMat.current.opacity = eased * 0.6;
+    if (surgeMat.current) surgeMat.current.opacity = eased * 0.42;
     // The light ripples outward through the web as it fades, then rests.
     if (surge.current) surge.current.scale.setScalar(p > 0 ? 1 + (1 - p) * 0.14 : 1);
   });
@@ -90,7 +90,7 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
             color="#ffb347"
             wireframe
             transparent
-            opacity={hot ? 0.26 : 0.16}
+            opacity={hot ? 0.2 : 0.13}
             depthWrite={false}
             toneMapped={false}
             blending={THREE.AdditiveBlending}
@@ -103,7 +103,7 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
           color="#ffd27a"
           wireframe
           transparent
-          opacity={0.12}
+          opacity={0.09}
           depthWrite={false}
           toneMapped={false}
           blending={THREE.AdditiveBlending}
@@ -116,7 +116,7 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
           <icosahedronGeometry args={[2.35, 2]} />
           <meshBasicMaterial
             ref={surgeMat}
-            color="#fff2cf"
+            color="#ffe2a6"
             wireframe
             transparent
             opacity={0}
@@ -128,8 +128,8 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
       </group>
 
       {/* Embers: dense fine motes + a few slow, bright sparks */}
-      <Sparkles count={90} scale={[7, 7, 7]} size={1.6} speed={0.3} color="#ffb861" opacity={0.6} />
-      <Sparkles count={28} scale={[9, 9, 9]} size={3.6} speed={0.16} color="#ff8a1e" opacity={0.5} />
+      <Sparkles count={70} scale={[7, 7, 7]} size={1.4} speed={0.3} color="#ffb861" opacity={0.5} />
+      <Sparkles count={22} scale={[9, 9, 9]} size={3.0} speed={0.16} color="#ff8a1e" opacity={0.4} />
     </group>
   );
 }
@@ -150,10 +150,10 @@ function HeadModel({ status }: { status: PresenceStatus }) {
     const metal = new THREE.MeshPhysicalMaterial({
       color: "#7c818b",
       metalness: 1,
-      roughness: 0.32,
+      roughness: 0.42,
       clearcoat: 0.5,
-      clearcoatRoughness: 0.25,
-      envMapIntensity: 1.55,
+      clearcoatRoughness: 0.3,
+      envMapIntensity: 1.2,
     });
     cloned.traverse((object) => {
       const mesh = object as THREE.Mesh;
@@ -270,7 +270,7 @@ export function FearPresence({ status = "online", pulse = 0 }: { status?: Presen
       <Suspense fallback={null}>
         {/* Procedural environment so the steel picks up warm, gold-lit streaks */}
         <Environment resolution={256}>
-          <Lightformer form="rect" intensity={1.8} position={[0, 3, 2]} scale={[5, 1.4, 1]} color="#ffe6bf" />
+          <Lightformer form="rect" intensity={1.1} position={[0, 3, 2]} scale={[4, 1.2, 1]} color="#ffe6bf" />
           <Lightformer
             form="rect"
             intensity={1.3}
@@ -306,8 +306,10 @@ export function FearPresence({ status = "online", pulse = 0 }: { status?: Presen
       </Suspense>
 
       <EffectComposer>
-        <Bloom intensity={1.15} luminanceThreshold={0.4} luminanceSmoothing={0.25} mipmapBlur />
-        <Vignette offset={0.3} darkness={0.75} />
+        {/* Selective bloom: only genuine highlights (eyes, surge, embers) glow,
+            so the metal keeps controlled speculars instead of blown-out patches. */}
+        <Bloom intensity={0.95} luminanceThreshold={0.62} luminanceSmoothing={0.28} mipmapBlur />
+        <Vignette offset={0.3} darkness={0.6} />
       </EffectComposer>
     </Canvas>
   );
