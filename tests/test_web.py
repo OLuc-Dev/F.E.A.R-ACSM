@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from fear.auth import Security, UserStore
 from fear.brain.async_conversation import CommandResponse
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
@@ -14,8 +15,10 @@ from fear.web.app import (
     get_brain,
     get_memory,
     get_reference_library,
+    get_security,
     get_settings,
     get_tts,
+    get_user_store,
 )
 
 PERSONA_MODES = ["equilibrio", "sombrio", "cirurgico"]
@@ -26,11 +29,19 @@ class FakeBrain:
         self.reset_calls: list[str] = []
         self.model = "openai/gpt-oss-120b:free"
         self.persona_mode = "equilibrio"
+        # Records the per-request UserContext (or None) the last call received.
+        self.last_user: object | None = None
 
-    async def process_command(self, text: str, speaker: str = "user") -> CommandResponse:
+    async def process_command(
+        self, text: str, speaker: str = "user", user: object | None = None
+    ) -> CommandResponse:
+        self.last_user = user
         return CommandResponse(reply=f"echo: {text}", speaker=speaker, remembered=True)
 
-    async def stream_command(self, text: str, speaker: str = "user") -> AsyncIterator[str]:
+    async def stream_command(
+        self, text: str, speaker: str = "user", user: object | None = None
+    ) -> AsyncIterator[str]:
+        self.last_user = user
         for piece in ["parte 1 ", "parte 2"]:
             yield piece
 
@@ -117,10 +128,14 @@ def library() -> FakeReferenceLibrary:
 def client(brain: FakeBrain, library: FakeReferenceLibrary, tmp_path: Path) -> Iterator[TestClient]:
     # Override the dependency providers and skip the lifespan (no hardware/ML deps).
     # chroma_path points at a tmp dir so /config persistence writes land there.
+    security = Security("test-secret")
+    user_store = UserStore(path=str(tmp_path / "users.db"), security=security)
     app.dependency_overrides[get_brain] = lambda: brain
     app.dependency_overrides[get_memory] = FakeMemory
     app.dependency_overrides[get_tts] = FakeTTS
     app.dependency_overrides[get_reference_library] = lambda: library
+    app.dependency_overrides[get_user_store] = lambda: user_store
+    app.dependency_overrides[get_security] = lambda: security
     app.dependency_overrides[get_settings] = lambda: Settings(
         openrouter_api_key="", openrouter_chat_model="", chroma_path=str(tmp_path / "chroma")
     )
@@ -128,6 +143,7 @@ def client(brain: FakeBrain, library: FakeReferenceLibrary, tmp_path: Path) -> I
         yield TestClient(app)
     finally:
         app.dependency_overrides.clear()
+        user_store.close()
 
 
 def test_health(client: TestClient) -> None:
@@ -157,6 +173,29 @@ def test_command(client: TestClient) -> None:
     response = client.post("/command", json={"text": "oi", "speaker": "Lucas", "speak": False})
     assert response.status_code == 200
     assert response.json() == {"reply": "echo: oi", "speaker": "Lucas", "audio_file": None}
+
+
+def test_command_anonymous_has_no_user_context(client: TestClient, brain: FakeBrain) -> None:
+    client.post("/command", json={"text": "oi", "speaker": "Lucas", "speak": False})
+    # No token -> the brain runs in shared, single-user mode.
+    assert brain.last_user is None
+
+
+def test_command_logged_in_passes_user_context(client: TestClient, brain: FakeBrain) -> None:
+    registered = client.post(
+        "/auth/register", json={"email": "u@example.com", "password": "longenough"}
+    ).json()
+    token = registered["token"]
+
+    response = client.post(
+        "/command",
+        json={"text": "oi", "speaker": "u", "speak": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    # The route resolved the token to a user and handed the brain their context.
+    assert brain.last_user is not None
+    assert brain.last_user.user_id == registered["user"]["id"]
 
 
 def test_command_stream(client: TestClient) -> None:

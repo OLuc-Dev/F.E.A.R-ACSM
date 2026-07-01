@@ -16,7 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from fear.auth import EmailTaken, Security, TokenError, User, UserStore
-from fear.brain.async_conversation import AsyncConversationalBrain
+from fear.brain.async_conversation import AsyncConversationalBrain, UserContext
 from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
 from fear.library.reference_library import ReferenceLibrary
@@ -251,6 +251,41 @@ def _normalize_email(email: str) -> str:
     if not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
         raise HTTPException(status_code=422, detail="E-mail inválido.")
     return cleaned
+
+
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    store: UserStore = Depends(get_user_store),
+    security: Security = Depends(get_security),
+    settings: Settings = Depends(get_settings),
+) -> User | None:
+    """Like get_current_user, but returns None instead of 401 for anonymous callers.
+
+    This lets a route serve both logged-in (isolated) and anonymous (shared) use
+    while the service is still single-user by default — no token, no problem.
+    """
+    if credentials is None:
+        return None
+    try:
+        user_id = security.read_session_token(
+            credentials.credentials, settings.session_max_age_days * 86_400
+        )
+    except TokenError:
+        return None
+    return await asyncio.to_thread(store.get_by_id, user_id)
+
+
+async def _user_context(user: User | None, store: UserStore) -> UserContext | None:
+    """Build the brain's per-user context, including the decrypted OpenRouter key."""
+    if user is None:
+        return None
+    api_key = await asyncio.to_thread(store.get_openrouter_key, user.id)
+    return UserContext(
+        user_id=user.id,
+        api_key=api_key,
+        chat_model=user.chat_model,
+        persona_mode=user.persona_mode,
+    )
 
 
 def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibrary:
@@ -550,9 +585,12 @@ async def command(
     payload: CommandRequest,
     brain: AsyncConversationalBrain = Depends(get_brain),
     tts: Any = Depends(get_tts),
+    user: User | None = Depends(get_optional_user),
+    store: UserStore = Depends(get_user_store),
 ) -> CommandResponse:
     """Process a text command and optionally speak it locally."""
-    result = await brain.process_command(payload.text, payload.speaker)
+    ctx = await _user_context(user, store)
+    result = await brain.process_command(payload.text, payload.speaker, user=ctx)
 
     if payload.speak and result.reply:
         audio_path = await tts.say(result.reply)
@@ -569,11 +607,14 @@ async def command(
 async def command_stream(
     payload: CommandRequest,
     brain: AsyncConversationalBrain = Depends(get_brain),
+    user: User | None = Depends(get_optional_user),
+    store: UserStore = Depends(get_user_store),
 ) -> StreamingResponse:
     """Stream the reply as plain-text chunks as the model produces them."""
+    ctx = await _user_context(user, store)
 
     async def generate() -> AsyncIterator[str]:
-        async for chunk in brain.stream_command(payload.text, payload.speaker):
+        async for chunk in brain.stream_command(payload.text, payload.speaker, user=ctx):
             yield chunk
 
     # Disable proxy/browser buffering so tokens reach the client as they are produced.
