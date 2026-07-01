@@ -133,6 +133,22 @@ def test_me_requires_token(client: TestClient) -> None:
     assert bad.status_code == 401
 
 
+@pytest.mark.asyncio
+async def test_user_from_token_resolves_and_rejects(store: UserStore) -> None:
+    # The helper shared by the HTTP dependency and the WebSocket handshake.
+    from fear.web.app import _user_from_token
+
+    security = Security(SECRET)
+    settings = Settings(secret_key=SECRET)
+    user = store.create_user("ws@example.com", "longenough")
+    token = security.make_session_token(user.id)
+
+    resolved = await _user_from_token(token, store, security, settings)
+    assert resolved is not None and resolved.id == user.id
+    assert await _user_from_token("", store, security, settings) is None
+    assert await _user_from_token("garbage", store, security, settings) is None
+
+
 def test_set_openrouter_key_is_stored_encrypted(client: TestClient, store: UserStore) -> None:
     registered = client.post(
         "/auth/register", json={"email": "key@example.com", "password": "longenough"}

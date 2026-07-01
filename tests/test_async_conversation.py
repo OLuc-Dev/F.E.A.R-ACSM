@@ -470,3 +470,65 @@ async def test_stream_command_survives_llm_failure() -> None:
     chunks = [chunk async for chunk in brain.stream_command("oi", "Lucas")]
 
     assert any("problema" in chunk.lower() for chunk in chunks)
+
+
+# --- item 3: LRU-bounded caches ---
+
+
+def test_history_cache_is_lru_bounded(monkeypatch) -> None:
+    monkeypatch.setattr("fear.brain.async_conversation._MAX_HISTORY_USERS", 3)
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m", max_history_turns=4),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+
+    for index in range(5):
+        brain._record_turn(f"user{index}", "oi", "resposta")
+
+    assert len(brain._history) == 3
+    assert "user4" in brain._history and "user3" in brain._history
+    assert "user0" not in brain._history  # least-recently-used evicted
+
+
+def test_history_access_promotes_to_most_recent(monkeypatch) -> None:
+    monkeypatch.setattr("fear.brain.async_conversation._MAX_HISTORY_USERS", 3)
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m", max_history_turns=4),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+
+    for index in range(3):
+        brain._record_turn(f"user{index}", "oi", "resposta")
+    brain._history_for("user0")  # touching the oldest promotes it
+    brain._record_turn("user3", "oi", "resposta")  # triggers one eviction
+
+    assert "user0" in brain._history  # promoted — survived
+    assert "user1" not in brain._history  # became the oldest — evicted
+
+
+def test_reset_conversation_removes_history() -> None:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain._record_turn("Lucas", "oi", "resposta")
+    assert "Lucas" in brain._history
+
+    brain.reset_conversation("Lucas")
+    assert "Lucas" not in brain._history
+
+
+def test_client_cache_is_lru_bounded(monkeypatch) -> None:
+    monkeypatch.setattr("fear.brain.async_conversation._MAX_CLIENTS", 2)
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+
+    brain._client_for(UserContext(user_id="a", api_key="k1"))
+    brain._client_for(UserContext(user_id="b", api_key="k2"))
+    brain._client_for(UserContext(user_id="c", api_key="k3"))  # evicts k1 (LRU)
+
+    assert len(brain._clients_by_key) == 2
+    assert "k1" not in brain._clients_by_key
+    assert "k3" in brain._clients_by_key

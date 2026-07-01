@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +57,13 @@ PERSONA_MODES: dict[str, str] = {
     ),
 }
 DEFAULT_PERSONA_MODE = "equilibrio"
+
+# Cap the per-user in-memory caches so a long-running process doesn't grow
+# without bound. LRU: the least-recently-used entry is evicted first. These hold
+# only volatile state (rolling dialogue windows, per-key API clients) — evicting
+# never touches persistent memory in ChromaDB.
+_MAX_HISTORY_USERS = 500
+_MAX_CLIENTS = 500
 
 # The default voice of F.E.A.R.: a close, sharp companion that can banter, but
 # reads the room. Override it with a file via settings.persona_file.
@@ -123,8 +130,8 @@ class AsyncConversationalBrain:
         self.calendar = calendar
         self.client: AsyncOpenAI | None = None
         # Per-user OpenRouter clients (BYO key), cached by the key itself so a
-        # changed key transparently yields a fresh client.
-        self._clients_by_key: dict[str, AsyncOpenAI] = {}
+        # changed key transparently yields a fresh client. LRU-bounded.
+        self._clients_by_key: OrderedDict[str, AsyncOpenAI] = OrderedDict()
 
         self._persona = self._load_persona(settings)
         # Live persona mode, seeded from settings (FEAR_PERSONA_MODE); an unknown
@@ -136,8 +143,8 @@ class AsyncConversationalBrain:
         )
         self._max_history_turns = max(0, settings.max_history_turns)
         # Rolling per-speaker dialogue window, so F.E.A.R. follows a conversation
-        # across turns instead of treating every message as standalone.
-        self._history: dict[str, deque[dict[str, str]]] = {}
+        # across turns instead of treating every message as standalone. LRU-bounded.
+        self._history: OrderedDict[str, deque[dict[str, str]]] = OrderedDict()
 
         if settings.openrouter_api_key:
             self.client = AsyncOpenAI(
@@ -149,21 +156,30 @@ class AsyncConversationalBrain:
                 },
             )
 
+    @staticmethod
+    def _evict_lru(cache: OrderedDict[str, Any], cap: int) -> None:
+        """Drop least-recently-used entries until the cache is within `cap`."""
+        while len(cache) > cap:
+            cache.popitem(last=False)
+
     def _client_for(self, user: UserContext | None) -> AsyncOpenAI | None:
         """Pick the OpenRouter client: the user's own (BYO key) or the shared one."""
         if user is None or not user.api_key:
             return self.client
         cached = self._clients_by_key.get(user.api_key)
-        if cached is None:
-            cached = AsyncOpenAI(
-                api_key=user.api_key,
-                base_url=self.settings.openrouter_base_url,
-                default_headers={
-                    "HTTP-Referer": self.settings.openrouter_http_referer,
-                    "X-Title": self.settings.openrouter_app_title,
-                },
-            )
-            self._clients_by_key[user.api_key] = cached
+        if cached is not None:
+            self._clients_by_key.move_to_end(user.api_key)  # mark most-recently-used
+            return cached
+        cached = AsyncOpenAI(
+            api_key=user.api_key,
+            base_url=self.settings.openrouter_base_url,
+            default_headers={
+                "HTTP-Referer": self.settings.openrouter_http_referer,
+                "X-Title": self.settings.openrouter_app_title,
+            },
+        )
+        self._clients_by_key[user.api_key] = cached
+        self._evict_lru(self._clients_by_key, _MAX_CLIENTS)
         return cached
 
     async def process_command(
@@ -475,7 +491,11 @@ class AsyncConversationalBrain:
 
     def _history_for(self, speaker: str) -> list[dict[str, str]]:
         """Return a copy of the rolling dialogue window for a speaker."""
-        return list(self._history.get(speaker, ()))
+        window = self._history.get(speaker)
+        if window is None:
+            return []
+        self._history.move_to_end(speaker)  # accessing marks it most-recently-used
+        return list(window)
 
     def _record_turn(self, speaker: str, user_text: str, reply: str) -> None:
         """Append one user/assistant exchange to the speaker's rolling window."""
@@ -486,6 +506,9 @@ class AsyncConversationalBrain:
         if window is None:
             window = deque(maxlen=self._max_history_turns)
             self._history[speaker] = window
+            self._evict_lru(self._history, _MAX_HISTORY_USERS)
+        else:
+            self._history.move_to_end(speaker)  # active speaker stays most-recent
 
         window.append({"role": "user", "content": user_text})
         if reply:

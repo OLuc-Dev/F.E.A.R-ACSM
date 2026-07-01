@@ -32,10 +32,15 @@ class Settings(BaseSettings):
     chroma_path: str = Field("data/chroma", validation_alias="CHROMA_PATH")
     chroma_collection_name: str = Field("fear_memory", validation_alias="CHROMA_COLLECTION")
 
+    # Deployment environment: local | development | test | production. Safe
+    # default (local). In production a missing FEAR_SECRET_KEY is fatal at boot.
+    env: str = Field("local", validation_alias="FEAR_ENV")
+
     # Multi-user accounts. The secret signs session tokens and encrypts each
     # user's stored OpenRouter key; keep it stable and private in production. An
     # empty value makes the server mint an ephemeral one (fine for local dev,
-    # but logins and stored keys then reset on every restart).
+    # but logins and stored keys then reset on every restart — and it is refused
+    # outright in production).
     secret_key: str = Field("", validation_alias="FEAR_SECRET_KEY")
     users_db_path: str = Field("data/users.db", validation_alias="FEAR_USERS_DB")
     session_max_age_days: int = Field(30, validation_alias="FEAR_SESSION_MAX_AGE_DAYS", ge=1)
@@ -73,6 +78,11 @@ class Settings(BaseSettings):
     google_token_file: str = Field("data/google_token.json", validation_alias="GOOGLE_TOKEN_FILE")
     google_calendar_id: str = Field("primary", validation_alias="GOOGLE_CALENDAR_ID")
     google_calendar_scope: str = "https://www.googleapis.com/auth/calendar.readonly"
+
+    @property
+    def is_production(self) -> bool:
+        """True when running as a published service (FEAR_ENV=production)."""
+        return self.env.strip().lower() == "production"
 
     @classmethod
     def from_env(cls) -> Settings:

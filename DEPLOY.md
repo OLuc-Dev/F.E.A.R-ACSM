@@ -20,6 +20,8 @@ Guia direto pra subir a F.E.A.R. como um site com login. São **duas partes**:
   python -c "import secrets; print(secrets.token_urlsafe(48))"
   ```
   Guarde — é o `FEAR_SECRET_KEY`. Ela assina os logins e criptografa as chaves dos usuários.
+  Em produção (`FEAR_ENV=production`) o backend **recusa subir sem ela** — de propósito, pra
+  não gerar uma chave efêmera que deslogaria todo mundo a cada reinício.
 
 ---
 
@@ -30,7 +32,7 @@ Na raiz do projeto:
 ```bash
 fly launch --no-deploy          # escolha um nome (ex: fear-luc) e a região gru (São Paulo)
 fly volumes create fear_data -s 1   # disco de 1 GB pra memória + contas
-fly secrets set FEAR_SECRET_KEY="<a chave que você gerou>"
+fly secrets set FEAR_ENV=production FEAR_SECRET_KEY="<a chave que você gerou>"
 fly deploy
 ```
 

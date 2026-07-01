@@ -207,6 +207,23 @@ def get_security(request: Request) -> Security:
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
+async def _user_from_token(
+    token: str, store: UserStore, security: Security, settings: Settings
+) -> User | None:
+    """Resolve a session token to a user, or None if missing/invalid/expired.
+
+    Shared by the HTTP dependency and the WebSocket handshake so both validate
+    identically. Never logs the token.
+    """
+    if not token:
+        return None
+    try:
+        user_id = security.read_session_token(token, settings.session_max_age_days * 86_400)
+    except TokenError:
+        return None
+    return await asyncio.to_thread(store.get_by_id, user_id)
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     store: UserStore = Depends(get_user_store),
@@ -219,13 +236,7 @@ async def get_current_user(
     """
     if credentials is None:
         raise HTTPException(status_code=401, detail="Autenticação necessária.")
-    try:
-        user_id = security.read_session_token(
-            credentials.credentials, settings.session_max_age_days * 86_400
-        )
-    except TokenError as exc:
-        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.") from exc
-    user = await asyncio.to_thread(store.get_by_id, user_id)
+    user = await _user_from_token(credentials.credentials, store, security, settings)
     if user is None:
         raise HTTPException(status_code=401, detail="Sessão inválida ou expirada.")
     return user
@@ -261,6 +272,30 @@ async def _user_context(user: User | None, store: UserStore) -> UserContext | No
         chat_model=user.chat_model,
         persona_mode=user.persona_mode,
     )
+
+
+def resolve_secret_key(settings: Settings) -> str:
+    """Return the secret that signs sessions and encrypts stored keys.
+
+    Fatal in production (FEAR_ENV=production) when unset: an ephemeral secret
+    would silently reset every session and stored key on each restart. Outside
+    production, an ephemeral one is generated with a loud warning (dev only).
+    Never logs the secret itself.
+    """
+    if settings.secret_key:
+        return settings.secret_key
+    if settings.is_production:
+        raise RuntimeError(
+            "FEAR_SECRET_KEY is required when FEAR_ENV=production. Set a long, random "
+            "value — without it, logins and stored API keys reset on every restart. "
+            'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+        )
+    logger.warning(
+        "FEAR_SECRET_KEY is not set; using an ephemeral secret (FEAR_ENV=%s). Logins "
+        "and stored keys will reset on restart — set FEAR_SECRET_KEY for production.",
+        settings.env,
+    )
+    return secrets.token_urlsafe(32)
 
 
 def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibrary:
@@ -327,17 +362,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     await calendar.load()
 
     # Multi-user auth: one secret signs session tokens and encrypts each user's
-    # stored OpenRouter key. An unset FEAR_SECRET_KEY gets an ephemeral one,
-    # which is fine for local dev but resets sessions and stored keys on restart.
-    secret_key = settings.secret_key
-    if not secret_key:
-        secret_key = secrets.token_urlsafe(32)
-        logger.warning(
-            "FEAR_SECRET_KEY is not set; using an ephemeral secret. Logins and "
-            "stored OpenRouter keys will reset on restart. Set FEAR_SECRET_KEY "
-            "for anything beyond local development."
-        )
-    security = Security(secret_key)
+    # stored OpenRouter key. Fatal in production if unset (see resolve_secret_key);
+    # ephemeral (with a warning) only outside production.
+    security = Security(resolve_secret_key(settings))
     user_store = await asyncio.to_thread(UserStore, path=settings.users_db_path, security=security)
 
     application.state.settings = settings
@@ -669,10 +696,13 @@ async def knowledge_delete(
 async def wearable_tap(
     payload: TapGesturePayload,
     brain: AsyncConversationalBrain = Depends(get_brain),
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
 ) -> CommandResponse:
-    """Process a simple wearable tap as a command."""
+    """Process a wearable tap as a command, on the signed-in user's context."""
     text = gesture_to_command(WearableTapEvent(payload.gesture, payload.device_id))
-    result = await brain.process_command(text or payload.gesture, payload.speaker)
+    ctx = await _user_context(user, store)
+    result = await brain.process_command(text or payload.gesture, payload.speaker, user=ctx)
     return CommandResponse(reply=result.reply, speaker=result.speaker, audio_file=None)
 
 
@@ -761,12 +791,41 @@ async def voice_capture_once() -> dict[str, str]:
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """Text-based WebSocket command channel; voice streaming can be added later."""
+    """Authenticated text command channel.
+
+    The first message MUST be an auth handshake: {"type": "auth", "token": "..."}.
+    Without a valid token the socket is closed with 1008 (policy violation) before
+    anything touches the brain or memory — there is no anonymous fallback. Shared
+    state is read from app.state, populated at startup.
+    """
     await websocket.accept()
+    state = websocket.app.state
+    store = getattr(state, "user_store", None)
+    security = getattr(state, "security", None)
+    settings = getattr(state, "settings", None)
+    brain = getattr(state, "brain", None)
+    if store is None or security is None or settings is None or brain is None:
+        await websocket.close(code=1008)
+        return
+
+    # First message must be an auth handshake before anything touches the brain.
+    try:
+        handshake = await websocket.receive_json()
+    except Exception:
+        await websocket.close(code=1008)
+        return
+    user: User | None = None
+    if isinstance(handshake, dict) and handshake.get("type") == "auth":
+        user = await _user_from_token(str(handshake.get("token") or ""), store, security, settings)
+    if user is None:
+        await websocket.close(code=1008)  # policy violation — never reached the brain
+        return
+
+    ctx = await _user_context(user, store)
     try:
         while True:
             text = await websocket.receive_text()
-            result = await process_text_command(app, text, "user")
+            result = await brain.process_command(text, user.email, user=ctx)
             await websocket.send_json({"reply": result.reply, "speaker": result.speaker})
     except WebSocketDisconnect:
         return

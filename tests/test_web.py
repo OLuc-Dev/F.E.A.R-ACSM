@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from fear.auth import Security, UserStore
@@ -19,6 +20,7 @@ from fear.web.app import (
     get_settings,
     get_tts,
     get_user_store,
+    resolve_secret_key,
 )
 
 PERSONA_MODES = ["equilibrio", "sombrio", "cirurgico"]
@@ -221,11 +223,64 @@ def test_memory_forget_only_own(client: TestClient) -> None:
     assert other.json() == {"forgotten": False, "id": "other-user-xyz"}
 
 
-def test_wearable_tap(client: TestClient) -> None:
+def test_wearable_tap_requires_auth(client: TestClient) -> None:
     response = client.post("/wearable/tap", json={"gesture": "double_tap", "speaker": "Lucas"})
+    assert response.status_code == 401
+
+
+def test_wearable_tap(client: TestClient, brain: FakeBrain) -> None:
+    _, headers = _register(client)
+    response = client.post(
+        "/wearable/tap", json={"gesture": "double_tap", "speaker": "Lucas"}, headers=headers
+    )
     assert response.status_code == 200
     # double_tap maps to "next Spotify song", which the fake brain echoes back.
     assert response.json()["reply"] == "echo: next Spotify song"
+    # It ran on the signed-in user's context, not an anonymous/global one.
+    assert brain.last_user is not None
+
+
+# --- item 1: FEAR_SECRET_KEY fail-fast ---
+
+
+def test_resolve_secret_key_uses_configured_value() -> None:
+    assert resolve_secret_key(Settings(env="production", secret_key="abc")) == "abc"
+
+
+def test_resolve_secret_key_is_fatal_in_production_when_unset() -> None:
+    with pytest.raises(RuntimeError):
+        resolve_secret_key(Settings(env="production", secret_key=""))
+
+
+def test_resolve_secret_key_is_ephemeral_outside_production() -> None:
+    # Local/dev keeps the permissive behaviour: a non-empty ephemeral secret, no raise.
+    assert resolve_secret_key(Settings(env="local", secret_key=""))
+
+
+# --- item 2: /ws requires an auth handshake ---
+
+
+def test_ws_rejects_without_auth_handshake(
+    client: TestClient, brain: FakeBrain, tmp_path: Path
+) -> None:
+    # /ws reads shared objects from app.state (populated at startup); set them for
+    # the test, then confirm a non-auth first message closes the socket untouched.
+    security = Security("test-secret")
+    ws_store = UserStore(path=str(tmp_path / "ws.db"), security=security)
+    app.state.user_store = ws_store
+    app.state.security = security
+    app.state.settings = Settings(secret_key="test-secret")
+    app.state.brain = brain
+    try:
+        with client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "hello"})  # not an auth handshake
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+    finally:
+        ws_store.close()
+        for attr in ("user_store", "security", "settings", "brain"):
+            if hasattr(app.state, attr):
+                delattr(app.state, attr)
 
 
 def test_conversation_reset(client: TestClient, brain: FakeBrain) -> None:
