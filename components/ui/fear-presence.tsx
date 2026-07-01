@@ -14,9 +14,11 @@ import {
 import { Bloom, EffectComposer, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
 
-// The F.E.A.R. presence now renders a sculpted head model (glTF). It auto-fits
-// and centers, then stays reactive: it drifts on idle, tracks the cursor, breathes,
-// and nods/quickens while speaking. Fully client-side (loaded via dynamic import).
+// The F.E.A.R. presence: a sculpted head (glTF) suspended inside a glowing amber
+// energy core — rotating filigree, a soft halo, and drifting embers — for a
+// showcase-worthy look. It auto-fits and centers, then stays reactive: it drifts
+// on idle, tracks the cursor, breathes, and quickens while speaking. Fully
+// client-side (loaded via dynamic import).
 
 export type PresenceStatus = "online" | "listening" | "thinking" | "speaking" | "error";
 
@@ -25,6 +27,74 @@ const MODEL_URL = "/models/fear-head.glb";
 // Glowing-eye placement as fractions of the head's half-extents (tuned visually),
 // so it follows the sockets regardless of the model's scale.
 const EYE = { fx: 0.34, fy: -0.08, fz: 0.95, r: 0.08 } as const;
+
+// The energy core that surrounds the head: a soft additive halo, two counter-
+// rotating wireframe shells (the "filigree"), and warm embers. Purely ambient —
+// it reads hotter while F.E.A.R. speaks or errors.
+function EnergyCore({ status }: { status: PresenceStatus }) {
+  const shell = useRef<THREE.Group>(null);
+  const innerShell = useRef<THREE.Mesh>(null);
+  const hot = status === "speaking" || status === "error";
+
+  useFrame((state, delta) => {
+    const t = state.clock.elapsedTime;
+    if (shell.current) {
+      shell.current.rotation.y += delta * (hot ? 0.34 : 0.18);
+      shell.current.rotation.x = Math.sin(t * 0.2) * 0.15;
+    }
+    if (innerShell.current) innerShell.current.rotation.y -= delta * (hot ? 0.5 : 0.3);
+  });
+
+  return (
+    <group>
+      {/* Soft volumetric halo glowing from behind the head */}
+      <mesh>
+        <sphereGeometry args={[3.3, 64, 64]} />
+        <meshBasicMaterial
+          color="#ff8a1e"
+          side={THREE.BackSide}
+          transparent
+          opacity={0.05}
+          depthWrite={false}
+          toneMapped={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Outer + inner wireframe shells: the swirling energy filigree */}
+      <group ref={shell}>
+        <mesh>
+          <icosahedronGeometry args={[2.55, 2]} />
+          <meshBasicMaterial
+            color="#ffb347"
+            wireframe
+            transparent
+            opacity={hot ? 0.26 : 0.16}
+            depthWrite={false}
+            toneMapped={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      </group>
+      <mesh ref={innerShell}>
+        <icosahedronGeometry args={[2.15, 1]} />
+        <meshBasicMaterial
+          color="#ffd27a"
+          wireframe
+          transparent
+          opacity={0.12}
+          depthWrite={false}
+          toneMapped={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {/* Embers: dense fine motes + a few slow, bright sparks */}
+      <Sparkles count={90} scale={[7, 7, 7]} size={1.6} speed={0.3} color="#ffb861" opacity={0.6} />
+      <Sparkles count={28} scale={[9, 9, 9]} size={3.6} speed={0.16} color="#ff8a1e" opacity={0.5} />
+    </group>
+  );
+}
 
 function HeadModel({ status }: { status: PresenceStatus }) {
   const group = useRef<THREE.Group>(null);
@@ -36,15 +106,16 @@ function HeadModel({ status }: { status: PresenceStatus }) {
 
   // Clone (the cached scene can't be parented twice) and re-skin every mesh in
   // dark chrome so the sculpt reads as Ultron-style metal, not its base texture.
+  // The warm environment gives that steel a molten, gold-lit sheen.
   const model = useMemo(() => {
     const cloned = scene.clone(true);
     const metal = new THREE.MeshPhysicalMaterial({
       color: "#7c818b",
       metalness: 1,
-      roughness: 0.34,
+      roughness: 0.32,
       clearcoat: 0.5,
       clearcoatRoughness: 0.25,
-      envMapIntensity: 1.3,
+      envMapIntensity: 1.55,
     });
     cloned.traverse((object) => {
       const mesh = object as THREE.Mesh;
@@ -109,7 +180,8 @@ function HeadModel({ status }: { status: PresenceStatus }) {
         </Center>
       </group>
 
-      {/* Deep-set, cold eyes: a dark recess framing a thin crimson LED slit */}
+      {/* Deep-set, cold eyes: a dark recess framing a thin crimson LED slit. The
+          red mind reads sharp against the surrounding amber. */}
       {[-1, 1].map((s) => (
         <group key={s} position={[s * half[0] * EYE.fx, half[1] * EYE.fy, half[2] * EYE.fz]}>
           <mesh position={[0, 0, -0.05]} scale={[2.2, 1.05, 1]}>
@@ -145,47 +217,49 @@ useGLTF.preload(MODEL_URL);
 export function FearPresence({ status = "online" }: { status?: PresenceStatus }) {
   return (
     <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true }}>
-      <color attach="background" args={["#06070a"]} />
-      <fog attach="fog" args={["#06070a", 8, 16]} />
+      <color attach="background" args={["#080502"]} />
+      <fog attach="fog" args={["#080502", 8, 17]} />
 
-      <hemisphereLight args={["#aebfe0", "#15171c", 0.6]} />
-      <directionalLight position={[4, 5, 5]} intensity={1.5} />
-      <pointLight position={[-4, -1, 3]} intensity={3.5} color="#3b5bff" />
-      {/* Soft cool fill from the front so the face stays readable */}
-      <pointLight position={[0, 0.6, 4.5]} intensity={1.8} color="#cdd6ff" />
-      {/* Cool rim from behind so the head separates from the dark backdrop */}
-      <directionalLight position={[-3, 4, -5]} intensity={1.2} color="#9fb4ff" />
+      <hemisphereLight args={["#ffd9a0", "#180d05", 0.55]} />
+      <directionalLight position={[4, 5, 5]} intensity={1.6} color="#ffdca8" />
+      {/* Warm key from the lower left — the core's own light */}
+      <pointLight position={[-4, -1, 3]} intensity={3.4} color="#ff8a1e" />
+      {/* Soft warm fill from the front so the face stays readable */}
+      <pointLight position={[0, 0.6, 4.5]} intensity={1.7} color="#ffcaa0" />
+      {/* Amber rim from behind so the head separates from the dark backdrop */}
+      <directionalLight position={[-3, 4, -5]} intensity={1.3} color="#ffb35c" />
 
       <Suspense fallback={null}>
-        {/* Procedural environment so metal/skin has soft streaks to reflect */}
+        {/* Procedural environment so the steel picks up warm, gold-lit streaks */}
         <Environment resolution={256}>
-          <Lightformer form="rect" intensity={1.6} position={[0, 3, 2]} scale={[5, 1.4, 1]} color="#dfe6ff" />
+          <Lightformer form="rect" intensity={1.8} position={[0, 3, 2]} scale={[5, 1.4, 1]} color="#ffe6bf" />
           <Lightformer
             form="rect"
-            intensity={1.2}
+            intensity={1.3}
             position={[-4, 1, 1]}
             rotation={[0, Math.PI / 4, 0]}
             scale={[2.5, 4, 1]}
-            color="#7aa2ff"
+            color="#ffab54"
           />
           <Lightformer
             form="rect"
-            intensity={0.7}
+            intensity={0.9}
             position={[4, -1, 1]}
             rotation={[0, -Math.PI / 4, 0]}
             scale={[2.5, 4, 1]}
-            color="#ff6a5a"
+            color="#ff7a3c"
           />
         </Environment>
+
+        <EnergyCore status={status} />
 
         <Float speed={1.2} rotationIntensity={0} floatIntensity={0.5}>
           <HeadModel status={status} />
         </Float>
 
-        <Sparkles count={42} scale={9} size={2.2} speed={0.3} color="#9ab4ff" opacity={0.5} />
         <ContactShadows
           position={[0, -2.4, 0]}
-          opacity={0.6}
+          opacity={0.55}
           scale={12}
           blur={2.8}
           far={4.5}
@@ -194,8 +268,8 @@ export function FearPresence({ status = "online" }: { status?: PresenceStatus })
       </Suspense>
 
       <EffectComposer>
-        <Bloom intensity={0.7} luminanceThreshold={0.55} luminanceSmoothing={0.2} mipmapBlur />
-        <Vignette offset={0.3} darkness={0.7} />
+        <Bloom intensity={1.15} luminanceThreshold={0.4} luminanceSmoothing={0.25} mipmapBlur />
+        <Vignette offset={0.3} darkness={0.75} />
       </EffectComposer>
     </Canvas>
   );

@@ -531,11 +531,11 @@ export default function HomePage() {
           <div className="flex flex-col gap-5 lg:h-[78vh]">
             <div className="panel relative h-[38vh] overflow-hidden rounded-[1.4rem] lg:h-auto lg:flex-1">
               <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 pt-4">
-                <span className="label-tn text-rose-300/70">Presença</span>
+                <span className="label-tn text-amber-300/70">Presença</span>
                 <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-muted-foreground/60">
                   <span
                     className={`size-1.5 rounded-full ${
-                      status === "speaking" ? "animate-pulse bg-rose-400" : "bg-rose-400/40"
+                      status === "speaking" ? "animate-pulse bg-amber-400" : "bg-amber-400/40"
                     }`}
                   />
                   {status === "speaking" ? "falando" : "latente"}
