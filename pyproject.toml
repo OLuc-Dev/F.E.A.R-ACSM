@@ -61,6 +61,15 @@ extend-immutable-calls = ["fastapi.Depends"]
 # Teaches mypy about pydantic models (Field defaults, validation aliases, etc.).
 plugins = ["pydantic.mypy"]
 
+# chromadb is installed in CI for the integration tests, but its stubs don't
+# match how we call it (we always pass explicit embeddings). Treat it as
+# untyped so mypy is green whether or not chromadb is present. The real Chroma
+# API is guarded at runtime by tests/test_chroma_integration.py instead.
+[[tool.mypy.overrides]]
+module = ["chromadb.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
