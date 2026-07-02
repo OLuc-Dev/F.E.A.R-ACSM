@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from fear.memory.embedding import LocalEmbedding
+
 
 @dataclass(slots=True)
 class PersonalMemoryResult:
@@ -17,26 +19,6 @@ class PersonalMemoryResult:
     id: str = ""
     distance: float | None = None
     metadata: dict[str, Any] | None = None
-
-
-class SentenceTransformerEmbedding:
-    """Embedding adapter using sentence-transformers/all-MiniLM-L6-v2."""
-
-    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> None:
-        # Imported lazily so the conversational core can be imported and tested
-        # without pulling in sentence-transformers / torch.
-        from sentence_transformers import SentenceTransformer
-
-        self.model_name = model_name
-        self._model = SentenceTransformer(model_name)
-
-    def embed(self, text: str) -> list[float]:
-        """Return an embedding vector for a single text."""
-        return self._model.encode(text, normalize_embeddings=True).tolist()
-
-    def embed_many(self, texts: list[str]) -> list[list[float]]:
-        """Return embedding vectors for multiple texts."""
-        return self._model.encode(texts, normalize_embeddings=True).tolist()
 
 
 class PersonalMemory:
@@ -52,13 +34,14 @@ class PersonalMemory:
         *,
         path: str = "data/chroma",
         collection_name: str = "personal_memory",
-        embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        embedding: LocalEmbedding | None = None,
     ) -> None:
         import chromadb
 
         self.path = path
         self.collection_name = collection_name
-        self.embedding = SentenceTransformerEmbedding(embedding_model_name)
+        # Share one embedder across stores when provided; otherwise make our own.
+        self.embedding = embedding or LocalEmbedding()
 
         self._client = chromadb.PersistentClient(path=self.path)
         self._collection = self._client.get_or_create_collection(name=self.collection_name)

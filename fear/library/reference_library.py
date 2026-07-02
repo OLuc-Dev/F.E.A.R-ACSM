@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fear.memory.embedding import LocalEmbedding
+
 
 @dataclass(slots=True)
 class ReferenceResult:
@@ -25,16 +27,16 @@ class ReferenceLibrary:
         *,
         path: str = "data/chroma",
         collection_name: str = "reference_library",
-        embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        embedding: LocalEmbedding | None = None,
     ) -> None:
-        # Imported lazily so the conversational core can be imported and tested
-        # without pulling in sentence-transformers / torch.
+        # chromadb imported lazily so this module stays importable/testable
+        # without the ML stack.
         import chromadb
-        from sentence_transformers import SentenceTransformer
 
         self.path = path
         self.collection_name = collection_name
-        self._embedding_model = SentenceTransformer(embedding_model_name)
+        # Share one embedder across stores when provided; otherwise make our own.
+        self._embedding = embedding or LocalEmbedding()
         self._client = chromadb.PersistentClient(path=self.path)
         self._collection = self._client.get_or_create_collection(name=self.collection_name)
 
@@ -61,7 +63,7 @@ class ReferenceLibrary:
             return 0
 
         ids = [f"ref-{source}-{section}-{index}" for index, _ in enumerate(chunks)]
-        embeddings = self._embedding_model.encode(chunks, normalize_embeddings=True).tolist()
+        embeddings = self._embedding.embed_many(chunks)
         metadatas = [
             {"source": source, "section": section, "file_path": str(file_path)} for _ in chunks
         ]
@@ -116,7 +118,7 @@ class ReferenceLibrary:
 
         prefix = f"{user_id}-" if user_id else ""
         ids = [f"ref-{prefix}{source}-{index}" for index, _ in enumerate(chunks)]
-        embeddings = self._embedding_model.encode(chunks, normalize_embeddings=True).tolist()
+        embeddings = self._embedding.embed_many(chunks)
         metadatas = [
             {"source": source, "section": section, "origin": "text", "user_id": user_id}
             for _ in chunks
@@ -158,7 +160,7 @@ class ReferenceLibrary:
         if not query.strip():
             return []
 
-        query_embedding = self._embedding_model.encode(query, normalize_embeddings=True).tolist()
+        query_embedding = self._embedding.embed(query)
         raw = self._collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,

@@ -31,8 +31,9 @@ primary_region = "gru" # São Paulo
   auto_start_machines = true
   min_machines_running = 0
 
-# torch + the embedding model need real memory; 2 GB is a safe starting point.
+# The ONNX embedder (no torch) is light; 1 GB is comfortable. Drop to 512 MB
+# if you want to trim cost further and watch memory.
 [[vm]]
-  memory = "2gb"
+  memory = "1gb"
   cpu_kind = "shared"
   cpus = 1

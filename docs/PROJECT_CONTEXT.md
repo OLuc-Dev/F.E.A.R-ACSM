@@ -22,7 +22,8 @@ gravada).
   `fear.web.app`), asyncio, pydantic-settings, injeção de dependência via
   providers. Libs pesadas são importadas "lazy".
 - **Memória/IA:** ChromaDB (memória pessoal + biblioteca de conhecimento) com
-  embeddings locais `sentence-transformers` (all-MiniLM-L6-v2). LLM via
+  embeddings locais em CPU via ONNX MiniLM (`all-MiniLM-L6-v2`, do ChromaDB, sem
+  PyTorch), compartilhado entre os stores. LLM via
   **OpenRouter** (cliente compatível com OpenAI). Modelo padrão gratuito:
   `openai/gpt-oss-120b:free`.
 - **Auth:** SQLite (usuários), hash de senha PBKDF2 (stdlib), `cryptography`/
@@ -32,7 +33,7 @@ gravada).
   postprocessing** (presença 3D), Web Speech API (TTS no navegador), lucide-react.
 - **Integrações:** Spotify, Google Calendar (somente leitura), watcher do
   Obsidian. Áudio opcional (Whisper + pyaudio), atrás do extra `.[audio]`.
-- **Infra:** Docker (`Dockerfile`, torch CPU) + `fly.toml` (Fly.io) pro backend,
+- **Infra:** Docker (`Dockerfile`, sem torch) + `fly.toml` (Fly.io) pro backend,
   Vercel pro frontend (ver `DEPLOY.md`). CI no GitHub Actions.
 
 ## 3. Arquitetura (como as peças se encaixam)
@@ -108,9 +109,8 @@ de 3,2s + calibração "premium"); persona afiada; arquivos de deploy
   no cliente).
 - **Dados:** SQLite + ChromaDB são de máquina única (escalar = Postgres +
   storage compartilhado).
-- **Custo/perf:** embeddings usam torch (imagem/RAM pesadas) — trocar por ONNX
-  (MiniLM embutido no chromadb) ou por uma API de embeddings deixaria o servidor
-  barato e rápido.
+- **Custo/perf (resolvido):** embeddings agora rodam em ONNX (MiniLM do ChromaDB,
+  sem PyTorch), compartilhados entre os stores — imagem e RAM enxutas (~1 GB).
 - Sem limites/visibilidade de uso por usuário; disco de conhecimento sem teto.
 - Queries reais do ChromaDB não têm teste em CI (só os helpers puros, ex. `_scope`).
 - O campo "Interlocutor" na UI ficou meio redundante depois do login.

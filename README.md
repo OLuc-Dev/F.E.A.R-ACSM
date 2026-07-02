@@ -16,8 +16,8 @@ F.E.A.R. é um assistente pessoal **local-first**:
   streaming e uma presença 3D (`app/`, `components/`, `lib/`).
 
 O cérebro conversa via OpenRouter (API compatível com a do OpenAI), guarda
-memória pessoal em ChromaDB com embeddings locais (`sentence-transformers`) e
-pode consultar uma biblioteca de notas em markdown.
+memória pessoal em ChromaDB com embeddings locais em CPU (ONNX MiniLM via
+ChromaDB, sem PyTorch) e pode consultar uma biblioteca de notas em markdown.
 
 ## Contas e multiusuário
 

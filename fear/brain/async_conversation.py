@@ -109,9 +109,9 @@ class AsyncConversationalBrain:
     """
     Async-safe conversational layer for F.E.A.R.
 
-    PersonalMemory and ReferenceLibrary use sentence-transformers and ChromaDB,
-    which are blocking. This class keeps FastAPI responsive by moving those
-    calls to worker threads with asyncio.to_thread.
+    PersonalMemory and ReferenceLibrary use ChromaDB with an ONNX embedder, which
+    is blocking. This class keeps FastAPI responsive by moving those calls to
+    worker threads with asyncio.to_thread.
     """
 
     def __init__(

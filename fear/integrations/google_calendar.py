@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # Read-only Google Calendar access for F.E.A.R. The google libraries are imported
 # lazily (inside methods) so the conversational core can be imported and tested
-# without them, mirroring how ChromaDB/sentence-transformers are handled.
+# without them, mirroring how ChromaDB is handled.
 
 
 class GoogleCalendarClient:

@@ -309,8 +309,8 @@ export function SettingsPanel({
                         <div className="flex items-start gap-2.5 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] p-3 text-[13px] leading-5 text-amber-200/90">
                           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
                           <span>
-                            A biblioteca de conhecimento está indisponível. Instale as dependências (chromadb,
-                            sentence-transformers) e reinicie o backend.
+                            A biblioteca de conhecimento está indisponível. Instale as dependências (chromadb)
+                            e reinicie o backend.
                           </span>
                         </div>
                       )}

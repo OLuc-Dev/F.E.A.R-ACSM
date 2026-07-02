@@ -84,7 +84,7 @@ fly secrets set FEAR_CORS_ORIGINS="https://<seu-front>.vercel.app"
 - **Suas memórias antigas:** rodando localmente, depois de criar sua conta, dá pra trazê-las
   pra ela com `python scripts/claim_memories.py <seu-email>` (precisa do mesmo `FEAR_SECRET_KEY`).
   No servidor novo a memória começa limpa de qualquer forma.
-- **Deixar mais barato depois:** dá pra trocar o motor de embeddings (hoje usa PyTorch, que
-  pesa) por uma versão leve e rodar numa máquina menor. É uma otimização que a gente faz
-  junto quando quiser cortar custo — não é necessária pra funcionar.
+- **Servidor leve:** os embeddings rodam em ONNX (sem PyTorch), então a imagem é enxuta e
+  1 GB de RAM basta (dá pra tentar 512 MB e observar). O modelo já vem embutido na imagem —
+  sem download no primeiro acesso.
 - **A primeira subida** costuma pedir um ajuste ou outro (é normal). Me chama que eu acompanho.

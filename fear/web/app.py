@@ -25,6 +25,7 @@ from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
 from fear.library.reference_library import ReferenceLibrary
 from fear.logging_config import configure_logging
+from fear.memory.embedding import LocalEmbedding
 from fear.memory.personal_memory import PersonalMemory
 from fear.runtime_state import load_runtime_config
 
@@ -305,7 +306,7 @@ def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibr
             status_code=503,
             detail=(
                 "Biblioteca de conhecimento indisponível. "
-                "Instale as dependências (chromadb, sentence-transformers) e reinicie o backend."
+                "Instale as dependências (chromadb) e reinicie o backend."
             ),
         )
     return library
@@ -337,15 +338,20 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     from fear.integrations.spotify_client import SpotifyClient
     from fear.memory.obsidian_watcher import ObsidianWatcher
 
+    # One CPU embedder (ONNX MiniLM, no torch) shared by both stores so the
+    # model loads once.
+    embedding = await asyncio.to_thread(LocalEmbedding)
     memory = await asyncio.to_thread(
         PersonalMemory,
         path=settings.chroma_path,
         collection_name="personal_memory",
+        embedding=embedding,
     )
     reference_library = await asyncio.to_thread(
         ReferenceLibrary,
         path=settings.chroma_path,
         collection_name=os.getenv("BOOK_KNOWLEDGE_COLLECTION", "book_knowledge"),
+        embedding=embedding,
     )
 
     # Loads only when SPOTIPY_* credentials are present; otherwise stays inert.
