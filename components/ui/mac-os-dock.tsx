@@ -270,8 +270,9 @@ const MacOSDock: React.FC<MacOSDockProps> = ({ apps, onAppClick, openApps = [], 
                     width: `${Math.max(3, baseIconSize * 0.06)}px`,
                     height: `${Math.max(3, baseIconSize * 0.06)}px`,
                     borderRadius: "50%",
-                    backgroundColor: "rgba(255, 255, 255, 0.85)",
-                    boxShadow: "0 0 4px rgba(0, 0, 0, 0.3)",
+                    // Active = cyan, matching the console's one status vocabulary.
+                    backgroundColor: "rgba(103, 232, 249, 0.9)",
+                    boxShadow: "0 0 6px rgba(34, 211, 238, 0.5)",
                   }}
                 />
               )}

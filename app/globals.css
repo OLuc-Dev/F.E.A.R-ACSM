@@ -24,6 +24,13 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 188 95% 55%;
     --radius: 1rem;
+
+    /* Signal language — one vocabulary across the whole console.
+       --energy (amber) is F.E.A.R.'s own life: the 3D presence, the header orb
+       while it speaks, the memory pulse. It is NEVER a warning or a generic
+       accent. Interaction / ready / working = cyan (--primary). Attention /
+       pending / inactive = muted. Error / offline / destructive = rose. */
+    --energy: 40 96% 58%;
   }
 
   * {

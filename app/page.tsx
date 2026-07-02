@@ -67,12 +67,15 @@ const STATUS_LABEL: Record<Status, string> = {
   error: "atenção",
 };
 
-// Idle/listening = cyan; speaking = white/cyan; thinking = controlled red; error = strong red.
+// One signal vocabulary: cyan = ready/working, amber = F.E.A.R.'s energy (it is
+// speaking), rose = error. Amber only ever appears when F.E.A.R. is the source,
+// which is also how the header orb carries the presence on mobile (where the 3D
+// core is hidden). Mirrors the 3D core, which flares amber while speaking.
 const STATUS_ORB: Record<Status, string> = {
   online: "bg-cyan-400 shadow-[0_0_14px_3px_rgba(34,211,238,0.45)]",
   listening: "bg-sky-300 shadow-[0_0_16px_4px_rgba(56,189,248,0.5)] animate-pulse",
-  thinking: "bg-rose-400/70 shadow-[0_0_14px_3px_rgba(251,113,133,0.4)] animate-pulse",
-  speaking: "bg-white shadow-[0_0_20px_6px_rgba(186,230,253,0.7)] animate-pulse",
+  thinking: "bg-cyan-300 shadow-[0_0_14px_3px_rgba(34,211,238,0.45)] animate-pulse",
+  speaking: "bg-amber-300 shadow-[0_0_20px_6px_hsl(var(--energy)/0.6)] animate-pulse",
   error: "bg-rose-500 shadow-[0_0_18px_5px_rgba(244,63,94,0.7)]",
 };
 
@@ -281,10 +284,10 @@ export default function HomePage() {
   const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
   const backendDot =
     backendTone === "ok"
-      ? "bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]"
+      ? "bg-cyan-300 shadow-[0_0_8px_2px_rgba(34,211,238,0.5)]"
       : backendTone === "off"
         ? "bg-rose-400"
-        : "bg-amber-300/70";
+        : "bg-white/25";
   // The greeting is the only message until the first exchange; show the welcome hero instead.
   const showWelcome = messages.length === 1 && messages[0].id === 0;
 
@@ -349,7 +352,7 @@ export default function HomePage() {
       ...flag(systemStatus?.obsidian, "ok"),
     },
     {
-      icon: <CalendarDays className="size-3.5 text-amber-200" />,
+      icon: <CalendarDays className="size-3.5 text-slate-200" />,
       label: "Agenda",
       ...flag(systemStatus?.calendar, "ok"),
     },
@@ -392,7 +395,7 @@ export default function HomePage() {
                 <WifiOff className="size-3.5 text-rose-400" />
               ) : (
                 <Wifi
-                  className={`size-3.5 ${backendTone === "ok" ? "text-cyan-300" : "text-amber-300/80"}`}
+                  className={`size-3.5 ${backendTone === "ok" ? "text-cyan-300" : "text-muted-foreground"}`}
                 />
               )}
               <span className="hidden sm:inline">{backendValue}</span>
