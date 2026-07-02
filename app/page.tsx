@@ -175,6 +175,7 @@ export default function HomePage() {
   const [authOpen, setAuthOpen] = useState(false);
   const [promptedKey, setPromptedKey] = useState(false);
   const [sysOpen, setSysOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -211,6 +212,17 @@ export default function HomePage() {
   useEffect(() => {
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
     if (!isMac) setModKey("Ctrl");
+  }, []);
+
+  // Only mount the 3D presence on real desktop widths (Tailwind's lg). CSS
+  // `hidden` alone would still mount <FearPresence>, loading the Three.js chunk
+  // and preloading the model on mobile — so we gate the render itself.
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
   }, []);
 
   // macOS-style shortcuts: ⌘K focuses the composer, ⌘, toggles settings.
@@ -542,11 +554,14 @@ export default function HomePage() {
           {/* Presence + system — the sidebar. Conversation is the focus, so this
               column stays top-aligned and calmer than before. */}
           <div className="flex flex-col gap-4 lg:self-start">
-            {/* 3D presence: desktop only. On mobile the header orb carries the
-                state, so the panel never crowds out the conversation. */}
-            <div className="panel relative hidden overflow-hidden rounded-[1.4rem] lg:block lg:h-[44vh]">
-              <FearPresence status={status} pulse={memoryTick} />
-            </div>
+            {/* 3D presence: desktop only. Gated on a client media query (not
+                just CSS) so the Three.js chunk never loads on mobile, where the
+                header orb already carries the state. */}
+            {isDesktop && (
+              <div className="panel relative overflow-hidden rounded-[1.4rem] lg:h-[44vh]">
+                <FearPresence status={status} pulse={memoryTick} />
+              </div>
+            )}
 
             {/* System: compact 2-column readout. Collapsible on mobile, always
                 open on desktop. */}
