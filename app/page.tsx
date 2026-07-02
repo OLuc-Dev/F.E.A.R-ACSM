@@ -10,6 +10,7 @@ import {
   BookOpen,
   Brain,
   CalendarDays,
+  ChevronDown,
   Cpu,
   Crosshair,
   Database,
@@ -55,7 +56,6 @@ const fearApps: DockApp[] = [
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
-  { id: "config", name: "Configuração", icon: <Settings className="h-full w-full text-slate-200" /> },
   { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-rose-200" /> },
 ];
 
@@ -110,39 +110,6 @@ function StatusOrb({ status }: { status: Status }) {
     <span className="relative grid size-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.03]">
       <span aria-hidden className={`size-2.5 rounded-full transition-colors ${STATUS_ORB[status]}`} />
     </span>
-  );
-}
-
-function SystemRow({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-  tone: "ok" | "muted" | "off";
-}) {
-  const dot =
-    tone === "ok"
-      ? "bg-cyan-300 shadow-[0_0_8px_1px_rgba(34,211,238,0.6)]"
-      : tone === "off"
-        ? "bg-rose-400/70"
-        : "bg-white/20";
-  return (
-    <div className="flex items-center justify-between rounded-lg px-2 py-2 transition hover:bg-white/[0.025]">
-      <span className="flex items-center gap-2.5 text-[13px] text-foreground/70">
-        <span className="grid size-7 place-items-center rounded-lg border border-white/10 bg-white/[0.03]">
-          {icon}
-        </span>
-        {label}
-      </span>
-      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        <span className={`size-1.5 rounded-full ${dot}`} />
-        {value}
-      </span>
-    </div>
   );
 }
 
@@ -207,6 +174,7 @@ export default function HomePage() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("conhecimento");
   const [authOpen, setAuthOpen] = useState(false);
   const [promptedKey, setPromptedKey] = useState(false);
+  const [sysOpen, setSysOpen] = useState(false);
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -299,6 +267,12 @@ export default function HomePage() {
 
   const backendTone = backendOnline === null ? "muted" : backendOnline ? "ok" : "off";
   const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
+  const backendDot =
+    backendTone === "ok"
+      ? "bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]"
+      : backendTone === "off"
+        ? "bg-rose-400"
+        : "bg-amber-300/70";
   // The greeting is the only message until the first exchange; show the welcome hero instead.
   const showWelcome = messages.length === 1 && messages[0].id === 0;
 
@@ -332,6 +306,42 @@ export default function HomePage() {
       </main>
     );
   }
+
+  // System panel rows, computed once so the panel body stays a tight map. "Sua
+  // chave" is per-user; the rest mirror the backend's optional integrations.
+  const systemItems: { icon: ReactNode; label: string; value: string; tone: "ok" | "muted" }[] = [
+    {
+      icon: <Cpu className="size-3.5 text-cyan-200" />,
+      label: "Chave",
+      value: keyStatusLabel(user.has_openrouter_key),
+      tone: user.has_openrouter_key ? "ok" : "muted",
+    },
+    {
+      icon: <Database className="size-3.5 text-violet-200" />,
+      label: "Memória",
+      ...flag(systemStatus?.memory, "ativa"),
+    },
+    {
+      icon: <Mic className="size-3.5 text-cyan-200" />,
+      label: "Voz",
+      ...flag(systemStatus?.voice, "ativa"),
+    },
+    {
+      icon: <Music className="size-3.5 text-emerald-200" />,
+      label: "Spotify",
+      ...flag(systemStatus?.spotify, "ok"),
+    },
+    {
+      icon: <BookOpen className="size-3.5 text-blue-200" />,
+      label: "Obsidian",
+      ...flag(systemStatus?.obsidian, "ok"),
+    },
+    {
+      icon: <CalendarDays className="size-3.5 text-amber-200" />,
+      label: "Agenda",
+      ...flag(systemStatus?.calendar, "ok"),
+    },
+  ];
 
   return (
     <main className="relative min-h-screen text-foreground">
@@ -417,7 +427,7 @@ export default function HomePage() {
         )}
 
         {/* Deck */}
-        <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:gap-6">
+        <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.62fr)] lg:gap-6">
           {/* Conversation */}
           <div className="panel flex h-[72vh] min-h-[460px] flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[78vh]">
             {/* No exit-wait here: the thread must mount immediately so a fast first
@@ -529,73 +539,58 @@ export default function HomePage() {
             </form>
           </div>
 
-          {/* Presence + system */}
-          <div className="flex flex-col gap-5 lg:h-[78vh]">
-            <div className="panel relative h-[38vh] overflow-hidden rounded-[1.4rem] lg:h-auto lg:flex-1">
-              <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 pt-4">
-                <span className="label-tn text-amber-300/70">Presença</span>
-                <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-muted-foreground/60">
-                  <span
-                    className={`size-1.5 rounded-full ${
-                      status === "speaking" ? "animate-pulse bg-amber-400" : "bg-amber-400/40"
-                    }`}
-                  />
-                  {status === "speaking" ? "falando" : "latente"}
-                </span>
-              </div>
+          {/* Presence + system — the sidebar. Conversation is the focus, so this
+              column stays top-aligned and calmer than before. */}
+          <div className="flex flex-col gap-4 lg:self-start">
+            {/* 3D presence: desktop only. On mobile the header orb carries the
+                state, so the panel never crowds out the conversation. */}
+            <div className="panel relative hidden overflow-hidden rounded-[1.4rem] lg:block lg:h-[44vh]">
               <FearPresence status={status} pulse={memoryTick} />
             </div>
 
-            <div className="panel rounded-[1.4rem] p-5">
-              <div className="mb-3 flex items-center justify-between">
+            {/* System: compact 2-column readout. Collapsible on mobile, always
+                open on desktop. */}
+            <div className="panel p-4">
+              <button
+                type="button"
+                onClick={() => setSysOpen((open) => !open)}
+                aria-expanded={sysOpen}
+                className="tap flex w-full items-center justify-between lg:hidden"
+              >
+                <span className="label-tn flex items-center gap-2">
+                  <Activity className="size-3.5 text-cyan-300/70" /> Sistema
+                </span>
+                <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <span className={`size-2 rounded-full ${backendDot}`} />
+                    {backendValue}
+                  </span>
+                  <ChevronDown className={`size-4 transition-transform ${sysOpen ? "rotate-180" : ""}`} />
+                </span>
+              </button>
+              <div className="hidden items-center justify-between lg:flex">
                 <span className="label-tn flex items-center gap-2">
                   <Activity className="size-3.5 text-cyan-300/70" /> Sistema
                 </span>
                 <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <span
-                    className={`size-2 rounded-full ${
-                      backendTone === "ok"
-                        ? "bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]"
-                        : backendTone === "off"
-                          ? "bg-rose-400"
-                          : "bg-amber-300/70"
-                    }`}
-                  />
+                  <span className={`size-2 rounded-full ${backendDot}`} />
                   backend {backendValue}
                 </span>
               </div>
-              <div className="space-y-0.5">
-                <SystemRow
-                  icon={<Cpu className="size-3.5 text-cyan-200" />}
-                  label="Sua chave"
-                  value={keyStatusLabel(user.has_openrouter_key)}
-                  tone={user.has_openrouter_key ? "ok" : "muted"}
-                />
-                <SystemRow
-                  icon={<Database className="size-3.5 text-violet-200" />}
-                  label="Memória"
-                  {...flag(systemStatus?.memory, "ativa")}
-                />
-                <SystemRow
-                  icon={<Mic className="size-3.5 text-cyan-200" />}
-                  label="Voz"
-                  {...flag(systemStatus?.voice, "ativa")}
-                />
-                <SystemRow
-                  icon={<Music className="size-3.5 text-emerald-200" />}
-                  label="Spotify"
-                  {...flag(systemStatus?.spotify, "configurado")}
-                />
-                <SystemRow
-                  icon={<BookOpen className="size-3.5 text-blue-200" />}
-                  label="Obsidian"
-                  {...flag(systemStatus?.obsidian, "configurado")}
-                />
-                <SystemRow
-                  icon={<CalendarDays className="size-3.5 text-amber-200" />}
-                  label="Agenda"
-                  {...flag(systemStatus?.calendar, "conectada")}
-                />
+              <div className={`grid-cols-2 gap-x-4 gap-y-0.5 pt-3 lg:grid ${sysOpen ? "grid" : "hidden"}`}>
+                {systemItems.map((item) => (
+                  <div key={item.label} className="flex items-center gap-2 py-1 text-[12px]">
+                    <span className="text-muted-foreground">{item.icon}</span>
+                    <span className="text-foreground/70">{item.label}</span>
+                    <span
+                      className={`ml-auto text-[10px] ${
+                        item.tone === "ok" ? "text-cyan-300/80" : "text-muted-foreground/55"
+                      }`}
+                    >
+                      {item.value}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -605,13 +600,9 @@ export default function HomePage() {
       <MacOSDock
         apps={fearApps}
         onAppClick={(appId) =>
-          appId === "config"
-            ? openSettings()
-            : appId === "memory"
-              ? openSettings("memoria")
-              : handleAppAction(appId, speaker)
+          appId === "memory" ? openSettings("memoria") : handleAppAction(appId, speaker)
         }
-        openApps={settingsOpen ? [settingsTab === "memoria" ? "memory" : "config"] : []}
+        openApps={settingsOpen && settingsTab === "memoria" ? ["memory"] : []}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />
 
