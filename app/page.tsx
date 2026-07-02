@@ -22,8 +22,6 @@ import {
   Settings,
   Split,
   Swords,
-  User,
-  UserRound,
   Volume2,
   VolumeX,
   Wifi,
@@ -35,6 +33,7 @@ import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
 import { getStatus, type StatusResponse } from "@/lib/api";
+import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
@@ -201,13 +200,13 @@ function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; bus
 }
 
 export default function HomePage() {
-  const [speaker, setSpeaker] = useState("Lucas");
   const [text, setText] = useState("");
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("conhecimento");
   const [authOpen, setAuthOpen] = useState(false);
+  const [promptedKey, setPromptedKey] = useState(false);
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -234,6 +233,10 @@ export default function HomePage() {
     send,
     handleAppAction,
   } = useConversation();
+
+  // F.E.A.R. addresses the person by their account (email local part) — no more
+  // free-text "speaker". Only read in the deck, where a user always exists.
+  const speaker = user ? accountName(user.email) : "user";
 
   // Show the right modifier hint per platform (avoids a hydration mismatch by
   // starting from a stable default and correcting after mount).
@@ -274,6 +277,15 @@ export default function HomePage() {
       active = false;
     };
   }, []);
+
+  // First run without a key: open the account panel once (AuthPanel focuses the
+  // key field). Closing it won't reopen — no nag loop.
+  useEffect(() => {
+    if (ready && user && !user.has_openrouter_key && !promptedKey) {
+      setPromptedKey(true);
+      setAuthOpen(true);
+    }
+  }, [ready, user, promptedKey]);
 
   function submitCommand(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -339,16 +351,17 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            <label className="flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 transition focus-within:border-cyan-300/40">
-              <User className="size-3.5 text-muted-foreground" />
-              <input
-                value={speaker}
-                onChange={(event) => setSpeaker(event.target.value)}
-                aria-label="Nome do interlocutor"
-                className="w-20 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 sm:w-28"
-                placeholder="Interlocutor"
-              />
-            </label>
+            <button
+              onClick={() => setAuthOpen(true)}
+              title={user.email}
+              aria-label="Sua conta"
+              className="tap flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] py-0 pl-1 pr-3 text-sm text-foreground/90 transition hover:border-cyan-300/40 hover:text-cyan-200"
+            >
+              <span className="grid size-7 place-items-center rounded-full bg-cyan-300/15 text-[11px] font-semibold text-cyan-200">
+                {accountInitial(user.email)}
+              </span>
+              <span className="max-w-[8rem] truncate">{accountName(user.email)}</span>
+            </button>
             <div
               className="flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[11px] text-muted-foreground"
               title={`Backend ${backendValue}`}
@@ -376,18 +389,6 @@ export default function HomePage() {
               {voiceOn ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
             </button>
             <button
-              onClick={() => setAuthOpen(true)}
-              aria-label={user ? "Sua conta" : "Entrar"}
-              title={user ? user.email : "Entrar"}
-              className={`tap grid size-9 place-items-center rounded-full border transition ${
-                user
-                  ? "border-cyan-300/50 bg-cyan-300/10 text-cyan-200"
-                  : "border-white/10 bg-white/[0.03] text-muted-foreground hover:border-cyan-300/40 hover:text-cyan-200"
-              }`}
-            >
-              <UserRound className="size-4" />
-            </button>
-            <button
               onClick={() => openSettings()}
               aria-label="Configuração"
               title="Configuração"
@@ -401,14 +402,14 @@ export default function HomePage() {
         {/* Nudge a signed-in user to add their OpenRouter key, without which
             F.E.A.R. can't reply. Disappears the moment the key is saved. */}
         {!user.has_openrouter_key && (
-          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] px-3.5 py-2.5 text-[13px] text-amber-200/90">
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-cyan-300/25 bg-cyan-300/[0.06] px-3.5 py-2.5 text-[13px] text-cyan-100/90">
             <span className="flex items-center gap-2">
-              <KeyRound className="size-4 shrink-0" />
+              <KeyRound className="size-4 shrink-0 text-cyan-300" />
               Cole sua chave do OpenRouter pra F.E.A.R. responder.
             </span>
             <button
               onClick={() => setAuthOpen(true)}
-              className="tap shrink-0 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-1.5 text-xs font-medium text-amber-100 hover:bg-amber-300/20"
+              className="tap shrink-0 rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 hover:bg-cyan-300/20"
             >
               Adicionar chave
             </button>
@@ -566,8 +567,9 @@ export default function HomePage() {
               <div className="space-y-0.5">
                 <SystemRow
                   icon={<Cpu className="size-3.5 text-cyan-200" />}
-                  label="OpenRouter"
-                  {...flag(systemStatus?.openrouter, "configurado")}
+                  label="Sua chave"
+                  value={keyStatusLabel(user.has_openrouter_key)}
+                  tone={user.has_openrouter_key ? "ok" : "muted"}
                 />
                 <SystemRow
                   icon={<Database className="size-3.5 text-violet-200" />}

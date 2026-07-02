@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, forwardRef, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, KeyRound, Loader2, LogOut, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 
@@ -9,14 +9,17 @@ import { fade, springSoft } from "@/lib/motion";
 
 type Mode = "login" | "register";
 
-function Field(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm outline-none transition placeholder:text-muted-foreground/50 focus:border-cyan-300/40 focus:bg-white/[0.05]"
-    />
-  );
-}
+const Field = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  function Field(props, ref) {
+    return (
+      <input
+        ref={ref}
+        {...props}
+        className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm outline-none transition placeholder:text-muted-foreground/50 focus:border-cyan-300/40 focus:bg-white/[0.05]"
+      />
+    );
+  },
+);
 
 export function AuthPanel({
   open,
@@ -47,6 +50,7 @@ export function AuthPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedKey, setSavedKey] = useState(false);
+  const keyInputRef = useRef<HTMLInputElement>(null);
 
   // Clear transient state when the panel opens/closes or the account flips.
   useEffect(() => {
@@ -55,6 +59,15 @@ export function AuthPanel({
     setInvite("");
     setApiKey("");
     setSavedKey(false);
+  }, [open, user]);
+
+  // When the panel opens for a signed-in user who still has no key, drop focus
+  // straight into the key field (the post-signup nudge lands here).
+  useEffect(() => {
+    if (open && user && !user.has_openrouter_key) {
+      const timer = setTimeout(() => keyInputRef.current?.focus(), 120);
+      return () => clearTimeout(timer);
+    }
   }, [open, user]);
 
   useEffect(() => {
@@ -178,6 +191,7 @@ export function AuthPanel({
                       Sua chave do OpenRouter
                     </span>
                     <Field
+                      ref={keyInputRef}
                       type="password"
                       value={apiKey}
                       onChange={(event) => setApiKey(event.target.value)}
