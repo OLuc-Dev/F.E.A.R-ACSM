@@ -8,7 +8,8 @@ from fastapi.testclient import TestClient
 
 from fear.auth import Security, TokenError, UserStore, hash_password, verify_password
 from fear.config import Settings
-from fear.web.app import app, get_security, get_settings, get_user_store
+from fear.web.app import app, get_rate_limiter, get_security, get_settings, get_user_store
+from fear.web.ratelimit import RateLimiter
 
 SECRET = "test-secret-key-please-change"
 
@@ -28,6 +29,7 @@ def client(store: UserStore) -> Iterator[TestClient]:
     security = Security(SECRET)
     app.dependency_overrides[get_user_store] = lambda: store
     app.dependency_overrides[get_security] = lambda: security
+    app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter()
     app.dependency_overrides[get_settings] = lambda: Settings(secret_key=SECRET)
     try:
         yield TestClient(app)
@@ -141,12 +143,15 @@ async def test_user_from_token_resolves_and_rejects(store: UserStore) -> None:
     security = Security(SECRET)
     settings = Settings(secret_key=SECRET)
     user = store.create_user("ws@example.com", "longenough")
-    token = security.make_session_token(user.id)
+    token = security.make_session_token(f"{user.id}:{user.token_version}")
 
     resolved = await _user_from_token(token, store, security, settings)
     assert resolved is not None and resolved.id == user.id
     assert await _user_from_token("", store, security, settings) is None
     assert await _user_from_token("garbage", store, security, settings) is None
+    # A token whose version no longer matches the stored one is rejected (revoked).
+    stale = security.make_session_token(f"{user.id}:{user.token_version + 1}")
+    assert await _user_from_token(stale, store, security, settings) is None
 
 
 def test_set_openrouter_key_is_stored_encrypted(client: TestClient, store: UserStore) -> None:

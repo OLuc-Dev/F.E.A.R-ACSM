@@ -44,8 +44,8 @@ export function useAuth() {
     setUser(result.user);
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string) => {
-    const result = await registerRequest(email, password);
+  const signUp = useCallback(async (email: string, password: string, inviteCode = "") => {
+    const result = await registerRequest(email, password, inviteCode);
     setToken(result.token);
     setUser(result.user);
   }, []);

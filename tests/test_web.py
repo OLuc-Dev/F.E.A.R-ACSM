@@ -15,6 +15,7 @@ from fear.web.app import (
     app,
     get_brain,
     get_memory,
+    get_rate_limiter,
     get_reference_library,
     get_security,
     get_settings,
@@ -22,6 +23,7 @@ from fear.web.app import (
     get_user_store,
     resolve_secret_key,
 )
+from fear.web.ratelimit import RateLimiter
 
 PERSONA_MODES = ["equilibrio", "sombrio", "cirurgico"]
 
@@ -128,8 +130,10 @@ def client(brain: FakeBrain, library: FakeReferenceLibrary, tmp_path: Path) -> I
     app.dependency_overrides[get_memory] = FakeMemory
     app.dependency_overrides[get_tts] = FakeTTS
     app.dependency_overrides[get_reference_library] = lambda: library
+    rate_limiter = RateLimiter()  # fresh per test, so buckets don't leak across tests
     app.dependency_overrides[get_user_store] = lambda: user_store
     app.dependency_overrides[get_security] = lambda: security
+    app.dependency_overrides[get_rate_limiter] = lambda: rate_limiter
     app.dependency_overrides[get_settings] = lambda: Settings(
         openrouter_api_key="", openrouter_chat_model="", chroma_path=str(tmp_path / "chroma")
     )
@@ -281,6 +285,41 @@ def test_ws_rejects_without_auth_handshake(
         for attr in ("user_store", "security", "settings", "brain"):
             if hasattr(app.state, attr):
                 delattr(app.state, attr)
+
+
+# --- item 5: auth hardening ---
+
+
+def test_login_is_rate_limited(client: TestClient) -> None:
+    # The limiter (default 10/window) triggers before credential checks, so the
+    # 11th attempt from the same client is refused with 429.
+    statuses = [
+        client.post(
+            "/auth/login", json={"email": "x@example.com", "password": "whatever"}
+        ).status_code
+        for _ in range(11)
+    ]
+    assert statuses[0] == 401  # wrong creds, but allowed through
+    assert statuses[-1] == 429  # rate limited
+
+
+def test_logout_all_revokes_existing_sessions(client: TestClient) -> None:
+    _, headers = _register(client, email="revoke@example.com")
+    assert client.get("/auth/me", headers=headers).status_code == 200
+
+    out = client.post("/auth/logout-all", headers=headers)
+    assert out.status_code == 200 and out.json() == {"logged_out": True}
+
+    # The token minted before the bump is now revoked.
+    assert client.get("/auth/me", headers=headers).status_code == 401
+
+
+def test_register_requires_invite_when_configured(client: TestClient) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(invite_code="LETMEIN")
+    base = {"email": "invited@example.com", "password": "longenough"}
+    assert client.post("/auth/register", json=base).status_code == 403
+    assert client.post("/auth/register", json={**base, "invite_code": "nope"}).status_code == 403
+    assert client.post("/auth/register", json={**base, "invite_code": "LETMEIN"}).status_code == 200
 
 
 def test_conversation_reset(client: TestClient, brain: FakeBrain) -> None:

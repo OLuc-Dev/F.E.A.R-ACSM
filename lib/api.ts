@@ -217,8 +217,12 @@ export interface AuthResponse {
   user: AuthUser;
 }
 
-export async function register(email: string, password: string): Promise<AuthResponse> {
-  const response = await postJson("/auth/register", { email, password });
+export async function register(email: string, password: string, inviteCode = ""): Promise<AuthResponse> {
+  const response = await postJson("/auth/register", {
+    email,
+    password,
+    invite_code: inviteCode,
+  });
   return (await response.json()) as AuthResponse;
 }
 

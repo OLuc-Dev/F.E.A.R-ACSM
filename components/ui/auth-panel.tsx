@@ -32,7 +32,7 @@ export function AuthPanel({
   onClose: () => void;
   user: AuthUser | null;
   onSignIn: (email: string, password: string) => Promise<void>;
-  onSignUp: (email: string, password: string) => Promise<void>;
+  onSignUp: (email: string, password: string, inviteCode?: string) => Promise<void>;
   onSignOut: () => void;
   onSaveKey: (apiKey: string) => Promise<void>;
   // When true the panel is a login gate: it can't be dismissed (no backdrop
@@ -42,6 +42,7 @@ export function AuthPanel({
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [invite, setInvite] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +52,7 @@ export function AuthPanel({
   useEffect(() => {
     setError(null);
     setPassword("");
+    setInvite("");
     setApiKey("");
     setSavedKey(false);
   }, [open, user]);
@@ -69,7 +71,7 @@ export function AuthPanel({
     setError(null);
     try {
       if (mode === "login") await onSignIn(email.trim(), password);
-      else await onSignUp(email.trim(), password);
+      else await onSignUp(email.trim(), password, invite.trim());
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Não consegui autenticar.");
     } finally {
@@ -257,6 +259,14 @@ export function AuthPanel({
                       autoComplete={mode === "register" ? "new-password" : "current-password"}
                       required
                     />
+                    {mode === "register" && (
+                      <Field
+                        value={invite}
+                        onChange={(event) => setInvite(event.target.value)}
+                        placeholder="código de convite (se houver)"
+                        autoComplete="off"
+                      />
+                    )}
                     <button
                       type="submit"
                       disabled={busy || !email.trim() || !password}

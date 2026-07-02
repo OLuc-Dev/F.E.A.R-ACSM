@@ -20,6 +20,8 @@ class User:
     chat_model: str = ""
     persona_mode: str = ""
     has_openrouter_key: bool = False
+    # Bumped to revoke every existing session for this user (logout-everywhere).
+    token_version: int = 1
 
 
 class EmailTaken(Exception):
@@ -57,10 +59,17 @@ class UserStore:
                     openrouter_key TEXT NOT NULL DEFAULT '',
                     chat_model TEXT NOT NULL DEFAULT '',
                     persona_mode TEXT NOT NULL DEFAULT '',
-                    created_at REAL NOT NULL
+                    created_at REAL NOT NULL,
+                    token_version INTEGER NOT NULL DEFAULT 1
                 )
                 """
             )
+            # Migrate databases created before token_version existed (additive).
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(users)")}
+            if "token_version" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1"
+                )
             self._conn.commit()
 
     def create_user(self, email: str, password: str) -> User:
@@ -147,6 +156,14 @@ class UserStore:
             self._conn.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = ?", values)
             self._conn.commit()
 
+    def bump_token_version(self, user_id: str) -> None:
+        """Invalidate every existing session for a user (logout-everywhere)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET token_version = token_version + 1 WHERE id = ?", (user_id,)
+            )
+            self._conn.commit()
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
@@ -160,4 +177,5 @@ class UserStore:
             chat_model=row["chat_model"],
             persona_mode=row["persona_mode"],
             has_openrouter_key=bool(row["openrouter_key"]),
+            token_version=int(row["token_version"]),
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import secrets
@@ -28,6 +29,7 @@ from fear.logging_config import configure_logging
 from fear.memory.embedding import LocalEmbedding
 from fear.memory.personal_memory import PersonalMemory
 from fear.runtime_state import load_runtime_config
+from fear.web.ratelimit import RateLimiter
 
 if TYPE_CHECKING:
     from fear.audio.voice_listener import TranscriptEvent
@@ -126,6 +128,8 @@ class RegisterRequest(BaseModel):
 
     email: str
     password: str
+    # Only checked when the server sets FEAR_INVITE_CODE (closed registration).
+    invite_code: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -208,10 +212,19 @@ def get_security(request: Request) -> Security:
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
+def _session_token(security: Security, user: User) -> str:
+    """Mint a session token bound to the user's current token_version.
+
+    The payload is ``<user_id>:<token_version>``; bumping the stored version
+    (logout-everywhere) invalidates every token minted before it.
+    """
+    return security.make_session_token(f"{user.id}:{user.token_version}")
+
+
 async def _user_from_token(
     token: str, store: UserStore, security: Security, settings: Settings
 ) -> User | None:
-    """Resolve a session token to a user, or None if missing/invalid/expired.
+    """Resolve a session token to a user, or None if missing/invalid/expired/revoked.
 
     Shared by the HTTP dependency and the WebSocket handshake so both validate
     identically. Never logs the token.
@@ -219,10 +232,16 @@ async def _user_from_token(
     if not token:
         return None
     try:
-        user_id = security.read_session_token(token, settings.session_max_age_days * 86_400)
+        payload = security.read_session_token(token, settings.session_max_age_days * 86_400)
     except TokenError:
         return None
-    return await asyncio.to_thread(store.get_by_id, user_id)
+    user_id, separator, version = payload.partition(":")
+    if not separator:
+        return None  # malformed or a pre-versioning token
+    user = await asyncio.to_thread(store.get_by_id, user_id)
+    if user is None or str(user.token_version) != version:
+        return None  # user gone, or session revoked via token_version bump
+    return user
 
 
 async def get_current_user(
@@ -299,6 +318,19 @@ def resolve_secret_key(settings: Settings) -> str:
     return secrets.token_urlsafe(32)
 
 
+def get_rate_limiter(request: Request) -> RateLimiter:
+    return request.app.state.rate_limiter
+
+
+def _rate_limit(request: Request, limiter: RateLimiter, bucket: str) -> None:
+    """Throttle by client IP; raises 429 when the bucket's limit is exceeded."""
+    host = request.client.host if request.client else "unknown"
+    if not limiter.allow(f"{bucket}:{host}"):
+        raise HTTPException(
+            status_code=429, detail="Muitas tentativas. Tente de novo em instantes."
+        )
+
+
 def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibrary:
     """Guard endpoints that need the knowledge store, returning a clean 503 if absent."""
     if library is None:
@@ -372,6 +404,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # ephemeral (with a warning) only outside production.
     security = Security(resolve_secret_key(settings))
     user_store = await asyncio.to_thread(UserStore, path=settings.users_db_path, security=security)
+    # Throttles auth attempts per client IP (in-memory, single-process).
+    rate_limiter = RateLimiter(limit=10, window_seconds=60.0)
 
     application.state.settings = settings
     application.state.memory = memory
@@ -380,6 +414,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.calendar = calendar
     application.state.security = security
     application.state.user_store = user_store
+    application.state.rate_limiter = rate_limiter
     application.state.tts = NaturalTTS()
     application.state.brain = AsyncConversationalBrain(
         settings=settings,
@@ -503,10 +538,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 @app.post("/auth/register", response_model=AuthResponse)
 async def auth_register(
     payload: RegisterRequest,
+    request: Request,
     store: UserStore = Depends(get_user_store),
     security: Security = Depends(get_security),
+    settings: Settings = Depends(get_settings),
+    limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> AuthResponse:
     """Create an account and return a session token."""
+    _rate_limit(request, limiter, "register")
+    # Optional closed registration: when FEAR_INVITE_CODE is set, require it.
+    if settings.invite_code and not hmac.compare_digest(payload.invite_code, settings.invite_code):
+        raise HTTPException(status_code=403, detail="Convite inválido.")
     email = _normalize_email(payload.email)
     if len(payload.password) < 8:
         raise HTTPException(status_code=422, detail="A senha precisa de ao menos 8 caracteres.")
@@ -514,28 +556,41 @@ async def auth_register(
         user = await asyncio.to_thread(store.create_user, email, payload.password)
     except EmailTaken as exc:
         raise HTTPException(status_code=409, detail="Esse e-mail já está cadastrado.") from exc
-    return AuthResponse(token=security.make_session_token(user.id), user=_user_response(user))
+    return AuthResponse(token=_session_token(security, user), user=_user_response(user))
 
 
 @app.post("/auth/login", response_model=AuthResponse)
 async def auth_login(
     payload: LoginRequest,
+    request: Request,
     store: UserStore = Depends(get_user_store),
     security: Security = Depends(get_security),
+    limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> AuthResponse:
     """Exchange email + password for a session token."""
+    _rate_limit(request, limiter, "login")
     user = await asyncio.to_thread(
         store.verify_credentials, payload.email.strip().lower(), payload.password
     )
     if user is None:
         raise HTTPException(status_code=401, detail="E-mail ou senha incorretos.")
-    return AuthResponse(token=security.make_session_token(user.id), user=_user_response(user))
+    return AuthResponse(token=_session_token(security, user), user=_user_response(user))
 
 
 @app.get("/auth/me", response_model=UserResponse)
 async def auth_me(user: User = Depends(get_current_user)) -> UserResponse:
     """Return the authenticated user's account state."""
     return _user_response(user)
+
+
+@app.post("/auth/logout-all")
+async def auth_logout_all(
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+) -> dict[str, bool]:
+    """Revoke every session for this user by bumping their token version."""
+    await asyncio.to_thread(store.bump_token_version, user.id)
+    return {"logged_out": True}
 
 
 @app.post("/auth/openrouter-key", response_model=UserResponse)

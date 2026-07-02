@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     secret_key: str = Field("", validation_alias="FEAR_SECRET_KEY")
     users_db_path: str = Field("data/users.db", validation_alias="FEAR_USERS_DB")
     session_max_age_days: int = Field(30, validation_alias="FEAR_SESSION_MAX_AGE_DAYS", ge=1)
+    # When set, /auth/register requires this code (closed / invite-only signup).
+    invite_code: str = Field("", validation_alias="FEAR_INVITE_CODE")
 
     # OpenRouter is used through an OpenAI-compatible client interface.
     openrouter_api_key: str = Field("", validation_alias="OPENROUTER_API_KEY")
