@@ -559,10 +559,21 @@ export default function HomePage() {
           <div className="flex flex-col gap-4 lg:self-start">
             {/* 3D presence: desktop only. Gated on a client media query (not
                 just CSS) so the Three.js chunk never loads on mobile, where the
-                header orb already carries the state. */}
+                header orb already carries the state. Frameless — no panel — so
+                the core emanates into the column instead of sitting in a box. */}
             {isDesktop && (
-              <div className="panel relative overflow-hidden rounded-[1.4rem] lg:h-[44vh]">
-                <FearPresence status={status} pulse={memoryTick} />
+              <div className="relative lg:h-[44vh]">
+                {/* Amber floor: the core's light spilling past the frame into the
+                    deck, so the presence reads as energy, not a black rectangle. */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -inset-6 -bottom-10 blur-2xl [background:radial-gradient(55%_55%_at_50%_46%,hsl(var(--energy)/0.16),transparent_72%)]"
+                />
+                {/* Melt the hard rectangle with a radial mask so the canvas fades
+                    into the deck at its edges instead of ending on a seam. */}
+                <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] [-webkit-mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)] [mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)]">
+                  <FearPresence status={status} pulse={memoryTick} />
+                </div>
               </div>
             )}
 
