@@ -203,6 +203,7 @@ export default function HomePage() {
     voiceOn,
     toggleVoice,
     send,
+    retry,
     handleAppAction,
   } = useConversation();
 
@@ -512,6 +513,23 @@ export default function HomePage() {
 
             {/* Composer */}
             <form onSubmit={submitCommand} className="mt-3 shrink-0">
+              {/* Clear, recoverable error state — the question stays in the
+                  thread and one tap re-asks it. */}
+              {status === "error" && (
+                <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[13px] text-rose-100/90">
+                  <span className="flex items-center gap-2">
+                    <AlertTriangle className="size-4 shrink-0 text-rose-300" />
+                    Algo travou na última resposta.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={retry}
+                    className="tap inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/40 bg-rose-400/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-400/20"
+                  >
+                    <RotateCcw className="size-3.5" /> Tentar de novo
+                  </button>
+                </div>
+              )}
               <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/[0.05] focus-within:shadow-[0_0_0_4px_rgba(34,211,238,0.07)]">
                 <textarea
                   ref={composerRef}

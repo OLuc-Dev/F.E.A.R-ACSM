@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { captureVoiceOnce, resetConversation, sendCommand, streamCommand } from "@/lib/api";
+import { EMPTY_REPLY_NOTICE, TIMEOUT_NOTICE, humanizeError, isBlankMessage } from "@/lib/chat-helpers";
 import { primeSpeech, speak, stopSpeaking } from "@/lib/speech";
 
 export type Role = "user" | "fear" | "system";
@@ -35,6 +36,12 @@ export function useConversation() {
   // When on, F.E.A.R. speaks its replies aloud via the browser (Web Speech API).
   const [voiceOn, setVoiceOn] = useState(false);
   const voiceOnRef = useRef(false);
+  // Synchronous send lock. `isBusy` (state) only updates a render later, so a
+  // rapid double Enter / double click would both read it as false and send
+  // twice; a ref flips immediately and can't be raced.
+  const busyRef = useRef(false);
+  // The last thing the user asked, so "tentar de novo" can replay it verbatim.
+  const lastPromptRef = useRef<{ text: string; speaker: string } | null>(null);
 
   const nextId = useCallback(() => idRef.current++, []);
 
@@ -99,10 +106,27 @@ export function useConversation() {
     });
   }, []);
 
+  // Replace (not append) the last F.E.A.R. bubble — for the empty-reply and
+  // error notices, which stand in for a bubble that never filled.
+  const setLastFear = useCallback((content: string) => {
+    setMessages((prev) => {
+      const copy = prev.slice();
+      const last = copy[copy.length - 1];
+      if (last && last.role === "fear") copy[copy.length - 1] = { ...last, content };
+      return copy;
+    });
+  }, []);
+
   const send = useCallback(
     async (text: string, speaker: string) => {
       const trimmed = text.trim();
-      if (!trimmed || isBusy) return;
+      // Guard on a ref, not `isBusy`: state updates a render late, so two fast
+      // Enters would both see false and double-send. A ref flips synchronously.
+      if (isBlankMessage(trimmed) || busyRef.current) return;
+      busyRef.current = true;
+
+      const who = speaker || "user";
+      lastPromptRef.current = { text: trimmed, speaker: who };
 
       // The user just acted — re-engage following so they see their message + reply.
       followingRef.current = true;
@@ -115,41 +139,75 @@ export function useConversation() {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // Inactivity watchdog: if no token arrives (dead backend) or the stream
+      // stalls mid-reply, abort so the UI never hangs on "thinking" forever.
+      let timedOut = false;
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      const arm = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, 60_000);
+      };
+      arm();
+
       stopSpeaking();
+      let full = "";
       try {
-        let started = false;
-        let full = "";
         await streamCommand(
-          { text: trimmed, speaker: speaker || "user" },
+          { text: trimmed, speaker: who },
           (chunk) => {
-            if (!started) {
-              setStatus("speaking");
-              started = true;
-            }
+            arm(); // a token arrived — reset the stall timer
+            if (!full) setStatus("speaking");
             full += chunk;
             appendToLastFear(chunk);
           },
           controller.signal,
         );
+        clearTimeout(watchdog);
+        // Call succeeded but nothing came back — don't strand the typing dots.
+        if (!full.trim()) {
+          setLastFear(EMPTY_REPLY_NOTICE);
+          setStatus("online");
+          return;
+        }
         setStatus("online");
         // A fresh exchange just landed in memory — flare the presence.
         setMemoryTick((tick) => tick + 1);
         // Speak the finished reply if the voice is on.
         if (voiceOnRef.current) speak(full);
       } catch (error) {
-        if (controller.signal.aborted) return;
-        appendToLastFear(error instanceof Error ? `Erro: ${error.message}` : "Falha ao falar com o backend.");
+        clearTimeout(watchdog);
+        // A silent abort (unmount / navigation) — leave the thread untouched.
+        if (controller.signal.aborted && !timedOut) return;
+        const notice = timedOut ? TIMEOUT_NOTICE : humanizeError(error);
+        // Keep any partial reply, then add the notice beneath it.
+        setLastFear(full ? `${full}\n\n${notice}` : notice);
         setStatus("error");
       } finally {
+        clearTimeout(watchdog);
+        busyRef.current = false;
         setIsBusy(false);
       }
     },
-    [isBusy, pushMessage, appendToLastFear],
+    [pushMessage, appendToLastFear, setLastFear],
   );
+
+  // Replay the last question. It re-asks as a new turn (keeps the history of
+  // what happened) rather than surgically rewinding the thread.
+  const retry = useCallback(() => {
+    const last = lastPromptRef.current;
+    if (last && !busyRef.current) void send(last.text, last.speaker);
+  }, [send]);
 
   const handleAppAction = useCallback(
     async (appId: string, speaker: string) => {
+      // Ignore dock taps while F.E.A.R. is mid-answer: a stray action can't
+      // interleave with a live stream or wipe the thread from under it.
+      if (busyRef.current) return;
       const who = speaker || "user";
+      busyRef.current = true;
       try {
         if (appId === "spotify") {
           setStatus("thinking");
@@ -166,12 +224,15 @@ export function useConversation() {
           setMessages([
             { id: nextId(), role: "system", content: "Conversa reiniciada. Memória pessoal mantida." },
           ]);
+          setStatus("online");
         } else if (appId === "obsidian") {
           pushMessage("system", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
         }
       } catch {
         setStatus("error");
         pushMessage("system", "Não consegui falar com o backend local.");
+      } finally {
+        busyRef.current = false;
       }
     },
     [nextId, pushMessage],
@@ -189,6 +250,7 @@ export function useConversation() {
     voiceOn,
     toggleVoice,
     send,
+    retry,
     handleAppAction,
   };
 }
