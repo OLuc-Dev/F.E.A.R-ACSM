@@ -4,25 +4,27 @@
 
 @layer base {
   :root {
-    --background: 222 47% 4%;
-    --foreground: 210 40% 98%;
-    --card: 222 44% 6%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 4%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 188 95% 55%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 62%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 215 28% 14%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 188 95% 55%;
+    /* Premium cold dark palette — near-black neutral surfaces, a single cool
+       accent, quiet borders. Light theme intentionally deferred to its own lote. */
+    --background: 240 7% 3%; /* #050506 */
+    --foreground: 240 20% 96%; /* #f5f5f7 */
+    --card: 240 6% 7%; /* #111113 */
+    --card-foreground: 240 20% 96%;
+    --popover: 240 7% 5%;
+    --popover-foreground: 240 20% 96%;
+    --primary: 199 90% 60%; /* cool cyan/blue accent */
+    --primary-foreground: 240 12% 6%;
+    --secondary: 240 5% 13%;
+    --secondary-foreground: 240 20% 96%;
+    --muted: 240 5% 13%;
+    --muted-foreground: 240 5% 65%; /* #a1a1a6 */
+    --accent: 240 5% 13%;
+    --accent-foreground: 240 20% 96%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 240 20% 98%;
+    --border: 240 6% 15%;
+    --input: 240 6% 15%;
+    --ring: 199 90% 62%;
     --radius: 1rem;
 
     /* Signal language — one vocabulary across the whole console.
@@ -40,28 +42,23 @@
   body {
     @apply min-h-screen bg-background text-foreground antialiased;
     font-family:
-      ui-sans-serif,
-      system-ui,
-      -apple-system,
-      "Segoe UI",
-      Inter,
-      Roboto,
-      "Helvetica Neue",
-      Arial,
-      sans-serif;
+      -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", Inter, system-ui, "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
   ::selection {
-    background: hsl(188 95% 55% / 0.28);
-    color: hsl(210 40% 98%);
+    background: hsl(var(--primary) / 0.26);
+    color: hsl(var(--foreground));
   }
 
   /* Clean, consistent keyboard focus (mouse clicks stay quiet). */
   button:focus-visible,
   a:focus-visible,
   [role="button"]:focus-visible {
-    outline: 2px solid hsl(188 95% 55% / 0.6);
+    outline: 2px solid hsl(var(--primary) / 0.6);
     outline-offset: 2px;
   }
 }
@@ -94,16 +91,17 @@
     background: transparent;
   }
 
-  /* Glass panel surface used across the console. The saturate() is the macOS
-     "vibrancy" trick: colour from the backdrop bleeds through richer. */
+  /* Quiet premium surface: a near-flat panel with a hairline border and a very
+     soft shadow. No saturate() — the old "vibrancy" read as neon; this reads as
+     calm glass/metal. */
   .panel {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.014) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.03) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow:
-      0 24px 60px -28px rgba(0, 0, 0, 0.85),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
-    -webkit-backdrop-filter: blur(20px) saturate(165%);
-    backdrop-filter: blur(20px) saturate(165%);
+      0 22px 50px -34px rgba(0, 0, 0, 0.8),
+      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
   }
 
   .label-tn {
