@@ -254,8 +254,11 @@ useGLTF.preload(MODEL_URL);
 
 export function FearPresence({ status = "online", pulse = 0 }: { status?: PresenceStatus; pulse?: number }) {
   return (
-    <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true }}>
-      <color attach="background" args={["#080502"]} />
+    <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }}>
+      {/* No opaque background: the canvas is transparent so the deck and the
+          amber floor-glow show through, and the core reads as emanating into the
+          column instead of sitting in a black box. Fog still adds warm depth to
+          the geometry itself. */}
       <fog attach="fog" args={["#080502", 8, 17]} />
 
       <hemisphereLight args={["#ffd9a0", "#180d05", 0.55]} />

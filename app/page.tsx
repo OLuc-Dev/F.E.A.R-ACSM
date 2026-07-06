@@ -67,12 +67,15 @@ const STATUS_LABEL: Record<Status, string> = {
   error: "atenção",
 };
 
-// Idle/listening = cyan; speaking = white/cyan; thinking = controlled red; error = strong red.
+// One signal vocabulary: cyan = ready/working, amber = F.E.A.R.'s energy (it is
+// speaking), rose = error. Amber only ever appears when F.E.A.R. is the source,
+// which is also how the header orb carries the presence on mobile (where the 3D
+// core is hidden). Mirrors the 3D core, which flares amber while speaking.
 const STATUS_ORB: Record<Status, string> = {
   online: "bg-cyan-400 shadow-[0_0_14px_3px_rgba(34,211,238,0.45)]",
   listening: "bg-sky-300 shadow-[0_0_16px_4px_rgba(56,189,248,0.5)] animate-pulse",
-  thinking: "bg-rose-400/70 shadow-[0_0_14px_3px_rgba(251,113,133,0.4)] animate-pulse",
-  speaking: "bg-white shadow-[0_0_20px_6px_rgba(186,230,253,0.7)] animate-pulse",
+  thinking: "bg-cyan-300 shadow-[0_0_14px_3px_rgba(34,211,238,0.45)] animate-pulse",
+  speaking: "bg-amber-300 shadow-[0_0_20px_6px_hsl(var(--energy)/0.6)] animate-pulse",
   error: "bg-rose-500 shadow-[0_0_18px_5px_rgba(244,63,94,0.7)]",
 };
 
@@ -175,6 +178,7 @@ export default function HomePage() {
   const [authOpen, setAuthOpen] = useState(false);
   const [promptedKey, setPromptedKey] = useState(false);
   const [sysOpen, setSysOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
 
@@ -199,6 +203,7 @@ export default function HomePage() {
     voiceOn,
     toggleVoice,
     send,
+    retry,
     handleAppAction,
   } = useConversation();
 
@@ -211,6 +216,17 @@ export default function HomePage() {
   useEffect(() => {
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
     if (!isMac) setModKey("Ctrl");
+  }, []);
+
+  // Only mount the 3D presence on real desktop widths (Tailwind's lg). CSS
+  // `hidden` alone would still mount <FearPresence>, loading the Three.js chunk
+  // and preloading the model on mobile — so we gate the render itself.
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
   }, []);
 
   // macOS-style shortcuts: ⌘K focuses the composer, ⌘, toggles settings.
@@ -269,10 +285,10 @@ export default function HomePage() {
   const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
   const backendDot =
     backendTone === "ok"
-      ? "bg-emerald-400 shadow-[0_0_8px_2px_rgba(52,211,153,0.5)]"
+      ? "bg-cyan-300 shadow-[0_0_8px_2px_rgba(34,211,238,0.5)]"
       : backendTone === "off"
         ? "bg-rose-400"
-        : "bg-amber-300/70";
+        : "bg-white/25";
   // The greeting is the only message until the first exchange; show the welcome hero instead.
   const showWelcome = messages.length === 1 && messages[0].id === 0;
 
@@ -337,7 +353,7 @@ export default function HomePage() {
       ...flag(systemStatus?.obsidian, "ok"),
     },
     {
-      icon: <CalendarDays className="size-3.5 text-amber-200" />,
+      icon: <CalendarDays className="size-3.5 text-slate-200" />,
       label: "Agenda",
       ...flag(systemStatus?.calendar, "ok"),
     },
@@ -380,7 +396,7 @@ export default function HomePage() {
                 <WifiOff className="size-3.5 text-rose-400" />
               ) : (
                 <Wifi
-                  className={`size-3.5 ${backendTone === "ok" ? "text-cyan-300" : "text-amber-300/80"}`}
+                  className={`size-3.5 ${backendTone === "ok" ? "text-cyan-300" : "text-muted-foreground"}`}
                 />
               )}
               <span className="hidden sm:inline">{backendValue}</span>
@@ -497,6 +513,23 @@ export default function HomePage() {
 
             {/* Composer */}
             <form onSubmit={submitCommand} className="mt-3 shrink-0">
+              {/* Clear, recoverable error state — the question stays in the
+                  thread and one tap re-asks it. */}
+              {status === "error" && (
+                <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[13px] text-rose-100/90">
+                  <span className="flex items-center gap-2">
+                    <AlertTriangle className="size-4 shrink-0 text-rose-300" />
+                    Algo travou na última resposta.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={retry}
+                    className="tap inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/40 bg-rose-400/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-400/20"
+                  >
+                    <RotateCcw className="size-3.5" /> Tentar de novo
+                  </button>
+                </div>
+              )}
               <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/[0.05] focus-within:shadow-[0_0_0_4px_rgba(34,211,238,0.07)]">
                 <textarea
                   ref={composerRef}
@@ -542,11 +575,25 @@ export default function HomePage() {
           {/* Presence + system — the sidebar. Conversation is the focus, so this
               column stays top-aligned and calmer than before. */}
           <div className="flex flex-col gap-4 lg:self-start">
-            {/* 3D presence: desktop only. On mobile the header orb carries the
-                state, so the panel never crowds out the conversation. */}
-            <div className="panel relative hidden overflow-hidden rounded-[1.4rem] lg:block lg:h-[44vh]">
-              <FearPresence status={status} pulse={memoryTick} />
-            </div>
+            {/* 3D presence: desktop only. Gated on a client media query (not
+                just CSS) so the Three.js chunk never loads on mobile, where the
+                header orb already carries the state. Frameless — no panel — so
+                the core emanates into the column instead of sitting in a box. */}
+            {isDesktop && (
+              <div className="relative lg:h-[44vh]">
+                {/* Amber floor: the core's light spilling past the frame into the
+                    deck, so the presence reads as energy, not a black rectangle. */}
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute -inset-6 -bottom-10 blur-2xl [background:radial-gradient(55%_55%_at_50%_46%,hsl(var(--energy)/0.16),transparent_72%)]"
+                />
+                {/* Melt the hard rectangle with a radial mask so the canvas fades
+                    into the deck at its edges instead of ending on a seam. */}
+                <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] [-webkit-mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)] [mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)]">
+                  <FearPresence status={status} pulse={memoryTick} />
+                </div>
+              </div>
+            )}
 
             {/* System: compact 2-column readout. Collapsible on mobile, always
                 open on desktop. */}
