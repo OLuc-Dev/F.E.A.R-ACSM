@@ -47,6 +47,12 @@ const config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        // Theme-aware channels. `overlay` flips white↔black between themes so a
+        // single var re-tones every glass surface; `brand` is the accent and
+        // `danger` the error colour, both with Tailwind /alpha support.
+        overlay: "rgb(var(--overlay-rgb) / <alpha-value>)",
+        brand: "rgb(var(--brand-rgb) / <alpha-value>)",
+        danger: "rgb(var(--danger-rgb) / <alpha-value>)",
       },
       borderRadius: {
         lg: "var(--radius)",
