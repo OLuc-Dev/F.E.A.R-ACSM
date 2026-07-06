@@ -72,11 +72,11 @@ const STATUS_LABEL: Record<Status, string> = {
 // which is also how the header orb carries the presence on mobile (where the 3D
 // core is hidden). Mirrors the 3D core, which flares amber while speaking.
 const STATUS_ORB: Record<Status, string> = {
-  online: "bg-cyan-400 shadow-[0_0_14px_3px_rgba(34,211,238,0.45)]",
-  listening: "bg-sky-300 shadow-[0_0_16px_4px_rgba(56,189,248,0.5)] animate-pulse",
-  thinking: "bg-cyan-300 shadow-[0_0_14px_3px_rgba(34,211,238,0.45)] animate-pulse",
-  speaking: "bg-amber-300 shadow-[0_0_20px_6px_hsl(var(--energy)/0.6)] animate-pulse",
-  error: "bg-rose-500 shadow-[0_0_18px_5px_rgba(244,63,94,0.7)]",
+  online: "bg-cyan-400/90 shadow-[0_0_8px_1px_rgba(34,211,238,0.3)]",
+  listening: "bg-sky-300 shadow-[0_0_10px_2px_rgba(56,189,248,0.32)] animate-pulse",
+  thinking: "bg-cyan-300 shadow-[0_0_9px_2px_rgba(34,211,238,0.3)] animate-pulse",
+  speaking: "bg-amber-300 shadow-[0_0_12px_3px_hsl(var(--energy)/0.4)] animate-pulse",
+  error: "bg-rose-500 shadow-[0_0_10px_2px_rgba(244,63,94,0.45)]",
 };
 
 // Strategic openers that show off the council; clicking one sends it immediately.
@@ -99,11 +99,9 @@ function Backdrop() {
   return (
     <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
       <div className="absolute inset-0 bg-background" />
-      <div className="bg-grid absolute inset-0 opacity-70" />
-      <div className="absolute -left-44 -top-44 h-[34rem] w-[34rem] rounded-full bg-cyan-500/10 blur-[120px]" />
-      <div className="absolute -right-40 top-4 h-[30rem] w-[30rem] rounded-full bg-violet-600/10 blur-[130px]" />
-      <div className="absolute -bottom-40 left-1/3 h-[26rem] w-[26rem] rounded-full bg-rose-600/[0.07] blur-[130px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_55%,rgba(0,0,0,0.6))]" />
+      {/* A single, very quiet cool glow at the top — no grid, no neon blobs.
+          Silence over noise. */}
+      <div className="absolute inset-x-0 top-0 h-[55vh] bg-[radial-gradient(60%_50%_at_50%_-10%,hsl(var(--primary)/0.07),transparent_70%)]" />
     </div>
   );
 }
@@ -124,29 +122,25 @@ function flag(on: boolean | undefined, onLabel: string): { value: string; tone: 
 
 function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; busy: boolean }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4 text-center">
-      <div className="relative grid size-24 place-items-center">
-        <div className="absolute inset-0 rounded-full bg-cyan-400/10 blur-2xl" />
-        <motion.div
-          className="absolute inset-0 rounded-full border border-dashed border-cyan-300/25"
-          animate={{ rotate: 360 }}
-          transition={{ duration: 30, repeat: Infinity, ease: "linear" }}
-        />
-        <div className="absolute inset-3 rounded-full border border-white/10" />
+    <div className="flex flex-1 flex-col items-center justify-center px-4 py-10 text-center">
+      {/* A calm mark — one soft ring, one quiet point. No rotating neon. */}
+      <div className="relative grid size-14 place-items-center">
+        <div className="absolute inset-0 rounded-full border border-white/10" />
         <motion.span
-          className="size-3 rounded-full bg-cyan-300 shadow-[0_0_22px_5px_rgba(34,211,238,0.75)]"
-          animate={{ opacity: [0.55, 1, 0.55] }}
-          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+          className="size-2 rounded-full bg-cyan-300/90 shadow-[0_0_10px_2px_rgba(34,211,238,0.32)]"
+          animate={{ opacity: [0.6, 1, 0.6] }}
+          transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
         />
       </div>
 
-      <h2 className="mt-7 text-xl font-medium tracking-[-0.01em] text-foreground">Presença ativa.</h2>
-      <p className="mt-2 max-w-sm text-pretty text-sm leading-6 text-muted-foreground">
-        Diga o próximo movimento. Eu encontro as rachaduras antes que elas te encontrem.
+      <h2 className="mt-8 text-4xl font-semibold tracking-[-0.03em] text-foreground sm:text-5xl">F.E.A.R.</h2>
+      <p className="mt-3 text-[15px] font-medium tracking-tight text-foreground/80">
+        Precisão em tempo real.
       </p>
+      <p className="mt-1 text-sm text-muted-foreground">Pergunte. Analise. Decida.</p>
 
       <motion.div
-        className="mt-8 grid w-full max-w-md gap-2 sm:grid-cols-2"
+        className="mt-9 grid w-full max-w-lg gap-2 sm:grid-cols-2"
         variants={chipsContainer}
         initial="hidden"
         animate="show"
@@ -158,9 +152,9 @@ function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; bus
             variants={chipItem}
             onClick={() => onPick(suggestion.text)}
             disabled={busy}
-            className="tap group flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.025] px-3.5 py-2.5 text-left text-[13px] leading-5 text-foreground/80 hover:border-cyan-300/30 hover:bg-cyan-300/[0.06] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            className="tap group flex items-center gap-2.5 rounded-xl border border-white/[0.08] bg-white/[0.02] px-3.5 py-2.5 text-left text-[13px] leading-5 text-muted-foreground transition hover:border-white/15 hover:bg-white/[0.04] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="text-cyan-300/70 transition group-hover:text-cyan-300">{suggestion.icon}</span>
+            <span className="text-cyan-300/60 transition group-hover:text-cyan-300">{suggestion.icon}</span>
             <span>{suggestion.text}</span>
           </motion.button>
         ))}
@@ -381,12 +375,12 @@ export default function HomePage() {
               onClick={() => setAuthOpen(true)}
               title={user.email}
               aria-label="Sua conta"
-              className="tap flex h-9 items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] py-0 pl-1 pr-3 text-sm text-foreground/90 transition hover:border-cyan-300/40 hover:text-cyan-200"
+              className="tap flex h-9 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] py-0 pl-1 pr-1 text-sm text-foreground/90 transition hover:border-white/15 hover:bg-white/[0.05] sm:pr-3"
             >
               <span className="grid size-7 place-items-center rounded-full bg-cyan-300/15 text-[11px] font-semibold text-cyan-200">
                 {accountInitial(user.email)}
               </span>
-              <span className="max-w-[8rem] truncate">{accountName(user.email)}</span>
+              <span className="hidden max-w-[8rem] truncate sm:inline">{accountName(user.email)}</span>
             </button>
             <div
               className="flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[11px] text-muted-foreground"
@@ -409,7 +403,7 @@ export default function HomePage() {
               className={`tap grid size-9 place-items-center rounded-full border transition ${
                 voiceOn
                   ? "border-cyan-300/50 bg-cyan-300/10 text-cyan-200"
-                  : "border-white/10 bg-white/[0.03] text-muted-foreground hover:border-cyan-300/40 hover:text-cyan-200"
+                  : "border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:border-white/15 hover:text-foreground"
               }`}
             >
               {voiceOn ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
@@ -418,7 +412,7 @@ export default function HomePage() {
               onClick={() => openSettings()}
               aria-label="Configuração"
               title="Configuração"
-              className="tap grid size-9 place-items-center rounded-full border border-white/10 bg-white/[0.03] text-muted-foreground hover:border-cyan-300/40 hover:text-cyan-200"
+              className="tap grid size-9 place-items-center rounded-full border border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:border-white/15 hover:text-foreground"
             >
               <Settings className="size-4" />
             </button>
@@ -519,7 +513,7 @@ export default function HomePage() {
                 <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[13px] text-rose-100/90">
                   <span className="flex items-center gap-2">
                     <AlertTriangle className="size-4 shrink-0 text-rose-300" />
-                    Algo travou na última resposta.
+                    Não consegui concluir.
                   </span>
                   <button
                     type="button"
@@ -530,7 +524,7 @@ export default function HomePage() {
                   </button>
                 </div>
               )}
-              <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/[0.05] focus-within:shadow-[0_0_0_4px_rgba(34,211,238,0.07)]">
+              <div className="flex items-end gap-2 rounded-2xl border border-white/[0.09] bg-white/[0.03] p-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/[0.04] focus-within:shadow-[0_0_0_4px_hsl(var(--primary)/0.08)]">
                 <textarea
                   ref={composerRef}
                   value={text}
@@ -549,8 +543,8 @@ export default function HomePage() {
                   }}
                   rows={1}
                   aria-label="Mensagem para a F.E.A.R."
-                  className="max-h-36 min-h-[2.5rem] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm leading-6 outline-none placeholder:text-muted-foreground/55"
-                  placeholder="Traga a ideia. Eu encontro as rachaduras."
+                  className="max-h-36 min-h-[2.75rem] flex-1 resize-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/50"
+                  placeholder="Comece com uma pergunta."
                 />
                 <button
                   type="submit"

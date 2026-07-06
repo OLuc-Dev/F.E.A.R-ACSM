@@ -217,7 +217,7 @@ function StrategicReply({ strat }: { strat: Strategic }) {
 export function UserMessage({ content }: { content: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl rounded-br-md border border-cyan-300/20 bg-cyan-300/[0.08] px-4 py-2.5 text-sm leading-6 text-foreground shadow-[0_10px_30px_-18px_rgba(34,211,238,0.55)]">
+      <div className="max-w-[82%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-cyan-300/20 bg-cyan-300/[0.10] px-4 py-2.5 text-[15px] leading-6 text-foreground">
         {renderInline(content)}
       </div>
     </div>
@@ -241,7 +241,7 @@ export function AssistantMessage({ content }: { content: string }) {
     <div className="flex justify-start">
       {/* min-w-0 lets a wide code block scroll inside the bubble instead of
           forcing the whole column (and the page) wider on mobile. */}
-      <div className="min-w-0 max-w-[92%] rounded-2xl rounded-bl-md border border-white/10 bg-white/[0.035] px-4 py-3 text-sm leading-6 text-foreground/90 shadow-[0_14px_40px_-24px_rgba(0,0,0,0.9)]">
+      <div className="min-w-0 max-w-[92%] rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-[15px] leading-7 text-foreground/90 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
         {!content ? <TypingDots /> : strat ? <StrategicReply strat={strat} /> : <ReplyBody text={content} />}
       </div>
     </div>

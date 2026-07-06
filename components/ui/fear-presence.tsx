@@ -127,9 +127,9 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
         </mesh>
       </group>
 
-      {/* Embers: dense fine motes + a few slow, bright sparks */}
-      <Sparkles count={70} scale={[7, 7, 7]} size={1.4} speed={0.3} color="#ffb861" opacity={0.5} />
-      <Sparkles count={22} scale={[9, 9, 9]} size={3.0} speed={0.16} color="#ff8a1e" opacity={0.4} />
+      {/* Embers: a few quiet motes — restrained, not a particle storm. */}
+      <Sparkles count={34} scale={[7, 7, 7]} size={1.1} speed={0.2} color="#ffc98f" opacity={0.28} />
+      <Sparkles count={10} scale={[9, 9, 9]} size={2.3} speed={0.12} color="#ff9d47" opacity={0.24} />
     </group>
   );
 }
@@ -263,8 +263,9 @@ export function FearPresence({ status = "online", pulse = 0 }: { status?: Presen
 
       <hemisphereLight args={["#ffd9a0", "#180d05", 0.55]} />
       <directionalLight position={[4, 5, 5]} intensity={1.6} color="#ffdca8" />
-      {/* Warm key from the lower left — the core's own light */}
-      <pointLight position={[-4, -1, 3]} intensity={3.4} color="#ff8a1e" />
+      {/* Warm key from the lower left — the core's own light (dialed back so the
+          amber reads as a controlled glow, not a gamer neon). */}
+      <pointLight position={[-4, -1, 3]} intensity={2.6} color="#ff9636" />
       {/* Soft warm fill from the front so the face stays readable */}
       <pointLight position={[0, 0.6, 4.5]} intensity={1.7} color="#ffcaa0" />
       {/* Amber rim from behind so the head separates from the dark backdrop */}
@@ -309,10 +310,10 @@ export function FearPresence({ status = "online", pulse = 0 }: { status?: Presen
       </Suspense>
 
       <EffectComposer>
-        {/* Selective bloom: only genuine highlights (eyes, surge, embers) glow,
-            so the metal keeps controlled speculars instead of blown-out patches. */}
-        <Bloom intensity={0.95} luminanceThreshold={0.62} luminanceSmoothing={0.28} mipmapBlur />
-        <Vignette offset={0.3} darkness={0.6} />
+        {/* Restrained bloom: a higher threshold + lower intensity means only the
+            true highlights (eyes, surge) glow — metal reads calm, not neon. */}
+        <Bloom intensity={0.62} luminanceThreshold={0.72} luminanceSmoothing={0.3} mipmapBlur />
+        <Vignette offset={0.35} darkness={0.5} />
       </EffectComposer>
     </Canvas>
   );
