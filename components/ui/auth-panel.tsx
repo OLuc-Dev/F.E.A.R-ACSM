@@ -15,7 +15,7 @@ const Field = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputEl
       <input
         ref={ref}
         {...props}
-        className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm outline-none transition placeholder:text-muted-foreground/50 focus:border-cyan-300/40 focus:bg-white/[0.05]"
+        className="h-10 w-full rounded-xl border border-overlay/10 bg-overlay/[0.03] px-3 text-sm outline-none transition placeholder:text-muted-foreground/50 focus:border-brand/40 focus:bg-overlay/[0.05]"
       />
     );
   },
@@ -141,8 +141,8 @@ export function AuthPanel({
           >
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <span className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.03]">
-                  <UserRound className="size-4 text-cyan-300" />
+                <span className="grid size-9 place-items-center rounded-xl border border-overlay/10 bg-overlay/[0.03]">
+                  <UserRound className="size-4 text-brand" />
                 </span>
                 <div>
                   <h2 className="text-sm font-semibold tracking-[-0.01em]">
@@ -155,7 +155,7 @@ export function AuthPanel({
                 <button
                   onClick={onClose}
                   aria-label="Fechar"
-                  className="tap grid size-8 place-items-center rounded-lg border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                  className="tap grid size-8 place-items-center rounded-lg border border-overlay/10 bg-overlay/[0.03] text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
                 >
                   <X className="size-4" />
                 </button>
@@ -163,7 +163,7 @@ export function AuthPanel({
             </div>
 
             {error && (
-              <div className="mb-4 rounded-xl border border-rose-400/30 bg-rose-400/[0.08] p-3 text-[13px] leading-5 text-rose-200">
+              <div className="mb-4 rounded-xl border border-danger/30 bg-danger/[0.08] p-3 text-[13px] leading-5 text-danger">
                 {error}
               </div>
             )}
@@ -178,14 +178,14 @@ export function AuthPanel({
                   exit={{ opacity: 0, y: -6 }}
                   transition={fade}
                 >
-                  <div className="flex items-center gap-2.5 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5">
-                    <Mail className="size-4 shrink-0 text-cyan-300/70" />
+                  <div className="flex items-center gap-2.5 rounded-xl border border-overlay/10 bg-overlay/[0.025] px-3 py-2.5">
+                    <Mail className="size-4 shrink-0 text-brand/70" />
                     <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">{user.email}</span>
                   </div>
 
                   <form onSubmit={submitKey} className="space-y-2">
                     <span className="label-tn flex items-center gap-1.5">
-                      <span className="text-cyan-300/70">
+                      <span className="text-brand/70">
                         <KeyRound className="size-3.5" />
                       </span>
                       Sua chave do OpenRouter
@@ -202,19 +202,19 @@ export function AuthPanel({
                       <button
                         type="submit"
                         disabled={busy || !apiKey.trim()}
-                        className="tap inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-300 text-sm font-medium text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="tap inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-brand text-sm font-medium text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {busy ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
                         Salvar chave
                       </button>
                       {user.has_openrouter_key && (
-                        <span className="inline-flex items-center gap-1 rounded-lg border border-cyan-300/30 bg-cyan-300/[0.08] px-2.5 py-1.5 text-[11px] text-cyan-200">
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-brand/30 bg-brand/[0.08] px-2.5 py-1.5 text-[11px] text-brand">
                           <ShieldCheck className="size-3.5" /> ativa
                         </span>
                       )}
                     </div>
                     {savedKey && (
-                      <p className="text-[11px] leading-4 text-cyan-300/80">Chave guardada, criptografada.</p>
+                      <p className="text-[11px] leading-4 text-brand/80">Chave guardada, criptografada.</p>
                     )}
                     <p className="text-[11px] leading-4 text-muted-foreground/60">
                       Pegue a sua em openrouter.ai/keys. Fica só no servidor, criptografada — nunca aparece de
@@ -224,7 +224,7 @@ export function AuthPanel({
 
                   <button
                     onClick={onSignOut}
-                    className="tap inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] text-sm text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                    className="tap inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-overlay/10 bg-overlay/[0.03] text-sm text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
                   >
                     <LogOut className="size-4" /> Sair
                   </button>
@@ -237,7 +237,7 @@ export function AuthPanel({
                   exit={{ opacity: 0, y: -6 }}
                   transition={fade}
                 >
-                  <div className="mb-4 flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+                  <div className="mb-4 flex gap-1 rounded-xl border border-overlay/10 bg-overlay/[0.03] p-1">
                     {(["login", "register"] as const).map((value) => (
                       <button
                         key={value}
@@ -247,7 +247,7 @@ export function AuthPanel({
                         }}
                         className={`tap flex-1 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
                           mode === value
-                            ? "bg-cyan-300/15 text-cyan-200"
+                            ? "bg-brand/15 text-brand"
                             : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
@@ -284,7 +284,7 @@ export function AuthPanel({
                     <button
                       type="submit"
                       disabled={busy || !email.trim() || !password}
-                      className="tap inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-cyan-300 text-sm font-medium text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="tap inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-brand text-sm font-medium text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {busy ? <Loader2 className="size-4 animate-spin" /> : <UserRound className="size-4" />}
                       {mode === "login" ? "Entrar" : "Criar conta"}

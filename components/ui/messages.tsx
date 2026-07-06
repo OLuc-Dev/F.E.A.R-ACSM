@@ -39,8 +39,8 @@ interface VoiceStyle {
 
 // Each council voice carries its own glyph and accent so the synthesis reads at a glance.
 const VOICE_META: Record<string, VoiceStyle> = {
-  Contrarian: { icon: AlertTriangle, ring: "border-rose-400/25", text: "text-rose-300" },
-  "First-Principles": { icon: Atom, ring: "border-cyan-400/25", text: "text-cyan-300" },
+  Contrarian: { icon: AlertTriangle, ring: "border-danger/25", text: "text-danger" },
+  "First-Principles": { icon: Atom, ring: "border-brand/25", text: "text-brand" },
   Expansionist: { icon: TrendingUp, ring: "border-emerald-400/25", text: "text-emerald-300" },
   Outsider: { icon: Telescope, ring: "border-violet-400/25", text: "text-violet-300" },
   Executor: { icon: Zap, ring: "border-amber-400/25", text: "text-amber-300" },
@@ -138,9 +138,9 @@ function Label({ children, className }: { children: ReactNode; className?: strin
 function TypingDots() {
   return (
     <span className="inline-flex items-center gap-1.5 py-0.5 align-middle">
-      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/80 [animation-delay:-0.25s]" />
-      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/80 [animation-delay:-0.12s]" />
-      <span className="size-1.5 animate-bounce rounded-full bg-cyan-300/80" />
+      <span className="size-1.5 animate-bounce rounded-full bg-brand/80 [animation-delay:-0.25s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-brand/80 [animation-delay:-0.12s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-brand/80" />
     </span>
   );
 }
@@ -149,7 +149,7 @@ function StrategicReply({ strat }: { strat: Strategic }) {
   return (
     <div className="space-y-3.5">
       {strat.quickRead && (
-        <div className="border-l-2 border-cyan-300/40 pl-3">
+        <div className="border-l-2 border-brand/40 pl-3">
           <Label>Leitura rápida</Label>
           <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
             {renderInline(strat.quickRead)}
@@ -167,7 +167,7 @@ function StrategicReply({ strat }: { strat: Strategic }) {
               return (
                 <div
                   key={voice.name}
-                  className={`rounded-xl border bg-white/[0.025] p-3 ${meta?.ring ?? "border-white/10"}`}
+                  className={`rounded-xl border bg-overlay/[0.025] p-3 ${meta?.ring ?? "border-overlay/10"}`}
                 >
                   <div className="flex items-center gap-1.5">
                     {Icon && <Icon className={`size-3.5 ${meta.text}`} />}
@@ -188,10 +188,10 @@ function StrategicReply({ strat }: { strat: Strategic }) {
       )}
 
       {strat.chairman && (
-        <div className="relative overflow-hidden rounded-xl border border-cyan-300/30 bg-gradient-to-br from-cyan-300/[0.12] via-cyan-300/[0.03] to-transparent p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+        <div className="relative overflow-hidden rounded-xl border border-brand/30 bg-gradient-to-br from-brand/[0.12] via-brand/[0.03] to-transparent p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
           <div className="flex items-center gap-1.5">
-            <Gavel className="size-3.5 text-cyan-200" />
-            <Label className="text-cyan-200">Síntese do Chairman</Label>
+            <Gavel className="size-3.5 text-brand" />
+            <Label className="text-brand">Síntese do Chairman</Label>
           </div>
           <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-foreground">
             {renderInline(strat.chairman)}
@@ -200,8 +200,8 @@ function StrategicReply({ strat }: { strat: Strategic }) {
       )}
 
       {strat.nextStep && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-white/10 bg-white/[0.025] p-3">
-          <ArrowRight className="mt-0.5 size-4 shrink-0 text-cyan-300" />
+        <div className="flex items-start gap-2.5 rounded-xl border border-overlay/10 bg-overlay/[0.025] p-3">
+          <ArrowRight className="mt-0.5 size-4 shrink-0 text-brand" />
           <div>
             <Label>Próximo passo</Label>
             <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
@@ -217,7 +217,7 @@ function StrategicReply({ strat }: { strat: Strategic }) {
 export function UserMessage({ content }: { content: string }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[82%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-cyan-300/20 bg-cyan-300/[0.10] px-4 py-2.5 text-[15px] leading-6 text-foreground">
+      <div className="max-w-[82%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-brand/20 bg-brand/[0.10] px-4 py-2.5 text-[15px] leading-6 text-foreground">
         {renderInline(content)}
       </div>
     </div>
@@ -227,7 +227,7 @@ export function UserMessage({ content }: { content: string }) {
 export function SystemMessage({ content }: { content: string }) {
   return (
     <div className="flex justify-center py-1">
-      <div className="rounded-full border border-white/10 bg-white/[0.03] px-3.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/80">
+      <div className="rounded-full border border-overlay/10 bg-overlay/[0.03] px-3.5 py-1 text-[11px] uppercase tracking-[0.18em] text-muted-foreground/80">
         {content}
       </div>
     </div>
@@ -241,7 +241,7 @@ export function AssistantMessage({ content }: { content: string }) {
     <div className="flex justify-start">
       {/* min-w-0 lets a wide code block scroll inside the bubble instead of
           forcing the whole column (and the page) wider on mobile. */}
-      <div className="min-w-0 max-w-[92%] rounded-2xl rounded-bl-md border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-[15px] leading-7 text-foreground/90 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
+      <div className="min-w-0 max-w-[92%] rounded-2xl rounded-bl-md border border-overlay/[0.08] bg-overlay/[0.04] px-4 py-3 text-[15px] leading-7 text-foreground/90 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
         {!content ? <TypingDots /> : strat ? <StrategicReply strat={strat} /> : <ReplyBody text={content} />}
       </div>
     </div>

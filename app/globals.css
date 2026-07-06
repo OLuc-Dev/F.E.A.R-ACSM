@@ -33,6 +33,50 @@
        accent. Interaction / ready / working = cyan (--primary). Attention /
        pending / inactive = muted. Error / offline / destructive = rose. */
     --energy: 40 96% 58%;
+
+    /* Theme-aware channels (rgb triples, so Tailwind's /alpha modifier works).
+       --overlay flips white→black between themes: one var re-tones every glass
+       surface. --brand is the accent, --danger the error colour, both tuned per
+       theme for contrast. --stage stays dark in both themes: the 3D presence
+       always sits on a dark plinth. */
+    --overlay-rgb: 255 255 255;
+    --brand-rgb: 103 232 249; /* cyan-300 */
+    --brand-ink: 240 12% 6%; /* dark ink on the light-cyan button */
+    --danger-rgb: 251 113 133; /* rose-400 */
+    --code-bg: 0 0% 0% / 0.42;
+    --stage: 240 8% 4%;
+  }
+
+  /* Light theme — a well-finished option, not a broken mode. Dark stays the
+     canonical F.E.A.R. identity; this class is set on <html> by the no-flash
+     script in the layout (saved choice → system preference → dark fallback). */
+  .light {
+    --background: 240 20% 96%; /* #f5f5f7 */
+    --foreground: 240 6% 11%; /* #1d1d1f */
+    --card: 0 0% 100%; /* #ffffff */
+    --card-foreground: 240 6% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 11%;
+    --primary: 205 88% 41%; /* cool blue, readable on white */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 92%;
+    --secondary-foreground: 240 6% 11%;
+    --muted: 240 6% 92%;
+    --muted-foreground: 240 3% 42%; /* #6e6e73 */
+    --accent: 240 6% 92%;
+    --accent-foreground: 240 6% 11%;
+    --destructive: 351 74% 44%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 6% 86%;
+    --input: 240 6% 86%;
+    --ring: 205 88% 44%;
+
+    --overlay-rgb: 17 18 22; /* dark overlays on a light surface */
+    --brand-rgb: 12 116 178; /* cool blue, reads on white */
+    --brand-ink: 0 0% 100%;
+    --danger-rgb: 200 34 55;
+    --code-bg: 240 16% 93% / 1;
+    /* --stage stays dark (inherited) — the presence plinth is dark in both. */
   }
 
   * {
@@ -67,25 +111,25 @@
   /* Faint dotted/line grid for the command-deck backdrop. */
   .bg-grid {
     background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+      linear-gradient(to right, rgb(var(--overlay-rgb) / 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(var(--overlay-rgb) / 0.035) 1px, transparent 1px);
     background-size: 46px 46px;
   }
 
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+    scrollbar-color: rgb(var(--overlay-rgb) / 0.16) transparent;
   }
   .scrollbar-thin::-webkit-scrollbar {
     width: 7px;
     height: 7px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.13);
+    background: rgb(var(--overlay-rgb) / 0.13);
     border-radius: 9999px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.22);
+    background: rgb(var(--overlay-rgb) / 0.22);
   }
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
@@ -95,13 +139,25 @@
      soft shadow. No saturate() — the old "vibrancy" read as neon; this reads as
      calm glass/metal. */
   .panel {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.03) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: linear-gradient(
+      180deg,
+      rgb(var(--overlay-rgb) / 0.05) 0%,
+      rgb(var(--overlay-rgb) / 0.03) 100%
+    );
+    border: 1px solid rgb(var(--overlay-rgb) / 0.08);
     box-shadow:
       0 22px 50px -34px rgba(0, 0, 0, 0.8),
-      inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      inset 0 1px 0 rgb(var(--overlay-rgb) / 0.04);
     -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
+  }
+  /* On light, panels read as crisp white cards, not a grey glass wash. */
+  .light .panel {
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.04),
+      0 14px 34px -22px rgba(0, 0, 0, 0.22);
   }
 
   .label-tn {
@@ -179,22 +235,22 @@
   margin: 0.15rem 0;
 }
 .md-body li::marker {
-  color: rgba(34, 211, 238, 0.6);
+  color: rgb(var(--brand-rgb) / 0.6);
 }
 .md-body a {
-  color: hsl(188 95% 62%);
+  color: rgb(var(--brand-rgb));
   text-decoration: underline;
   text-underline-offset: 2px;
   overflow-wrap: anywhere;
 }
 .md-body a:hover {
-  color: hsl(188 95% 74%);
+  color: rgb(var(--brand-rgb) / 0.8);
 }
 .md-body code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 0.85em;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgb(var(--overlay-rgb) / 0.08);
+  border: 1px solid rgb(var(--overlay-rgb) / 0.08);
   border-radius: 0.375rem;
   padding: 0.05rem 0.35rem;
   overflow-wrap: anywhere;
@@ -203,8 +259,8 @@
   margin: 0 0 0.5rem;
   padding: 0.75rem 0.85rem;
   overflow-x: auto;
-  background: rgba(0, 0, 0, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: hsl(var(--code-bg));
+  border: 1px solid rgb(var(--overlay-rgb) / 0.1);
   border-radius: 0.75rem;
 }
 /* Inside a block, the chip styling resets and lines keep their width so the
@@ -217,15 +273,15 @@
   border-radius: 0;
   font-size: 0.8125rem;
   line-height: 1.5;
-  color: hsl(210 40% 90%);
+  color: hsl(var(--foreground) / 0.9);
   white-space: pre;
   overflow-wrap: normal;
 }
 .md-body blockquote {
   margin: 0 0 0.5rem;
   padding-left: 0.75rem;
-  border-left: 2px solid rgba(34, 211, 238, 0.4);
-  color: hsl(215 20% 72%);
+  border-left: 2px solid rgb(var(--brand-rgb) / 0.4);
+  color: hsl(var(--muted-foreground));
 }
 .md-body h1,
 .md-body h2,
@@ -237,5 +293,5 @@
 .md-body hr {
   margin: 0.75rem 0;
   border: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgb(var(--overlay-rgb) / 0.1);
 }

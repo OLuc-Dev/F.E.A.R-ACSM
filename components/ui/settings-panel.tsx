@@ -75,7 +75,7 @@ function Field(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className="h-10 w-full rounded-xl border border-white/10 bg-white/[0.03] px-3 text-sm outline-none transition placeholder:text-muted-foreground/50 focus:border-cyan-300/40 focus:bg-white/[0.05]"
+      className="h-10 w-full rounded-xl border border-overlay/10 bg-overlay/[0.03] px-3 text-sm outline-none transition placeholder:text-muted-foreground/50 focus:border-brand/40 focus:bg-overlay/[0.05]"
     />
   );
 }
@@ -83,7 +83,7 @@ function Field(props: React.InputHTMLAttributes<HTMLInputElement>) {
 function SectionLabel({ icon, children }: { icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <span className="label-tn flex items-center gap-1.5">
-      <span className="text-cyan-300/70">{icon}</span>
+      <span className="text-brand/70">{icon}</span>
       {children}
     </span>
   );
@@ -245,11 +245,11 @@ export function SettingsPanel({
             exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 320, damping: 34 }}
           >
-            <header className="sticky top-0 z-10 space-y-3 border-b border-white/[0.06] bg-card/40 px-5 py-4 backdrop-blur-xl">
+            <header className="sticky top-0 z-10 space-y-3 border-b border-overlay/[0.06] bg-card/40 px-5 py-4 backdrop-blur-xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
-                  <span className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.03]">
-                    <BrainCircuit className="size-4 text-cyan-300" />
+                  <span className="grid size-9 place-items-center rounded-xl border border-overlay/10 bg-overlay/[0.03]">
+                    <BrainCircuit className="size-4 text-brand" />
                   </span>
                   <div>
                     <h2 className="text-sm font-semibold tracking-[-0.01em]">Configuração</h2>
@@ -259,21 +259,19 @@ export function SettingsPanel({
                 <button
                   onClick={onClose}
                   aria-label="Fechar"
-                  className="tap grid size-8 place-items-center rounded-lg border border-white/10 bg-white/[0.03] text-muted-foreground hover:bg-white/[0.06] hover:text-foreground"
+                  className="tap grid size-8 place-items-center rounded-lg border border-overlay/10 bg-overlay/[0.03] text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
                 >
                   <X className="size-4" />
                 </button>
               </div>
 
-              <div className="flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1">
+              <div className="flex gap-1 rounded-xl border border-overlay/10 bg-overlay/[0.03] p-1">
                 {(["conhecimento", "comportamento", "memoria"] as const).map((value) => (
                   <button
                     key={value}
                     onClick={() => setTab(value)}
                     className={`tap flex-1 rounded-lg px-2.5 py-1.5 text-xs font-medium ${
-                      tab === value
-                        ? "bg-cyan-300/15 text-cyan-200"
-                        : "text-muted-foreground hover:text-foreground"
+                      tab === value ? "bg-brand/15 text-brand" : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     {TAB_LABELS[value]}
@@ -284,7 +282,7 @@ export function SettingsPanel({
 
             <div className="flex-1 px-5 py-5">
               {error && (
-                <div className="mb-5 rounded-xl border border-rose-400/30 bg-rose-400/[0.08] p-3 text-[13px] leading-5 text-rose-200">
+                <div className="mb-5 rounded-xl border border-danger/30 bg-danger/[0.08] p-3 text-[13px] leading-5 text-danger">
                   {error}
                 </div>
               )}
@@ -306,7 +304,7 @@ export function SettingsPanel({
                       </p>
 
                       {unavailable && (
-                        <div className="flex items-start gap-2.5 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-[13px] leading-5 text-muted-foreground">
+                        <div className="flex items-start gap-2.5 rounded-xl border border-overlay/10 bg-overlay/[0.03] p-3 text-[13px] leading-5 text-muted-foreground">
                           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-muted-foreground/70" />
                           <span>
                             A biblioteca de conhecimento está indisponível. Instale as dependências (chromadb)
@@ -324,7 +322,7 @@ export function SettingsPanel({
                         </div>
 
                         {sources.length === 0 ? (
-                          <p className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-center text-[13px] text-muted-foreground/70">
+                          <p className="rounded-xl border border-dashed border-overlay/10 bg-overlay/[0.02] px-3 py-4 text-center text-[13px] text-muted-foreground/70">
                             {loading ? "Carregando…" : "Nenhuma fonte ainda. Adicione abaixo."}
                           </p>
                         ) : (
@@ -338,19 +336,19 @@ export function SettingsPanel({
                                   animate={{ opacity: 1, scale: 1 }}
                                   exit={{ opacity: 0, scale: 0.96 }}
                                   transition={springSoft}
-                                  className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5"
+                                  className="flex items-center justify-between gap-3 rounded-xl border border-overlay/10 bg-overlay/[0.025] px-3 py-2.5"
                                 >
                                   <span className="min-w-0 flex-1 truncate text-sm text-foreground/90">
                                     {item.source}
                                   </span>
-                                  <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-muted-foreground">
+                                  <span className="shrink-0 rounded-full border border-overlay/10 px-2 py-0.5 text-[10px] text-muted-foreground">
                                     {item.chunks} {item.chunks === 1 ? "trecho" : "trechos"}
                                   </span>
                                   <button
                                     onClick={() => void run(() => deleteKnowledge(item.source))}
                                     disabled={busy}
                                     aria-label={`Remover ${item.source}`}
-                                    className="tap grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-50"
+                                    className="tap grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger disabled:opacity-50"
                                   >
                                     <Trash2 className="size-3.5" />
                                   </button>
@@ -363,7 +361,7 @@ export function SettingsPanel({
 
                       <form
                         onSubmit={submitText}
-                        className="space-y-2 rounded-2xl border border-white/10 bg-white/[0.02] p-3.5"
+                        className="space-y-2 rounded-2xl border border-overlay/10 bg-overlay/[0.02] p-3.5"
                       >
                         <SectionLabel icon={<FileText className="size-3.5" />}>Adicionar texto</SectionLabel>
                         <Field
@@ -376,12 +374,12 @@ export function SettingsPanel({
                           onChange={(event) => setTextContent(event.target.value)}
                           rows={4}
                           placeholder="Cole aqui o conhecimento que ele deve absorver…"
-                          className="scrollbar-thin w-full resize-none rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 outline-none transition placeholder:text-muted-foreground/50 focus:border-cyan-300/40 focus:bg-white/[0.05]"
+                          className="scrollbar-thin w-full resize-none rounded-xl border border-overlay/10 bg-overlay/[0.03] p-3 text-sm leading-6 outline-none transition placeholder:text-muted-foreground/50 focus:border-brand/40 focus:bg-overlay/[0.05]"
                         />
                         <button
                           type="submit"
                           disabled={busy || !textContent.trim()}
-                          className="tap inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-cyan-300 text-sm font-medium text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="tap inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-brand text-sm font-medium text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           {busy ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
                           Adicionar
@@ -404,17 +402,17 @@ export function SettingsPanel({
                                 disabled={busy}
                                 className={`tap rounded-xl border p-3 text-left disabled:opacity-50 ${
                                   active
-                                    ? "border-cyan-300/40 bg-cyan-300/[0.08]"
-                                    : "border-white/10 bg-white/[0.025] hover:bg-white/[0.04]"
+                                    ? "border-brand/40 bg-brand/[0.08]"
+                                    : "border-overlay/10 bg-overlay/[0.025] hover:bg-overlay/[0.04]"
                                 }`}
                               >
                                 <div className="flex items-center justify-between">
                                   <span
-                                    className={`text-sm font-medium ${active ? "text-cyan-100" : "text-foreground/90"}`}
+                                    className={`text-sm font-medium ${active ? "text-brand" : "text-foreground/90"}`}
                                   >
                                     {meta.label}
                                   </span>
-                                  {active && <Check className="size-4 text-cyan-300" />}
+                                  {active && <Check className="size-4 text-brand" />}
                                 </div>
                                 <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{meta.desc}</p>
                               </button>
@@ -435,7 +433,7 @@ export function SettingsPanel({
                           <button
                             onClick={() => void applyConfig({ model: modelInput.trim() })}
                             disabled={busy || !modelInput.trim() || modelInput.trim() === config?.model}
-                            className="tap inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-cyan-300 text-sm font-medium text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="tap inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-brand text-sm font-medium text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {busy ? (
                               <Loader2 className="size-4 animate-spin" />
@@ -448,7 +446,7 @@ export function SettingsPanel({
                             <button
                               onClick={() => void applyConfig({ model: config.model_default })}
                               disabled={busy}
-                              className="tap inline-flex h-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm text-foreground hover:bg-white/[0.08] disabled:opacity-50"
+                              className="tap inline-flex h-9 items-center justify-center rounded-xl border border-overlay/10 bg-overlay/[0.04] px-3 text-sm text-foreground hover:bg-overlay/[0.08] disabled:opacity-50"
                             >
                               Padrão
                             </button>
@@ -473,7 +471,7 @@ export function SettingsPanel({
                               >
                                 <span className="flex items-center gap-2 text-[13px] text-foreground/80">
                                   <span
-                                    className={`size-1.5 rounded-full ${on ? "bg-cyan-300 shadow-[0_0_8px_1px_rgba(34,211,238,0.6)]" : "bg-white/20"}`}
+                                    className={`size-1.5 rounded-full ${on ? "bg-brand shadow-[0_0_8px_1px_rgba(34,211,238,0.6)]" : "bg-overlay/20"}`}
                                   />
                                   {item.label}
                                 </span>
@@ -507,7 +505,7 @@ export function SettingsPanel({
                         </div>
 
                         {memories.length === 0 ? (
-                          <p className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-3 py-4 text-center text-[13px] text-muted-foreground/70">
+                          <p className="rounded-xl border border-dashed border-overlay/10 bg-overlay/[0.02] px-3 py-4 text-center text-[13px] text-muted-foreground/70">
                             Nada guardado ainda. Ele lembra à medida que vocês conversam.
                           </p>
                         ) : (
@@ -521,7 +519,7 @@ export function SettingsPanel({
                                   animate={{ opacity: 1, scale: 1 }}
                                   exit={{ opacity: 0, scale: 0.96 }}
                                   transition={springSoft}
-                                  className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5"
+                                  className="flex items-start justify-between gap-3 rounded-xl border border-overlay/10 bg-overlay/[0.025] px-3 py-2.5"
                                 >
                                   <div className="min-w-0 flex-1 space-y-1">
                                     <p className="text-sm leading-5 text-foreground/90">{item.text}</p>
@@ -533,7 +531,7 @@ export function SettingsPanel({
                                     onClick={() => void forgetOne(item.id)}
                                     disabled={busy}
                                     aria-label="Esquecer esta lembrança"
-                                    className="tap grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-rose-400/10 hover:text-rose-300 disabled:opacity-50"
+                                    className="tap grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger disabled:opacity-50"
                                   >
                                     <Trash2 className="size-3.5" />
                                   </button>

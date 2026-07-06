@@ -33,6 +33,7 @@ import { AuthPanel } from "@/components/ui/auth-panel";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { getStatus, type StatusResponse } from "@/lib/api";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
@@ -52,11 +53,11 @@ const FearPresence = dynamic(
 );
 
 const fearApps: DockApp[] = [
-  { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-cyan-200" /> },
+  { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
-  { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-rose-200" /> },
+  { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-danger" /> },
 ];
 
 const STATUS_LABEL: Record<Status, string> = {
@@ -72,11 +73,11 @@ const STATUS_LABEL: Record<Status, string> = {
 // which is also how the header orb carries the presence on mobile (where the 3D
 // core is hidden). Mirrors the 3D core, which flares amber while speaking.
 const STATUS_ORB: Record<Status, string> = {
-  online: "bg-cyan-400/90 shadow-[0_0_8px_1px_rgba(34,211,238,0.3)]",
+  online: "bg-brand/90 shadow-[0_0_8px_1px_rgba(34,211,238,0.3)]",
   listening: "bg-sky-300 shadow-[0_0_10px_2px_rgba(56,189,248,0.32)] animate-pulse",
-  thinking: "bg-cyan-300 shadow-[0_0_9px_2px_rgba(34,211,238,0.3)] animate-pulse",
+  thinking: "bg-brand shadow-[0_0_9px_2px_rgba(34,211,238,0.3)] animate-pulse",
   speaking: "bg-amber-300 shadow-[0_0_12px_3px_hsl(var(--energy)/0.4)] animate-pulse",
-  error: "bg-rose-500 shadow-[0_0_10px_2px_rgba(244,63,94,0.45)]",
+  error: "bg-danger shadow-[0_0_10px_2px_rgba(244,63,94,0.45)]",
 };
 
 // Strategic openers that show off the council; clicking one sends it immediately.
@@ -108,7 +109,7 @@ function Backdrop() {
 
 function StatusOrb({ status }: { status: Status }) {
   return (
-    <span className="relative grid size-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.03]">
+    <span className="relative grid size-9 shrink-0 place-items-center rounded-xl border border-overlay/10 bg-overlay/[0.03]">
       <span aria-hidden className={`size-2.5 rounded-full transition-colors ${STATUS_ORB[status]}`} />
     </span>
   );
@@ -125,9 +126,9 @@ function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; bus
     <div className="flex flex-1 flex-col items-center justify-center px-4 py-10 text-center">
       {/* A calm mark — one soft ring, one quiet point. No rotating neon. */}
       <div className="relative grid size-14 place-items-center">
-        <div className="absolute inset-0 rounded-full border border-white/10" />
+        <div className="absolute inset-0 rounded-full border border-overlay/10" />
         <motion.span
-          className="size-2 rounded-full bg-cyan-300/90 shadow-[0_0_10px_2px_rgba(34,211,238,0.32)]"
+          className="size-2 rounded-full bg-brand/90 shadow-[0_0_10px_2px_rgba(34,211,238,0.32)]"
           animate={{ opacity: [0.6, 1, 0.6] }}
           transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
         />
@@ -152,9 +153,9 @@ function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; bus
             variants={chipItem}
             onClick={() => onPick(suggestion.text)}
             disabled={busy}
-            className="tap group flex items-center gap-2.5 rounded-xl border border-white/[0.08] bg-white/[0.02] px-3.5 py-2.5 text-left text-[13px] leading-5 text-muted-foreground transition hover:border-white/15 hover:bg-white/[0.04] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            className="tap group flex items-center gap-2.5 rounded-xl border border-overlay/[0.08] bg-overlay/[0.02] px-3.5 py-2.5 text-left text-[13px] leading-5 text-muted-foreground transition hover:border-overlay/15 hover:bg-overlay/[0.04] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="text-cyan-300/60 transition group-hover:text-cyan-300">{suggestion.icon}</span>
+            <span className="text-brand/60 transition group-hover:text-brand">{suggestion.icon}</span>
             <span>{suggestion.text}</span>
           </motion.button>
         ))}
@@ -279,10 +280,10 @@ export default function HomePage() {
   const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
   const backendDot =
     backendTone === "ok"
-      ? "bg-cyan-300 shadow-[0_0_8px_2px_rgba(34,211,238,0.5)]"
+      ? "bg-brand shadow-[0_0_8px_2px_rgba(34,211,238,0.5)]"
       : backendTone === "off"
-        ? "bg-rose-400"
-        : "bg-white/25";
+        ? "bg-danger"
+        : "bg-overlay/25";
   // The greeting is the only message until the first exchange; show the welcome hero instead.
   const showWelcome = messages.length === 1 && messages[0].id === 0;
 
@@ -321,33 +322,33 @@ export default function HomePage() {
   // chave" is per-user; the rest mirror the backend's optional integrations.
   const systemItems: { icon: ReactNode; label: string; value: string; tone: "ok" | "muted" }[] = [
     {
-      icon: <Cpu className="size-3.5 text-cyan-200" />,
+      icon: <Cpu className="size-3.5" />,
       label: "Chave",
       value: keyStatusLabel(user.has_openrouter_key),
       tone: user.has_openrouter_key ? "ok" : "muted",
     },
     {
-      icon: <Database className="size-3.5 text-violet-200" />,
+      icon: <Database className="size-3.5" />,
       label: "Memória",
       ...flag(systemStatus?.memory, "ativa"),
     },
     {
-      icon: <Mic className="size-3.5 text-cyan-200" />,
+      icon: <Mic className="size-3.5" />,
       label: "Voz",
       ...flag(systemStatus?.voice, "ativa"),
     },
     {
-      icon: <Music className="size-3.5 text-emerald-200" />,
+      icon: <Music className="size-3.5" />,
       label: "Spotify",
       ...flag(systemStatus?.spotify, "ok"),
     },
     {
-      icon: <BookOpen className="size-3.5 text-blue-200" />,
+      icon: <BookOpen className="size-3.5" />,
       label: "Obsidian",
       ...flag(systemStatus?.obsidian, "ok"),
     },
     {
-      icon: <CalendarDays className="size-3.5 text-slate-200" />,
+      icon: <CalendarDays className="size-3.5" />,
       label: "Agenda",
       ...flag(systemStatus?.calendar, "ok"),
     },
@@ -359,7 +360,7 @@ export default function HomePage() {
 
       <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-4 pb-28 md:px-6">
         {/* Top bar */}
-        <header className="flex items-center justify-between gap-4 border-b border-white/[0.06] py-4">
+        <header className="flex items-center justify-between gap-4 border-b border-overlay/[0.06] py-4">
           <div className="flex items-center gap-3">
             <StatusOrb status={status} />
             <div>
@@ -375,22 +376,22 @@ export default function HomePage() {
               onClick={() => setAuthOpen(true)}
               title={user.email}
               aria-label="Sua conta"
-              className="tap flex h-9 items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] py-0 pl-1 pr-1 text-sm text-foreground/90 transition hover:border-white/15 hover:bg-white/[0.05] sm:pr-3"
+              className="tap flex h-9 items-center gap-2 rounded-full border border-overlay/[0.08] bg-overlay/[0.03] py-0 pl-1 pr-1 text-sm text-foreground/90 transition hover:border-overlay/15 hover:bg-overlay/[0.05] sm:pr-3"
             >
-              <span className="grid size-7 place-items-center rounded-full bg-cyan-300/15 text-[11px] font-semibold text-cyan-200">
+              <span className="grid size-7 place-items-center rounded-full bg-brand/15 text-[11px] font-semibold text-brand">
                 {accountInitial(user.email)}
               </span>
               <span className="hidden max-w-[8rem] truncate sm:inline">{accountName(user.email)}</span>
             </button>
             <div
-              className="flex h-9 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[11px] text-muted-foreground"
+              className="flex h-9 items-center gap-1.5 rounded-full border border-overlay/10 bg-overlay/[0.03] px-3 text-[11px] text-muted-foreground"
               title={`Backend ${backendValue}`}
             >
               {backendTone === "off" ? (
-                <WifiOff className="size-3.5 text-rose-400" />
+                <WifiOff className="size-3.5 text-danger" />
               ) : (
                 <Wifi
-                  className={`size-3.5 ${backendTone === "ok" ? "text-cyan-300" : "text-muted-foreground"}`}
+                  className={`size-3.5 ${backendTone === "ok" ? "text-brand" : "text-muted-foreground"}`}
                 />
               )}
               <span className="hidden sm:inline">{backendValue}</span>
@@ -402,17 +403,18 @@ export default function HomePage() {
               title={voiceOn ? "Voz: ligada" : "Voz: desligada"}
               className={`tap grid size-9 place-items-center rounded-full border transition ${
                 voiceOn
-                  ? "border-cyan-300/50 bg-cyan-300/10 text-cyan-200"
-                  : "border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:border-white/15 hover:text-foreground"
+                  ? "border-brand/50 bg-brand/10 text-brand"
+                  : "border-overlay/[0.08] bg-overlay/[0.03] text-muted-foreground hover:border-overlay/15 hover:text-foreground"
               }`}
             >
               {voiceOn ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
             </button>
+            <ThemeToggle />
             <button
               onClick={() => openSettings()}
               aria-label="Configuração"
               title="Configuração"
-              className="tap grid size-9 place-items-center rounded-full border border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:border-white/15 hover:text-foreground"
+              className="tap grid size-9 place-items-center rounded-full border border-overlay/[0.08] bg-overlay/[0.03] text-muted-foreground hover:border-overlay/15 hover:text-foreground"
             >
               <Settings className="size-4" />
             </button>
@@ -422,14 +424,14 @@ export default function HomePage() {
         {/* Nudge a signed-in user to add their OpenRouter key, without which
             F.E.A.R. can't reply. Disappears the moment the key is saved. */}
         {!user.has_openrouter_key && (
-          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-cyan-300/25 bg-cyan-300/[0.06] px-3.5 py-2.5 text-[13px] text-cyan-100/90">
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-brand/25 bg-brand/[0.06] px-3.5 py-2.5 text-[13px] text-brand/90">
             <span className="flex items-center gap-2">
-              <KeyRound className="size-4 shrink-0 text-cyan-300" />
+              <KeyRound className="size-4 shrink-0 text-brand" />
               Cole sua chave do OpenRouter pra F.E.A.R. responder.
             </span>
             <button
               onClick={() => setAuthOpen(true)}
-              className="tap shrink-0 rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-medium text-cyan-100 hover:bg-cyan-300/20"
+              className="tap shrink-0 rounded-lg border border-brand/30 bg-brand/10 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/20"
             >
               Adicionar chave
             </button>
@@ -496,9 +498,9 @@ export default function HomePage() {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: 8, scale: 0.9 }}
                       transition={springSoft}
-                      className="tap absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-white/10 bg-card/85 px-3 py-1.5 text-[11px] font-medium text-foreground/80 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.7)] backdrop-blur"
+                      className="tap absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-overlay/10 bg-card/85 px-3 py-1.5 text-[11px] font-medium text-foreground/80 shadow-[0_8px_24px_-8px_rgba(0,0,0,0.7)] backdrop-blur"
                     >
-                      <ArrowDown className="size-3.5 text-cyan-300" /> Ir ao fim
+                      <ArrowDown className="size-3.5 text-brand" /> Ir ao fim
                     </motion.button>
                   )}
                 </AnimatePresence>
@@ -510,21 +512,21 @@ export default function HomePage() {
               {/* Clear, recoverable error state — the question stays in the
                   thread and one tap re-asks it. */}
               {status === "error" && (
-                <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-rose-400/30 bg-rose-400/[0.07] px-3 py-2 text-[13px] text-rose-100/90">
+                <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-danger/30 bg-danger/[0.07] px-3 py-2 text-[13px] text-danger/90">
                   <span className="flex items-center gap-2">
-                    <AlertTriangle className="size-4 shrink-0 text-rose-300" />
+                    <AlertTriangle className="size-4 shrink-0 text-danger" />
                     Não consegui concluir.
                   </span>
                   <button
                     type="button"
                     onClick={retry}
-                    className="tap inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-rose-400/40 bg-rose-400/10 px-3 py-1.5 text-xs font-medium text-rose-100 hover:bg-rose-400/20"
+                    className="tap inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-danger/40 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/20"
                   >
                     <RotateCcw className="size-3.5" /> Tentar de novo
                   </button>
                 </div>
               )}
-              <div className="flex items-end gap-2 rounded-2xl border border-white/[0.09] bg-white/[0.03] p-2 transition focus-within:border-cyan-300/40 focus-within:bg-white/[0.04] focus-within:shadow-[0_0_0_4px_hsl(var(--primary)/0.08)]">
+              <div className="flex items-end gap-2 rounded-2xl border border-overlay/[0.09] bg-overlay/[0.03] p-2 transition focus-within:border-brand/40 focus-within:bg-overlay/[0.04] focus-within:shadow-[0_0_0_4px_hsl(var(--primary)/0.08)]">
                 <textarea
                   ref={composerRef}
                   value={text}
@@ -550,7 +552,7 @@ export default function HomePage() {
                   type="submit"
                   disabled={isBusy || !text.trim()}
                   aria-label="Enviar"
-                  className="tap inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-cyan-300 text-slate-950 hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="tap inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isBusy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
                 </button>
@@ -559,7 +561,7 @@ export default function HomePage() {
                 <span className="text-[10px] text-muted-foreground/45">
                   Enter envia · Shift+Enter quebra linha
                 </span>
-                <kbd className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/50">
+                <kbd className="rounded border border-overlay/10 bg-overlay/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/50">
                   {modKey === "⌘" ? "⌘K" : "Ctrl+K"}
                 </kbd>
               </div>
@@ -581,9 +583,11 @@ export default function HomePage() {
                   aria-hidden
                   className="pointer-events-none absolute -inset-6 -bottom-10 blur-2xl [background:radial-gradient(55%_55%_at_50%_46%,hsl(var(--energy)/0.16),transparent_72%)]"
                 />
-                {/* Melt the hard rectangle with a radial mask so the canvas fades
-                    into the deck at its edges instead of ending on a seam. */}
-                <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] [-webkit-mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)] [mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)]">
+                {/* Dark plinth + radial mask: the presence always sits on a dark
+                    stage (even in the light theme, per the approved direction —
+                    the amber/metal core is calibrated for dark) and its edges
+                    melt into the page instead of ending on a hard seam. */}
+                <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] bg-[hsl(var(--stage))] [-webkit-mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)] [mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)]">
                   <FearPresence status={status} pulse={memoryTick} />
                 </div>
               </div>
@@ -599,7 +603,7 @@ export default function HomePage() {
                 className="tap flex w-full items-center justify-between lg:hidden"
               >
                 <span className="label-tn flex items-center gap-2">
-                  <Activity className="size-3.5 text-cyan-300/70" /> Sistema
+                  <Activity className="size-3.5 text-brand/70" /> Sistema
                 </span>
                 <span className="flex items-center gap-2 text-[11px] text-muted-foreground">
                   <span className="flex items-center gap-1.5">
@@ -611,7 +615,7 @@ export default function HomePage() {
               </button>
               <div className="hidden items-center justify-between lg:flex">
                 <span className="label-tn flex items-center gap-2">
-                  <Activity className="size-3.5 text-cyan-300/70" /> Sistema
+                  <Activity className="size-3.5 text-brand/70" /> Sistema
                 </span>
                 <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <span className={`size-2 rounded-full ${backendDot}`} />
@@ -625,7 +629,7 @@ export default function HomePage() {
                     <span className="text-foreground/70">{item.label}</span>
                     <span
                       className={`ml-auto text-[10px] ${
-                        item.tone === "ok" ? "text-cyan-300/80" : "text-muted-foreground/55"
+                        item.tone === "ok" ? "text-brand/80" : "text-muted-foreground/55"
                       }`}
                     >
                       {item.value}
