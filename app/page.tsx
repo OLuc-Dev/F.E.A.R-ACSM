@@ -445,7 +445,7 @@ export default function HomePage() {
         {/* Deck */}
         <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.62fr)] lg:gap-6">
           {/* Conversation */}
-          <div className="panel flex h-[72vh] min-h-[460px] flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[78vh]">
+          <div className="panel flex h-[72vh] min-h-[460px] min-w-0 flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[78vh]">
             {/* No exit-wait here: the thread must mount immediately so a fast first
                 reply is pinned to the bottom (it would otherwise stream into a
                 not-yet-mounted element). */}
@@ -473,7 +473,7 @@ export default function HomePage() {
                   aria-live="polite"
                   aria-label="Conversa com a F.E.A.R."
                   onScroll={handleThreadScroll}
-                  className="scrollbar-thin min-h-0 flex-1 space-y-3 overflow-y-auto px-1 py-1"
+                  className="scrollbar-thin min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto px-1 py-1"
                 >
                   {messages.map((message) => (
                     <motion.div

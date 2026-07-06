@@ -1,6 +1,8 @@
 "use client";
 
 import { ReactNode } from "react";
+import Markdown, { type Components } from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import {
   AlertTriangle,
   ArrowRight,
@@ -54,6 +56,32 @@ function renderInline(text: string): ReactNode[] {
     ) : (
       <span key={index}>{part}</span>
     ),
+  );
+}
+
+// Links in a reply always open in a new tab and can never carry the app off to
+// a javascript: URL (react-markdown already sanitizes the href; we harden the
+// target/rel and add nofollow). No `rehype-raw`, so any raw HTML in a reply is
+// rendered as plain text, never executed.
+const mdComponents: Components = {
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer nofollow">
+      {children}
+    </a>
+  ),
+};
+
+// Safe markdown for F.E.A.R.'s prose replies: lists, links, inline code, code
+// blocks and **bold**. `remark-breaks` keeps single newlines as line breaks
+// (chat convention); no GFM (CommonMark already covers the scope). It re-parses
+// the growing string as tokens stream in, so partial markdown never crashes.
+export function ReplyBody({ text }: { text: string }) {
+  return (
+    <div className="md-body">
+      <Markdown remarkPlugins={[remarkBreaks]} components={mdComponents}>
+        {text}
+      </Markdown>
+    </div>
   );
 }
 
@@ -211,14 +239,10 @@ export function AssistantMessage({ content }: { content: string }) {
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-white/10 bg-white/[0.035] px-4 py-3 text-sm leading-6 text-foreground/90 shadow-[0_14px_40px_-24px_rgba(0,0,0,0.9)]">
-        {!content ? (
-          <TypingDots />
-        ) : strat ? (
-          <StrategicReply strat={strat} />
-        ) : (
-          <p className="whitespace-pre-wrap">{renderInline(content)}</p>
-        )}
+      {/* min-w-0 lets a wide code block scroll inside the bubble instead of
+          forcing the whole column (and the page) wider on mobile. */}
+      <div className="min-w-0 max-w-[92%] rounded-2xl rounded-bl-md border border-white/10 bg-white/[0.035] px-4 py-3 text-sm leading-6 text-foreground/90 shadow-[0_14px_40px_-24px_rgba(0,0,0,0.9)]">
+        {!content ? <TypingDots /> : strat ? <StrategicReply strat={strat} /> : <ReplyBody text={content} />}
       </div>
     </div>
   );
