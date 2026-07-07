@@ -22,6 +22,7 @@ import {
   Send,
   Settings,
   Split,
+  Square,
   Swords,
   Volume2,
   VolumeX,
@@ -199,6 +200,7 @@ export default function HomePage() {
     toggleVoice,
     send,
     retry,
+    stop,
     handleAppAction,
   } = useConversation();
 
@@ -384,7 +386,7 @@ export default function HomePage() {
               <span className="hidden max-w-[8rem] truncate sm:inline">{accountName(user.email)}</span>
             </button>
             <div
-              className="flex h-9 items-center gap-1.5 rounded-full border border-overlay/10 bg-overlay/[0.03] px-3 text-[11px] text-muted-foreground"
+              className="hidden h-9 items-center gap-1.5 rounded-full border border-overlay/10 bg-overlay/[0.03] px-3 text-[11px] text-muted-foreground sm:flex"
               title={`Backend ${backendValue}`}
             >
               {backendTone === "off" ? (
@@ -548,14 +550,26 @@ export default function HomePage() {
                   className="max-h-36 min-h-[2.75rem] flex-1 resize-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/50"
                   placeholder="Comece com uma pergunta."
                 />
-                <button
-                  type="submit"
-                  disabled={isBusy || !text.trim()}
-                  aria-label="Enviar"
-                  className="tap inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isBusy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                </button>
+                {isBusy ? (
+                  <button
+                    type="button"
+                    onClick={stop}
+                    aria-label="Parar resposta"
+                    title="Parar resposta"
+                    className="tap inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-overlay/15 bg-overlay/[0.06] text-foreground hover:bg-overlay/[0.12]"
+                  >
+                    <Square className="size-3.5 fill-current" />
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={!text.trim()}
+                    aria-label="Enviar"
+                    className="tap inline-flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Send className="size-4" />
+                  </button>
+                )}
               </div>
               <div className="mt-2 flex items-center justify-between px-1.5">
                 <span className="text-[10px] text-muted-foreground/45">

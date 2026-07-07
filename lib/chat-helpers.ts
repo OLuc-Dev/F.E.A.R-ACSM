@@ -9,6 +9,11 @@ import { ApiError } from "@/lib/api";
 export const EMPTY_REPLY_NOTICE = "Fiquei sem resposta dessa vez. Tenta perguntar de outro jeito?";
 export const TIMEOUT_NOTICE =
   "Demorei demais pra responder — pode ser a conexão ou o backend. Tenta de novo?";
+// A manual interruption is neutral, never an error: the user chose to stop.
+// With partial tokens already on screen we keep them and note the cut; with
+// nothing yet, the bubble states it plainly (and never strands typing dots).
+export const INTERRUPTED_NOTICE = "Interrompido.";
+export const INTERRUPTED_EMPTY_NOTICE = "Resposta interrompida.";
 
 /** A message that must NOT be sent: empty, or only spaces/tabs/newlines. */
 export function isBlankMessage(text: string): boolean {
