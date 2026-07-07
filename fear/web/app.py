@@ -681,9 +681,16 @@ async def command_stream(
 async def memory_list(
     user: User = Depends(get_current_user),
     memory: PersonalMemory = Depends(get_memory),
+    include_assistant_replies: bool = False,
 ) -> MemoryResponse:
-    """Return the signed-in user's own recent memories."""
-    facts = await asyncio.to_thread(memory.recent_for_user, user.id)
+    """Return the signed-in user's own recent memories.
+
+    This endpoint is UI-facing (it drives the memory inspector), so by default
+    it omits F.E.A.R.'s own replies (``source="assistant_reply"``) — showing
+    them as "what it remembers about you" is confusing, and they would eat slots
+    in the capped window. Pass ``include_assistant_replies=true`` to get them.
+    """
+    facts = await asyncio.to_thread(memory.recent_for_user, user.id, 20, include_assistant_replies)
     return MemoryResponse(
         speaker=user.email,
         memories=[
@@ -699,12 +706,14 @@ async def memory_forget(
     user: User = Depends(get_current_user),
     memory: PersonalMemory = Depends(get_memory),
 ) -> dict[str, object]:
-    """Delete one of the signed-in user's memories by id."""
-    # Owned-memory ids are prefixed with the user id; refuse anything else so a
-    # user can only ever forget their own memories.
-    if not payload.memory_id.startswith(f"{user.id}-"):
-        return {"forgotten": False, "id": payload.memory_id}
-    forgotten = await asyncio.to_thread(memory.forget, payload.memory_id)
+    """Delete one of the signed-in user's memories by id.
+
+    Ownership is checked by the store against the memory's metadata (not the id
+    shape), so a user can forget their own memories — including ones claimed
+    after accounts existed — but never anyone else's. ``forgotten`` is False when
+    the memory isn't the caller's or doesn't exist.
+    """
+    forgotten = await asyncio.to_thread(memory.forget_for_user, payload.memory_id, user.id)
     return {"forgotten": forgotten, "id": payload.memory_id}
 
 

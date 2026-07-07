@@ -137,6 +137,73 @@ def test_claim_unowned(memory: PersonalMemory) -> None:
     assert [r.text for r in memory.recent_for_user("B")] == ["nota do Bruno"]  # not stolen
 
 
+def test_forget_for_user_deletes_own_memory(memory: PersonalMemory) -> None:
+    mid = memory.add_memory("memória da Ana", speaker="Ana", source="conversation", user_id="A")
+
+    assert memory.forget_for_user(mid, "A") is True
+    assert memory.recent_for_user("A") == []
+
+
+def test_forget_for_user_deletes_claimed_memory(memory: PersonalMemory) -> None:
+    # The bug this PR fixes: a memory created before accounts keeps its old,
+    # prefix-less id; claim_unowned only sets metadata.user_id. It must still be
+    # deletable by its new owner.
+    legacy_id = memory.add_memory("nota legada", speaker="x", source="conversation")  # user_id=""
+    memory.claim_unowned("A")
+    assert not legacy_id.startswith("A-")  # id was NOT rewritten by the claim
+
+    assert memory.forget_for_user(legacy_id, "A") is True
+    assert memory.recent_for_user("A") == []
+
+
+def test_forget_for_user_refuses_another_users_memory(memory: PersonalMemory) -> None:
+    mid_b = memory.add_memory(
+        "memória do Bruno", speaker="Bruno", source="conversation", user_id="B"
+    )
+
+    assert memory.forget_for_user(mid_b, "A") is False  # A cannot delete B's
+    assert [r.text for r in memory.recent_for_user("B")] == ["memória do Bruno"]  # intact
+
+
+def test_forget_for_user_refuses_unowned_and_missing(memory: PersonalMemory) -> None:
+    legacy_id = memory.add_memory("nota sem dono", speaker="x", source="conversation")  # user_id=""
+
+    assert memory.forget_for_user(legacy_id, "A") is False  # unowned -> not deletable
+    assert memory.forget_for_user("no-such-id", "A") is False  # missing -> False
+    # The unowned memory is untouched (still claimable/visible once owned).
+    memory.claim_unowned("A")
+    assert [r.text for r in memory.recent_for_user("A")] == ["nota sem dono"]
+
+
+def test_recent_for_user_can_exclude_assistant_replies(memory: PersonalMemory) -> None:
+    memory.add_memory("o que o usuário disse", speaker="Ana", source="conversation", user_id="A")
+    memory.add_memory(
+        "o que o F.E.A.R. respondeu", speaker="fear", source="assistant_reply", user_id="A"
+    )
+
+    with_replies = memory.recent_for_user("A", include_assistant_replies=True)
+    without_replies = memory.recent_for_user("A", include_assistant_replies=False)
+
+    assert {r.source for r in with_replies} == {"conversation", "assistant_reply"}
+    assert [r.source for r in without_replies] == ["conversation"]  # replies dropped
+
+
+def test_exclusion_happens_before_the_limit(memory: PersonalMemory) -> None:
+    # Newer assistant_reply entries must not consume the window: excluding them
+    # first should still surface the older, useful conversation memory.
+    memory.add_memory("lembrança útil", speaker="Ana", source="conversation", user_id="A")
+    time.sleep(0.005)
+    for index in range(3):
+        memory.add_memory(
+            f"resposta {index}", speaker="fear", source="assistant_reply", user_id="A"
+        )
+        time.sleep(0.005)
+
+    kept = memory.recent_for_user("A", n_results=2, include_assistant_replies=False)
+
+    assert [r.text for r in kept] == ["lembrança útil"]  # survived despite newer replies
+
+
 # --- ReferenceLibrary -------------------------------------------------------
 
 

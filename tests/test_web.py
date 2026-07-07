@@ -70,15 +70,31 @@ class FakeBrain:
 
 
 class FakeMemory:
-    def recent_for_user(self, user_id: str, n_results: int = 20) -> list[PersonalMemoryResult]:
-        return [
+    def recent_for_user(
+        self, user_id: str, n_results: int = 20, include_assistant_replies: bool = True
+    ) -> list[PersonalMemoryResult]:
+        items = [
             PersonalMemoryResult(
                 id="m-1", text="uma lembrança", speaker="voz", source="voice", timestamp=1.0
             )
         ]
+        # Mirror the store: F.E.A.R.'s own replies only come back when asked for.
+        if include_assistant_replies:
+            items.append(
+                PersonalMemoryResult(
+                    id="r-1",
+                    text="resposta interna",
+                    speaker="fear",
+                    source="assistant_reply",
+                    timestamp=2.0,
+                )
+            )
+        return items
 
-    def forget(self, memory_id: str) -> bool:
-        return bool(memory_id)
+    def forget_for_user(self, memory_id: str, user_id: str) -> bool:
+        # The real ownership check lives in the store (integration-tested). Here
+        # we simulate its verdict: ids starting with "own" belong to the caller.
+        return memory_id.startswith("own")
 
 
 class FakeTTS:
@@ -215,16 +231,34 @@ def test_memory(client: TestClient) -> None:
     assert body["memories"][0]["id"] == "m-1"
 
 
-def test_memory_forget_only_own(client: TestClient) -> None:
-    user, headers = _register(client)
-    mine = f"{user['id']}-voice-abc"
-    response = client.post("/memory/forget", json={"memory_id": mine}, headers=headers)
-    assert response.status_code == 200
-    assert response.json() == {"forgotten": True, "id": mine}
+def test_memory_excludes_assistant_replies_by_default(client: TestClient) -> None:
+    # The inspector endpoint is UI-facing, so F.E.A.R.'s own replies are omitted
+    # unless explicitly requested — they must not eat slots in the window.
+    _, headers = _register(client)
+    body = client.get("/memory", headers=headers).json()
+    sources = [item["source"] for item in body["memories"]]
+    assert "assistant_reply" not in sources
+    assert "voice" in sources
 
-    # An id not prefixed with this user's id (someone else's) is refused.
-    other = client.post("/memory/forget", json={"memory_id": "other-user-xyz"}, headers=headers)
-    assert other.json() == {"forgotten": False, "id": "other-user-xyz"}
+
+def test_memory_can_include_assistant_replies(client: TestClient) -> None:
+    _, headers = _register(client)
+    body = client.get("/memory?include_assistant_replies=true", headers=headers).json()
+    sources = [item["source"] for item in body["memories"]]
+    assert "assistant_reply" in sources
+
+
+def test_memory_forget_delegates_to_store_ownership(client: TestClient) -> None:
+    # The endpoint returns the store's ownership verdict. The store (integration-
+    # tested) allows a user to forget only their own memories, by metadata.
+    _, headers = _register(client)
+    mine = client.post("/memory/forget", json={"memory_id": "own-abc"}, headers=headers)
+    assert mine.status_code == 200
+    assert mine.json() == {"forgotten": True, "id": "own-abc"}
+
+    # A memory the store says isn't the caller's is refused.
+    other = client.post("/memory/forget", json={"memory_id": "someone-else"}, headers=headers)
+    assert other.json() == {"forgotten": False, "id": "someone-else"}
 
 
 def test_wearable_tap_requires_auth(client: TestClient) -> None:
