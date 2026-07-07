@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Script from "next/script";
 import "./globals.css";
+import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
   title: "F.E.A.R. Console",
@@ -25,7 +26,7 @@ export default function RootLayout({
         <Script id="fear-theme-init" strategy="beforeInteractive">
           {THEME_INIT}
         </Script>
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
