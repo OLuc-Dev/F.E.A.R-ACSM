@@ -1,6 +1,7 @@
 "use client";
 
 import { Component, type ReactNode, Suspense, useMemo, useRef } from "react";
+import { useReducedMotion } from "framer-motion";
 import { Canvas, useFrame } from "@react-three/fiber";
 import {
   Center,
@@ -34,7 +35,15 @@ const EYE = { fx: 0.34, fy: -0.08, fz: 0.95, r: 0.08 } as const;
 // How long (seconds) a "new memory" surge takes to bloom and settle back.
 const PULSE_SECONDS = 3.2;
 
-function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: number }) {
+function EnergyCore({
+  status,
+  pulse = 0,
+  reduced = false,
+}: {
+  status: PresenceStatus;
+  pulse?: number;
+  reduced?: boolean;
+}) {
   const shell = useRef<THREE.Group>(null);
   const innerShell = useRef<THREE.Mesh>(null);
   // The surge shell: normally invisible, it flares through the filigree whenever
@@ -46,6 +55,9 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
   const hot = status === "speaking" || status === "error";
 
   useFrame((state, delta) => {
+    // Reduced motion: the filigree rests and the memory surge never flares —
+    // the core is still, only its (static) colour reflects the state.
+    if (reduced) return;
     const t = state.clock.elapsedTime;
     if (shell.current) {
       shell.current.rotation.y += delta * (hot ? 0.34 : 0.18);
@@ -127,14 +139,29 @@ function EnergyCore({ status, pulse = 0 }: { status: PresenceStatus; pulse?: num
         </mesh>
       </group>
 
-      {/* Embers: a few quiet motes — restrained, not a particle storm. */}
-      <Sparkles count={34} scale={[7, 7, 7]} size={1.1} speed={0.2} color="#ffc98f" opacity={0.28} />
-      <Sparkles count={10} scale={[9, 9, 9]} size={2.3} speed={0.12} color="#ff9d47" opacity={0.24} />
+      {/* Embers: a few quiet motes — restrained, not a particle storm. They
+          hold still under reduced motion. */}
+      <Sparkles
+        count={34}
+        scale={[7, 7, 7]}
+        size={1.1}
+        speed={reduced ? 0 : 0.2}
+        color="#ffc98f"
+        opacity={0.28}
+      />
+      <Sparkles
+        count={10}
+        scale={[9, 9, 9]}
+        size={2.3}
+        speed={reduced ? 0 : 0.12}
+        color="#ff9d47"
+        opacity={0.24}
+      />
     </group>
   );
 }
 
-function HeadModel({ status }: { status: PresenceStatus }) {
+function HeadModel({ status, reduced = false }: { status: PresenceStatus; reduced?: boolean }) {
   const group = useRef<THREE.Group>(null);
   const leftEye = useRef<THREE.MeshStandardMaterial>(null);
   const rightEye = useRef<THREE.MeshStandardMaterial>(null);
@@ -176,9 +203,24 @@ function HeadModel({ status }: { status: PresenceStatus }) {
   const error = status === "error";
 
   useFrame((state, delta) => {
+    if (!group.current) return;
+
+    // Reduced motion: a still, forward-facing pose with a steady cold eye glow
+    // that still reads the state — no drift, nod, breath, cursor-tracking, sway
+    // or blink.
+    if (reduced) {
+      group.current.rotation.set(0, 0, 0);
+      group.current.scale.setScalar(1);
+      const steady = error ? 4.4 : speaking ? 3.2 : thinking ? 1.6 : 2.1;
+      if (leftEye.current) leftEye.current.emissiveIntensity = steady;
+      if (rightEye.current) rightEye.current.emissiveIntensity = steady;
+      if (leftGlow.current) leftGlow.current.intensity = 0.5;
+      if (rightGlow.current) rightGlow.current.intensity = 0.5;
+      return;
+    }
+
     const t = state.clock.elapsedTime;
     const k = Math.min(1, delta * 3.2);
-    if (!group.current) return;
 
     // Idle drift + cursor parallax; a faster nod while speaking, a slow tilt while thinking.
     const nod = speaking ? Math.sin(t * 9) * 0.05 : thinking ? Math.sin(t * 1.4) * 0.04 : 0;
@@ -298,8 +340,11 @@ export function FearPresence(props: { status?: PresenceStatus; pulse?: number })
 }
 
 function PresenceCanvas({ status = "online", pulse = 0 }: { status?: PresenceStatus; pulse?: number }) {
+  // Honour the OS "reduce motion" setting inside the 3D scene, and cap the DPR
+  // so high-density displays don't pay for 2× pixels on a stylized scene.
+  const reduced = useReducedMotion() ?? false;
   return (
-    <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }}>
+    <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: true }}>
       {/* No opaque background: the canvas is transparent so the deck and the
           amber floor-glow show through, and the core reads as emanating into the
           column instead of sitting in a black box. Fog still adds warm depth to
@@ -338,10 +383,10 @@ function PresenceCanvas({ status = "online", pulse = 0 }: { status?: PresenceSta
           />
         </Environment>
 
-        <EnergyCore status={status} pulse={pulse} />
+        <EnergyCore status={status} pulse={pulse} reduced={reduced} />
 
-        <Float speed={1.2} rotationIntensity={0} floatIntensity={0.5}>
-          <HeadModel status={status} />
+        <Float speed={reduced ? 0 : 1.2} rotationIntensity={0} floatIntensity={reduced ? 0 : 0.5}>
+          <HeadModel status={status} reduced={reduced} />
         </Float>
 
         <ContactShadows
