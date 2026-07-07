@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useRef } from "react";
+import { Component, type ReactNode, Suspense, useMemo, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import {
   Center,
@@ -252,7 +252,52 @@ function HeadModel({ status }: { status: PresenceStatus }) {
 
 useGLTF.preload(MODEL_URL);
 
-export function FearPresence({ status = "online", pulse = 0 }: { status?: PresenceStatus; pulse?: number }) {
+// Premium, WebGL-free stand-in: a calm amber core on the dark stage. Shown when
+// the GPU/WebGL context is unavailable or the canvas errors, so the presence
+// degrades gracefully instead of collapsing to a blank or broken box.
+function StaticPresence() {
+  return (
+    <div className="flex h-full w-full items-center justify-center">
+      <div className="relative grid size-24 place-items-center">
+        <div
+          aria-hidden
+          className="absolute inset-0 rounded-full blur-2xl"
+          style={{ background: "radial-gradient(circle, hsl(var(--energy) / 0.45), transparent 70%)" }}
+        />
+        <div
+          aria-hidden
+          className="size-3 rounded-full"
+          style={{
+            background: "hsl(var(--energy))",
+            boxShadow: "0 0 18px 5px hsl(var(--energy) / 0.5)",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Catches a failed WebGL context (or any render error inside the canvas) and
+// falls back to the static presence rather than crashing the deck.
+class PresenceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  render() {
+    return this.state.failed ? <StaticPresence /> : this.props.children;
+  }
+}
+
+export function FearPresence(props: { status?: PresenceStatus; pulse?: number }) {
+  return (
+    <PresenceBoundary>
+      <PresenceCanvas {...props} />
+    </PresenceBoundary>
+  );
+}
+
+function PresenceCanvas({ status = "online", pulse = 0 }: { status?: PresenceStatus; pulse?: number }) {
   return (
     <Canvas camera={{ position: [0, 0, 6.2], fov: 40 }} dpr={[1, 2]} gl={{ antialias: true, alpha: true }}>
       {/* No opaque background: the canvas is transparent so the deck and the
