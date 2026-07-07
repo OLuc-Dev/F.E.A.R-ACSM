@@ -7,7 +7,6 @@ import {
   BrainCircuit,
   Check,
   Cpu,
-  Database,
   FileText,
   Loader2,
   Plug,
@@ -20,18 +19,16 @@ import {
 import {
   addKnowledgeText,
   deleteKnowledge,
-  forgetMemory,
   getConfig,
-  getMemory,
   listKnowledge,
   updateConfig,
   type ConfigResponse,
   type ConfigUpdate,
   type KnowledgeListResponse,
-  type MemoryItem,
   type StatusResponse,
 } from "@/lib/api";
 import { fade, springSoft } from "@/lib/motion";
+import { MemoryTab } from "@/components/ui/memory-tab";
 
 export type Tab = "conhecimento" | "comportamento" | "memoria";
 
@@ -40,19 +37,6 @@ const TAB_LABELS: Record<Tab, string> = {
   comportamento: "Comportamento",
   memoria: "Memória",
 };
-
-// Short relative time for the memory list (client-side; pt-BR).
-function timeAgo(epochSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - epochSeconds));
-  if (seconds < 60) return "agora";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `há ${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `há ${hours} h`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `há ${days} d`;
-  return new Date(epochSeconds * 1000).toLocaleDateString("pt-BR");
-}
 
 const MODE_META: Record<string, { label: string; desc: string }> = {
   equilibrio: { label: "Equilíbrio", desc: "Frio, lúcido e leal. A persona como ele é." },
@@ -103,7 +87,6 @@ export function SettingsPanel({
   initialTab?: Tab;
 }) {
   const [tab, setTab] = useState<Tab>("conhecimento");
-  const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [data, setData] = useState<KnowledgeListResponse | null>(null);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [modelInput, setModelInput] = useState("");
@@ -137,22 +120,12 @@ export function SettingsPanel({
     }
   }, []);
 
-  const refreshMemories = useCallback(async () => {
-    try {
-      const data = await getMemory();
-      setMemories(data.memories);
-    } catch {
-      setMemories([]);
-    }
-  }, []);
-
   useEffect(() => {
     if (!open) return;
     setTab(initialTab);
     void refresh();
     void refreshConfig();
-    void refreshMemories();
-  }, [open, initialTab, refresh, refreshConfig, refreshMemories]);
+  }, [open, initialTab, refresh, refreshConfig]);
 
   // Close on Escape while the drawer is open.
   useEffect(() => {
@@ -199,20 +172,6 @@ export function SettingsPanel({
       setTextName("");
       setTextContent("");
     });
-  }
-
-  async function forgetOne(memoryId: string) {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await forgetMemory(memoryId);
-      await refreshMemories();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Não consegui esquecer.");
-    } finally {
-      setBusy(false);
-    }
   }
 
   const sources = data?.sources ?? [];
@@ -488,64 +447,7 @@ export function SettingsPanel({
                       </section>
                     </>
                   ) : (
-                    <>
-                      <p className="text-[13px] leading-6 text-muted-foreground">
-                        O que a F.E.A.R. reteve sobre você — das conversas e da voz. Ele consulta isto sozinho
-                        ao responder. O que não te servir mais, apague.
-                      </p>
-
-                      <section className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <SectionLabel icon={<Database className="size-3.5" />}>
-                            Lembranças de {speaker || "você"}
-                          </SectionLabel>
-                          {memories.length > 0 && (
-                            <span className="label-tn text-muted-foreground/60">{memories.length}</span>
-                          )}
-                        </div>
-
-                        {memories.length === 0 ? (
-                          <p className="rounded-xl border border-dashed border-overlay/10 bg-overlay/[0.02] px-3 py-4 text-center text-[13px] text-muted-foreground/70">
-                            Nada guardado ainda. Ele lembra à medida que vocês conversam.
-                          </p>
-                        ) : (
-                          <ul className="space-y-1.5">
-                            <AnimatePresence initial={false}>
-                              {memories.map((item) => (
-                                <motion.li
-                                  key={item.id}
-                                  layout
-                                  initial={{ opacity: 0, scale: 0.96 }}
-                                  animate={{ opacity: 1, scale: 1 }}
-                                  exit={{ opacity: 0, scale: 0.96 }}
-                                  transition={springSoft}
-                                  className="flex items-start justify-between gap-3 rounded-xl border border-overlay/10 bg-overlay/[0.025] px-3 py-2.5"
-                                >
-                                  <div className="min-w-0 flex-1 space-y-1">
-                                    <p className="text-sm leading-5 text-foreground/90">{item.text}</p>
-                                    <p className="label-tn text-muted-foreground/60">
-                                      {item.source} · {timeAgo(item.timestamp)}
-                                    </p>
-                                  </div>
-                                  <button
-                                    onClick={() => void forgetOne(item.id)}
-                                    disabled={busy}
-                                    aria-label="Esquecer esta lembrança"
-                                    className="tap grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger disabled:opacity-50"
-                                  >
-                                    <Trash2 className="size-3.5" />
-                                  </button>
-                                </motion.li>
-                              ))}
-                            </AnimatePresence>
-                          </ul>
-                        )}
-
-                        <p className="text-[11px] leading-4 text-muted-foreground/50">
-                          Esquecer é permanente — ele não recupera depois.
-                        </p>
-                      </section>
-                    </>
+                    <MemoryTab speaker={speaker} />
                   )}
                 </motion.div>
               </AnimatePresence>

@@ -41,6 +41,11 @@ export interface MemoryResponse {
   memories: MemoryItem[];
 }
 
+export interface ForgetResult {
+  forgotten: boolean;
+  id: string;
+}
+
 export interface StatusResponse {
   assistant: string;
   openrouter: boolean;
@@ -156,8 +161,12 @@ export async function getMemory(): Promise<MemoryResponse> {
   return (await response.json()) as MemoryResponse;
 }
 
-export async function forgetMemory(memoryId: string): Promise<void> {
-  await postJson("/memory/forget", { memory_id: memoryId });
+// Returns the backend's verdict: `forgotten` is false when the server refused
+// (e.g. a claimed memory whose id predates accounts), so the UI can surface a
+// recoverable failure instead of a silent success.
+export async function forgetMemory(memoryId: string): Promise<ForgetResult> {
+  const response = await postJson("/memory/forget", { memory_id: memoryId });
+  return (await response.json()) as ForgetResult;
 }
 
 export async function resetConversation(): Promise<void> {
