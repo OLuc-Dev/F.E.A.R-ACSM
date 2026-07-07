@@ -200,3 +200,87 @@ describe("MemoryTab", () => {
     expect(screen.getByText("apagável")).toBeTruthy();
   });
 });
+
+// --- PR #19: local search, source filters, date grouping (longer lists) ---
+
+const itemAt = (id: string, text: string, source: string, ts: number): MemoryItem => ({
+  id,
+  text,
+  source,
+  timestamp: ts,
+});
+
+// 4 visible memories (> threshold) so the toolbar shows: 3 conversation + 1 voice,
+// spanning today / last-7-days / older.
+const manyMemories = () => {
+  const t = Date.now() / 1000;
+  return [
+    itemAt("c1", "Prefiro café forte", "conversation", t - 3600),
+    itemAt("c2", "Reunião de produto amanhã", "conversation", t - 7200),
+    itemAt("c3", "Notas no Obsidian sobre design", "conversation", t - 3 * 86400),
+    itemAt("v1", "Comando de voz gravado", "voice", t - 30 * 86400),
+  ];
+};
+
+describe("MemoryTab — search, filters, grouping", () => {
+  it("keeps a short list flat: no search toolbar below the threshold", async () => {
+    withMemories([item("a", "só uma", "conversation"), item("b", "e outra", "voice")]);
+    render(<MemoryTab speaker="Lucas" />);
+    await screen.findByText("só uma");
+    expect(screen.queryByPlaceholderText(MEMORY_COPY.searchPlaceholder)).toBeNull();
+  });
+
+  it("shows the search toolbar + date groups on a longer list", async () => {
+    withMemories(manyMemories());
+    render(<MemoryTab speaker="Lucas" />);
+    await screen.findByText("Prefiro café forte");
+    expect(screen.getByPlaceholderText(MEMORY_COPY.searchPlaceholder)).toBeTruthy();
+    expect(screen.getByText(MEMORY_COPY.searchScopeNote)).toBeTruthy();
+    expect(screen.getByText("Hoje")).toBeTruthy();
+    expect(screen.getByText("Últimos 7 dias")).toBeTruthy();
+    expect(screen.getByText("Mais antigas")).toBeTruthy();
+  });
+
+  it("filters the visible memories by text (accent-insensitive)", async () => {
+    withMemories(manyMemories());
+    render(<MemoryTab speaker="Lucas" />);
+    await screen.findByText("Prefiro café forte");
+    fireEvent.change(screen.getByPlaceholderText(MEMORY_COPY.searchPlaceholder), {
+      target: { value: "cafe" },
+    });
+    expect(screen.getByText("Prefiro café forte")).toBeTruthy();
+    expect(screen.queryByText("Reunião de produto amanhã")).toBeNull();
+    expect(screen.queryByText("Comando de voz gravado")).toBeNull();
+  });
+
+  it("shows a no-results state when the search matches nothing", async () => {
+    withMemories(manyMemories());
+    render(<MemoryTab speaker="Lucas" />);
+    await screen.findByText("Prefiro café forte");
+    fireEvent.change(screen.getByPlaceholderText(MEMORY_COPY.searchPlaceholder), {
+      target: { value: "zzzzz" },
+    });
+    expect(screen.getByText(MEMORY_COPY.noResults)).toBeTruthy();
+  });
+
+  it("shows filter chips only for sources actually present", async () => {
+    withMemories(manyMemories());
+    render(<MemoryTab speaker="Lucas" />);
+    await screen.findByText("Prefiro café forte");
+    expect(screen.getByRole("button", { name: MEMORY_COPY.filterAll })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Conversa" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Voz" })).toBeTruthy();
+    // Obsidian appears in a memory's TEXT but no memory has that source — no chip.
+    expect(screen.queryByRole("button", { name: "Obsidian" })).toBeNull();
+  });
+
+  it("filters by source when a chip is selected", async () => {
+    withMemories(manyMemories());
+    render(<MemoryTab speaker="Lucas" />);
+    await screen.findByText("Prefiro café forte");
+    fireEvent.click(screen.getByRole("button", { name: "Voz" }));
+    expect(screen.getByText("Comando de voz gravado")).toBeTruthy();
+    expect(screen.queryByText("Prefiro café forte")).toBeNull();
+    expect(screen.queryByText("Reunião de produto amanhã")).toBeNull();
+  });
+});
