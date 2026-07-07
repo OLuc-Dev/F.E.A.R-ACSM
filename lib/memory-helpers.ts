@@ -21,6 +21,11 @@ export const MEMORY_COPY = {
   forgetRefused: "Este registro não pôde ser removido agora.",
   // Shown only when we actually hid something, so the note is always truthful.
   hiddenNote: "Respostas internas do F.E.A.R não aparecem nesta visão.",
+  searchPlaceholder: "Buscar nas memórias…",
+  noResults: "Nenhuma memória encontrada.",
+  // Honest about scope: search runs over what's loaded here, not the whole store.
+  searchScopeNote: "A busca considera as memórias carregadas nesta visão.",
+  filterAll: "Tudo",
 } as const;
 
 // Sources the store can attach to a memory. `assistant_reply` (F.E.A.R.'s own
@@ -47,6 +52,78 @@ export const HIDDEN_SOURCES = new Set(["assistant_reply"]);
 /** The memories a user should actually see: everything but F.E.A.R.'s own words. */
 export function visibleMemories<T extends { source: string }>(items: T[]): T[] {
   return items.filter((item) => !HIDDEN_SOURCES.has(item.source));
+}
+
+// Capitalise the first letter for chip labels ("conversa" → "Conversa"), so
+// humanised sources read uniformly next to already-capitalised ones (Spotify).
+export function sourceChipLabel(source: string): string {
+  const label = humanizeSource(source);
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+/** Distinct sources present in a list, in first-seen order — drives the filter chips. */
+export function presentSources<T extends { source: string }>(items: T[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    if (!seen.has(item.source)) {
+      seen.add(item.source);
+      out.push(item.source);
+    }
+  }
+  return out;
+}
+
+// Case- and accent-insensitive so "cafe" finds "café" and "OBSIDIAN" finds
+// "Obsidian" — pt-BR users should not fight diacritics to find a memory.
+const normalizeText = (text: string) =>
+  text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "");
+
+/** Filter by a free-text query over the memory text. An empty query matches all. */
+export function searchMemories<T extends { text: string }>(items: T[], query: string): T[] {
+  const needle = normalizeText(query.trim());
+  if (!needle) return items;
+  return items.filter((item) => normalizeText(item.text).includes(needle));
+}
+
+export type RecencyKey = "hoje" | "semana" | "antigas";
+export interface MemoryGroup<T> {
+  key: RecencyKey;
+  label: string;
+  items: T[];
+}
+
+const RECENCY_LABELS: Record<RecencyKey, string> = {
+  hoje: "Hoje",
+  semana: "Últimos 7 dias",
+  antigas: "Mais antigas",
+};
+
+/**
+ * Bucket memories by recency using rolling windows from `now`: the last 24h
+ * ("Hoje"), the last 7 days, and older. Rolling (not calendar) windows keep it
+ * timezone-independent and deterministic. Only non-empty groups are returned,
+ * in that order; item order within a group is preserved (the backend already
+ * sorts newest-first).
+ */
+export function groupByRecency<T extends { timestamp: number }>(
+  items: T[],
+  now: number = Date.now(),
+): MemoryGroup<T>[] {
+  const nowSeconds = now / 1000;
+  const buckets: Record<RecencyKey, T[]> = { hoje: [], semana: [], antigas: [] };
+  for (const item of items) {
+    const elapsed = nowSeconds - item.timestamp;
+    if (elapsed < 86400) buckets.hoje.push(item);
+    else if (elapsed < 7 * 86400) buckets.semana.push(item);
+    else buckets.antigas.push(item);
+  }
+  return (["hoje", "semana", "antigas"] as const)
+    .filter((key) => buckets[key].length > 0)
+    .map((key) => ({ key, label: RECENCY_LABELS[key], items: buckets[key] }));
 }
 
 /** Short relative time for the memory list (client-side; pt-BR). */
