@@ -25,7 +25,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 import { ApiError, streamCommand } from "@/lib/api";
-import { EMPTY_REPLY_NOTICE } from "@/lib/chat-helpers";
+import { EMPTY_REPLY_NOTICE, INTERRUPTED_EMPTY_NOTICE, INTERRUPTED_NOTICE } from "@/lib/chat-helpers";
 import { useConversation } from "@/lib/use-conversation";
 
 const stream = vi.mocked(streamCommand);
@@ -106,6 +106,76 @@ describe("useConversation", () => {
     expect(result.current.status).toBe("error");
     expect(fearText(result.current.messages)).toMatch(/servidor/i);
     expect(fearText(result.current.messages)).not.toMatch(/HTTP/);
+  });
+
+  // A stream that emits an optional first chunk then rejects when aborted —
+  // mirrors how streamCommand behaves when the AbortController fires.
+  const abortableStream = (firstChunk?: string) =>
+    stream.mockImplementation(
+      (_req, onChunk, signal) =>
+        new Promise<void>((_resolve, reject) => {
+          if (firstChunk) onChunk(firstChunk);
+          (signal as AbortSignal | undefined)?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          );
+        }),
+    );
+
+  it("manual stop keeps partial tokens and notes the interruption (no error)", async () => {
+    abortableStream("resposta parcial");
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      const p = result.current.send("pergunta", "user");
+      result.current.stop();
+      await p;
+    });
+    expect(fearText(result.current.messages)).toContain("resposta parcial");
+    expect(result.current.messages.some((m) => m.role === "system" && m.content === INTERRUPTED_NOTICE)).toBe(
+      true,
+    );
+    expect(result.current.status).toBe("online"); // never "error"
+    expect(fearText(result.current.messages)).not.toMatch(/abort|HTTP/i);
+  });
+
+  it("manual stop with no tokens shows a neutral notice (no infinite dots)", async () => {
+    abortableStream();
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      const p = result.current.send("pergunta", "user");
+      result.current.stop();
+      await p;
+    });
+    expect(fearText(result.current.messages)).toBe(INTERRUPTED_EMPTY_NOTICE);
+    expect(result.current.status).toBe("online");
+  });
+
+  it("lets the user send again right after a manual stop", async () => {
+    abortableStream("parcial");
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      const p = result.current.send("primeira", "user");
+      result.current.stop();
+      await p;
+    });
+    stream.mockImplementation(async (_req, onChunk) => {
+      onChunk("nova resposta");
+    });
+    await act(async () => {
+      await result.current.send("segunda", "user");
+    });
+    expect(userTexts(result.current.messages)).toEqual(["primeira", "segunda"]);
+    expect(fearText(result.current.messages)).toBe("nova resposta");
+    expect(result.current.status).toBe("online");
+  });
+
+  it("stop is a no-op when idle", () => {
+    const { result } = renderHook(() => useConversation());
+    const before = result.current.messages.length;
+    act(() => {
+      result.current.stop();
+    });
+    expect(result.current.messages.length).toBe(before);
+    expect(result.current.status).toBe("online");
   });
 
   it("retry replays the last question", async () => {

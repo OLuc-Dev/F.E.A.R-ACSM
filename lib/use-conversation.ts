@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { captureVoiceOnce, resetConversation, sendCommand, streamCommand } from "@/lib/api";
-import { EMPTY_REPLY_NOTICE, TIMEOUT_NOTICE, humanizeError, isBlankMessage } from "@/lib/chat-helpers";
+import {
+  EMPTY_REPLY_NOTICE,
+  INTERRUPTED_EMPTY_NOTICE,
+  INTERRUPTED_NOTICE,
+  TIMEOUT_NOTICE,
+  humanizeError,
+  isBlankMessage,
+} from "@/lib/chat-helpers";
 import { primeSpeech, speak, stopSpeaking } from "@/lib/speech";
 
 export type Role = "user" | "fear" | "system";
@@ -42,6 +49,9 @@ export function useConversation() {
   const busyRef = useRef(false);
   // The last thing the user asked, so "tentar de novo" can replay it verbatim.
   const lastPromptRef = useRef<{ text: string; speaker: string } | null>(null);
+  // Marks a *manual* stop so the abort is treated as a neutral interruption
+  // (never an error), distinct from a timeout abort or an unmount abort.
+  const stopRef = useRef(false);
 
   const nextId = useCallback(() => idRef.current++, []);
 
@@ -124,6 +134,7 @@ export function useConversation() {
       // Enters would both see false and double-send. A ref flips synchronously.
       if (isBlankMessage(trimmed) || busyRef.current) return;
       busyRef.current = true;
+      stopRef.current = false;
 
       const who = speaker || "user";
       lastPromptRef.current = { text: trimmed, speaker: who };
@@ -179,10 +190,27 @@ export function useConversation() {
         if (voiceOnRef.current) speak(full);
       } catch (error) {
         clearTimeout(watchdog);
-        // A silent abort (unmount / navigation) — leave the thread untouched.
-        if (controller.signal.aborted && !timedOut) return;
-        const notice = timedOut ? TIMEOUT_NOTICE : humanizeError(error);
-        // Keep any partial reply, then add the notice beneath it.
+        // A stalled stream that the watchdog aborted → recoverable timeout error.
+        if (timedOut) {
+          setLastFear(full ? `${full}\n\n${TIMEOUT_NOTICE}` : TIMEOUT_NOTICE);
+          setStatus("error");
+          return;
+        }
+        // An abort that isn't a timeout is either a manual stop or an unmount.
+        if (controller.signal.aborted) {
+          if (stopRef.current) {
+            // Manual interruption: neutral, never an error, never leaks AbortError.
+            // Keep partial tokens and note the cut; if nothing arrived, say so
+            // plainly so no typing dots are left spinning.
+            if (full.trim()) pushMessage("system", INTERRUPTED_NOTICE);
+            else setLastFear(INTERRUPTED_EMPTY_NOTICE);
+            setStatus("online");
+          }
+          // else: unmount / navigation — leave the thread untouched, stay silent.
+          return;
+        }
+        // A real network/API failure → human error text (never a raw HTTP code).
+        const notice = humanizeError(error);
         setLastFear(full ? `${full}\n\n${notice}` : notice);
         setStatus("error");
       } finally {
@@ -200,6 +228,14 @@ export function useConversation() {
     const last = lastPromptRef.current;
     if (last && !busyRef.current) void send(last.text, last.speaker);
   }, [send]);
+
+  // Manually stop the in-flight reply. Aborts the stream; `send`'s catch turns
+  // that into a neutral interruption (not an error). No-op when idle.
+  const stop = useCallback(() => {
+    if (!busyRef.current) return;
+    stopRef.current = true;
+    abortRef.current?.abort();
+  }, []);
 
   const handleAppAction = useCallback(
     async (appId: string, speaker: string) => {
@@ -251,6 +287,7 @@ export function useConversation() {
     toggleVoice,
     send,
     retry,
+    stop,
     handleAppAction,
   };
 }
