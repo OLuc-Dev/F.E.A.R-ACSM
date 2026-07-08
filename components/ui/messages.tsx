@@ -7,12 +7,15 @@ import {
   AlertTriangle,
   ArrowRight,
   Atom,
+  Database,
   Gavel,
   Telescope,
   TrendingUp,
   Zap,
   type LucideIcon,
 } from "lucide-react";
+
+import { MEMORY_COPY, consultedChipLabel } from "@/lib/memory-helpers";
 
 // Message rendering for the F.E.A.R. thread, including a refined layout for the
 // persona's "Conselho Interno" (internal council) strategic replies.
@@ -234,15 +237,48 @@ export function SystemMessage({ content }: { content: string }) {
   );
 }
 
-export function AssistantMessage({ content }: { content: string }) {
+export function AssistantMessage({
+  content,
+  consultedCount = 0,
+  onConsultedClick,
+}: {
+  content: string;
+  // How many memories were consulted to build this reply's context ("consulted",
+  // never "used"). Zero hides the chip; the ids themselves never reach this
+  // component, so raw ids can never leak into the thread.
+  consultedCount?: number;
+  onConsultedClick?: () => void;
+}) {
   const strat = content ? parseStrategicReply(content) : null;
 
   return (
     <div className="flex justify-start">
-      {/* min-w-0 lets a wide code block scroll inside the bubble instead of
-          forcing the whole column (and the page) wider on mobile. */}
-      <div className="min-w-0 max-w-[92%] rounded-2xl rounded-bl-md border border-overlay/[0.08] bg-overlay/[0.04] px-4 py-3 text-[15px] leading-7 text-foreground/90 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
-        {!content ? <TypingDots /> : strat ? <StrategicReply strat={strat} /> : <ReplyBody text={content} />}
+      <div className="min-w-0 max-w-[92%]">
+        {/* min-w-0 lets a wide code block scroll inside the bubble instead of
+            forcing the whole column (and the page) wider on mobile; w-fit keeps
+            a short bubble sized by its text, not by the chip under it. */}
+        <div className="min-w-0 w-fit max-w-full rounded-2xl rounded-bl-md border border-overlay/[0.08] bg-overlay/[0.04] px-4 py-3 text-[15px] leading-7 text-foreground/90 shadow-[0_16px_40px_-28px_rgba(0,0,0,0.9)]">
+          {!content ? (
+            <TypingDots />
+          ) : strat ? (
+            <StrategicReply strat={strat} />
+          ) : (
+            <ReplyBody text={content} />
+          )}
+        </div>
+        {/* A quiet transparency cue, not a badge: which context this reply drew
+            on. Only once the reply has substance — never over the typing dots. */}
+        {content && consultedCount > 0 && (
+          <button
+            onClick={onConsultedClick}
+            title={MEMORY_COPY.consultedHint}
+            aria-label={`${consultedChipLabel(consultedCount)} — ver na memória`}
+            className="tap mt-1.5 inline-flex max-w-full items-center gap-1.5 rounded-full border border-overlay/10 bg-overlay/[0.03] px-2.5 py-1 text-[11px] text-muted-foreground transition hover:border-brand/30 hover:text-foreground"
+          >
+            <Database className="size-3 shrink-0 text-brand/60" />
+            <span className="truncate">{consultedChipLabel(consultedCount)}</span>
+          </button>
+        )}
       </div>
     </div>
   );

@@ -79,12 +79,16 @@ export function SettingsPanel({
   status,
   speaker,
   initialTab = "conhecimento",
+  highlightMemoryIds,
 }: {
   open: boolean;
   onClose: () => void;
   status: StatusResponse | null;
   speaker: string;
   initialTab?: Tab;
+  // Memories to mark as "consultada nesta resposta" in the memory tab (set when
+  // the inspector is opened from a reply's chip).
+  highlightMemoryIds?: string[];
 }) {
   const [tab, setTab] = useState<Tab>("conhecimento");
   const [data, setData] = useState<KnowledgeListResponse | null>(null);
@@ -447,7 +451,7 @@ export function SettingsPanel({
                       </section>
                     </>
                   ) : (
-                    <MemoryTab speaker={speaker} />
+                    <MemoryTab speaker={speaker} highlightIds={highlightMemoryIds} />
                   )}
                 </motion.div>
               </AnimatePresence>

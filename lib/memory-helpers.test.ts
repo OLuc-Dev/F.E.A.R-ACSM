@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   HIDDEN_SOURCES,
+  consultedChipLabel,
   groupByRecency,
   humanizeSource,
   presentSources,
@@ -41,6 +42,14 @@ describe("visibleMemories", () => {
   it("returns everything when nothing is hidden", () => {
     const items = [{ source: "conversation" }, { source: "obsidian" }];
     expect(visibleMemories(items)).toHaveLength(2);
+  });
+});
+
+describe("consultedChipLabel", () => {
+  it("reads singular for one and plural for many — always 'consultada', never 'usada'", () => {
+    expect(consultedChipLabel(1)).toBe("1 memória consultada nesta resposta");
+    expect(consultedChipLabel(3)).toBe("3 memórias consultadas nesta resposta");
+    expect(consultedChipLabel(1)).not.toMatch(/usada/);
   });
 });
 

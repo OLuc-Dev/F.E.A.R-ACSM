@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { ReplyBody } from "@/components/ui/messages";
+import { AssistantMessage, ReplyBody } from "@/components/ui/messages";
 
 // Render the markdown reply to an HTML string (no DOM/jsdom needed) and assert
 // on the output — covers the scope plus the security guarantees.
@@ -55,5 +55,39 @@ describe("ReplyBody markdown", () => {
   it("neutralizes a javascript: link", () => {
     const out = html("[x](javascript:alert(1))");
     expect(out).not.toContain("javascript:");
+  });
+});
+
+// The consulted-memories chip: an honest transparency cue under the reply.
+describe("AssistantMessage consulted chip", () => {
+  const render = (content: string, consultedCount?: number) =>
+    renderToStaticMarkup(<AssistantMessage content={content} consultedCount={consultedCount} />);
+
+  it("renders no chip when nothing was consulted", () => {
+    expect(render("resposta simples")).not.toContain("consultada");
+    expect(render("resposta simples", 0)).not.toContain("consultada");
+  });
+
+  it("renders the singular label for one memory", () => {
+    expect(render("resposta", 1)).toContain("1 memória consultada nesta resposta");
+  });
+
+  it("renders the plural label for several memories", () => {
+    expect(render("resposta", 3)).toContain("3 memórias consultadas nesta resposta");
+  });
+
+  it('says "consultada", never "usada" — no false causality', () => {
+    const out = render("resposta", 2);
+    expect(out).toContain("consultadas nesta resposta");
+    expect(out).not.toMatch(/usadas?\s/);
+  });
+
+  it("never shows the chip over the typing dots (empty content)", () => {
+    expect(render("", 2)).not.toContain("consultada");
+  });
+
+  it("never renders raw memory ids (they are not even given to the component)", () => {
+    // The chip receives only a count — by design ids cannot leak into the thread.
+    expect(render("resposta", 2)).not.toContain("consultedMemoryIds");
   });
 });

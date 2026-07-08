@@ -171,6 +171,10 @@ export default function HomePage() {
   const [systemStatus, setSystemStatus] = useState<StatusResponse | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("conhecimento");
+  // Memories consulted by the reply whose chip was clicked — highlighted in the
+  // memory inspector while it stays open, cleared on close so a later visit via
+  // the gear/dock starts unmarked.
+  const [consultedFocus, setConsultedFocus] = useState<string[]>([]);
   const [authOpen, setAuthOpen] = useState(false);
   const [promptedKey, setPromptedKey] = useState(false);
   const [sysOpen, setSysOpen] = useState(false);
@@ -185,6 +189,13 @@ export default function HomePage() {
   function openSettings(tab: SettingsTab = "conhecimento") {
     setSettingsTab(tab);
     setSettingsOpen(true);
+  }
+
+  // A reply's consulted-memories chip: open the inspector with those memories
+  // marked. Works whether the drawer is closed or already open on another tab.
+  function openConsultedMemories(ids: string[]) {
+    setConsultedFocus(ids);
+    openSettings("memoria");
   }
 
   const {
@@ -485,7 +496,11 @@ export default function HomePage() {
                       ) : message.role === "system" ? (
                         <SystemMessage content={message.content} />
                       ) : (
-                        <AssistantMessage content={message.content} />
+                        <AssistantMessage
+                          content={message.content}
+                          consultedCount={message.consultedMemoryIds?.length ?? 0}
+                          onConsultedClick={() => openConsultedMemories(message.consultedMemoryIds ?? [])}
+                        />
                       )}
                     </motion.div>
                   ))}
@@ -667,10 +682,14 @@ export default function HomePage() {
 
       <SettingsPanel
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          setConsultedFocus([]);
+        }}
         status={systemStatus}
         speaker={speaker}
         initialTab={settingsTab}
+        highlightMemoryIds={consultedFocus}
       />
 
       <AuthPanel
