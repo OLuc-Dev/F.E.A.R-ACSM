@@ -8,6 +8,7 @@ import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -523,6 +524,9 @@ app.add_middleware(
     allow_credentials="*" not in allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Custom response headers are hidden from cross-origin JS unless exposed; the
+    # UI reads the consulted-memory ids from /command/stream, so expose it.
+    expose_headers=["X-Fear-Consulted-Memory-Ids"],
 )
 
 
@@ -662,18 +666,28 @@ async def command_stream(
     user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
 ) -> StreamingResponse:
-    """Stream the reply as plain-text chunks as the model produces them."""
-    ctx = await _user_context(user, store)
+    """Stream the reply as plain-text chunks as the model produces them.
 
-    async def generate() -> AsyncIterator[str]:
-        async for chunk in brain.stream_command(payload.text, payload.speaker, user=ctx):
-            yield chunk
+    The memories consulted to build this turn's context are surfaced in the
+    ``X-Fear-Consulted-Memory-Ids`` response header (ids only, percent-encoded,
+    comma-separated). They are known before the first token, so the streamed
+    body is byte-for-byte unchanged; the header is simply absent when nothing
+    was consulted.
+    """
+    ctx = await _user_context(user, store)
+    session = await brain.open_stream(payload.text, payload.speaker, user=ctx)
 
     # Disable proxy/browser buffering so tokens reach the client as they are produced.
+    headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    if session.consulted_memory_ids:
+        headers["X-Fear-Consulted-Memory-Ids"] = ",".join(
+            quote(memory_id, safe="") for memory_id in session.consulted_memory_ids
+        )
+
     return StreamingResponse(
-        generate(),
+        session.stream,
         media_type="text/plain; charset=utf-8",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers=headers,
     )
 
 

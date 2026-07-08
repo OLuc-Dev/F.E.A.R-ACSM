@@ -472,6 +472,104 @@ async def test_stream_command_survives_llm_failure() -> None:
     assert any("problema" in chunk.lower() for chunk in chunks)
 
 
+# --- PR #22: consulted-memory ids exposed by open_stream ---
+
+
+def test_consulted_ids_dedups_and_preserves_order() -> None:
+    def mem(mid: str) -> PersonalMemoryResult:
+        return PersonalMemoryResult(text="", speaker="", source="", timestamp=0.0, id=mid)
+
+    related = [mem("a"), mem("b")]
+    general = [mem("b"), mem("c"), mem("")]  # a dup and an id-less entry
+
+    assert AsyncConversationalBrain._consulted_ids(related, general) == ["a", "b", "c"]
+
+
+class IdMemory(FakeMemory):
+    """Returns memories WITH ids so consulted-id reporting can be asserted."""
+
+    def get_facts_about_speaker(self, speaker: str, n_results: int = 10, user_id: str = ""):
+        return [
+            PersonalMemoryResult(
+                text="fato recente", speaker=speaker, source="voice", timestamp=1.0, id="fact-1"
+            )
+        ]
+
+    def query_memories(
+        self, query: str, n_results: int = 5, filter_by_speaker=None, user_id: str = ""
+    ):
+        if filter_by_speaker is None:
+            return [
+                PersonalMemoryResult(
+                    text="geral",
+                    speaker="Lucas",
+                    source="conversation",
+                    timestamp=2.0,
+                    id="general-1",
+                )
+            ]
+        return [
+            PersonalMemoryResult(
+                text="relacionada",
+                speaker=filter_by_speaker,
+                source="conversation",
+                timestamp=3.0,
+                id="related-1",
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_open_stream_reports_related_and_general_not_speaker_facts() -> None:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=IdMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = FakeClient()  # type: ignore[assignment]
+
+    session = await brain.open_stream("oi", "Lucas")
+    chunks = [chunk async for chunk in session.stream]
+
+    # related + general are reported; the ambient speaker fact is not.
+    assert session.consulted_memory_ids == ["related-1", "general-1"]
+    assert "fact-1" not in session.consulted_memory_ids
+    # The token body is exactly what the stream would produce otherwise.
+    assert "".join(chunks) == "F.E.A.R. aqui."
+
+
+@pytest.mark.asyncio
+async def test_open_stream_reports_consulted_ids_even_without_model() -> None:
+    # No OpenRouter -> a fallback body, but the gather still ran, so the consulted
+    # ids are known and reported (the header works even on the fallback path).
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),
+        memory=IdMemory(),  # type: ignore[arg-type]
+    )
+
+    session = await brain.open_stream("oi", "Lucas")
+    chunks = [chunk async for chunk in session.stream]
+
+    assert session.consulted_memory_ids == ["related-1", "general-1"]
+    assert len(chunks) == 1  # single fallback chunk
+    assert "OpenRouter is not configured" in chunks[0]
+
+
+@pytest.mark.asyncio
+async def test_open_stream_has_no_consulted_ids_for_spotify_shortcut() -> None:
+    # The Spotify shortcut returns before any memory gather, so nothing is consulted.
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=IdMemory(),  # type: ignore[arg-type]
+        spotify=FakeSpotify(),  # type: ignore[arg-type]
+    )
+
+    session = await brain.open_stream("next Spotify song", "Lucas")
+    chunks = [chunk async for chunk in session.stream]
+
+    assert session.consulted_memory_ids == []
+    assert chunks == ["Skipped to the next track."]
+
+
 # --- item 3: LRU-bounded caches ---
 
 

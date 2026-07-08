@@ -8,7 +8,7 @@ from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from fear.auth import Security, UserStore
-from fear.brain.async_conversation import CommandResponse
+from fear.brain.async_conversation import CommandResponse, StreamSession
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
 from fear.web.app import (
@@ -35,6 +35,8 @@ class FakeBrain:
         self.persona_mode = "equilibrio"
         # Records the per-request UserContext (or None) the last call received.
         self.last_user: object | None = None
+        # Consulted-memory ids the fake stream reports (controllable per test).
+        self.consulted_ids: list[str] = []
 
     async def process_command(
         self, text: str, speaker: str = "user", user: object | None = None
@@ -42,12 +44,16 @@ class FakeBrain:
         self.last_user = user
         return CommandResponse(reply=f"echo: {text}", speaker=speaker, remembered=True)
 
-    async def stream_command(
+    async def open_stream(
         self, text: str, speaker: str = "user", user: object | None = None
-    ) -> AsyncIterator[str]:
+    ) -> StreamSession:
         self.last_user = user
-        for piece in ["parte 1 ", "parte 2"]:
-            yield piece
+
+        async def _tokens() -> AsyncIterator[str]:
+            for piece in ["parte 1 ", "parte 2"]:
+                yield piece
+
+        return StreamSession(consulted_memory_ids=self.consulted_ids, stream=_tokens())
 
     def reset_conversation(self, speaker: str) -> None:
         self.reset_calls.append(speaker)
@@ -215,6 +221,46 @@ def test_command_stream(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert response.text == "parte 1 parte 2"
+
+
+def test_command_stream_exposes_consulted_memory_ids(client: TestClient, brain: FakeBrain) -> None:
+    # The consulted ids ride in a header (percent-encoded, comma-separated); the
+    # body stays byte-for-byte the same tokens.
+    _, headers = _register(client)
+    brain.consulted_ids = ["u1-Ana-conversation-abc", "u1-Ze Silva-voice-9f"]
+    response = client.post(
+        "/command/stream", json={"text": "oi", "speaker": "Lucas"}, headers=headers
+    )
+    assert response.text == "parte 1 parte 2"
+    assert (
+        response.headers["X-Fear-Consulted-Memory-Ids"]
+        == "u1-Ana-conversation-abc,u1-Ze%20Silva-voice-9f"  # space -> %20
+    )
+
+
+def test_command_stream_omits_header_when_nothing_consulted(
+    client: TestClient, brain: FakeBrain
+) -> None:
+    _, headers = _register(client)
+    brain.consulted_ids = []
+    response = client.post(
+        "/command/stream", json={"text": "oi", "speaker": "Lucas"}, headers=headers
+    )
+    assert response.text == "parte 1 parte 2"
+    assert "X-Fear-Consulted-Memory-Ids" not in response.headers
+
+
+def test_command_stream_header_is_cors_exposed(client: TestClient, brain: FakeBrain) -> None:
+    # Cross-origin JS can only read the header if the server exposes it via CORS.
+    _, headers = _register(client)
+    brain.consulted_ids = ["u1-Ana-conversation-abc"]
+    headers["Origin"] = "http://localhost:3000"
+    response = client.post(
+        "/command/stream", json={"text": "oi", "speaker": "Lucas"}, headers=headers
+    )
+    assert "X-Fear-Consulted-Memory-Ids" in response.headers.get(
+        "access-control-expose-headers", ""
+    )
 
 
 def test_memory_requires_auth(client: TestClient) -> None:
