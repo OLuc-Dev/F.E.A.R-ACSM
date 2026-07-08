@@ -18,6 +18,11 @@ export interface Message {
   id: number;
   role: Role;
   content: string;
+  // Ids of the memories *consulted* to build this reply's context, read from
+  // the stream's response header. "Consulted", never "used": the backend knows
+  // what it fed the model, not what the model relied on. Absent when nothing
+  // was consulted. Internal for now — no UI renders it yet.
+  consultedMemoryIds?: string[];
 }
 
 const GREETING: Message = { id: 0, role: "fear", content: "Presença ativa. Diga o próximo movimento." };
@@ -127,6 +132,19 @@ export function useConversation() {
     });
   }, []);
 
+  // Attach the consulted-memory ids to the reply being streamed. The header
+  // arrives before the first token, so the last message is the (still empty)
+  // F.E.A.R. bubble this reply will fill — including one later interrupted by
+  // a manual stop, which keeps its ids.
+  const tagLastFearConsulted = useCallback((ids: string[]) => {
+    setMessages((prev) => {
+      const copy = prev.slice();
+      const last = copy[copy.length - 1];
+      if (last && last.role === "fear") copy[copy.length - 1] = { ...last, consultedMemoryIds: ids };
+      return copy;
+    });
+  }, []);
+
   const send = useCallback(
     async (text: string, speaker: string) => {
       const trimmed = text.trim();
@@ -175,6 +193,7 @@ export function useConversation() {
             appendToLastFear(chunk);
           },
           controller.signal,
+          tagLastFearConsulted,
         );
         clearTimeout(watchdog);
         // Call succeeded but nothing came back — don't strand the typing dots.
@@ -219,7 +238,7 @@ export function useConversation() {
         setIsBusy(false);
       }
     },
-    [pushMessage, appendToLastFear, setLastFear],
+    [pushMessage, appendToLastFear, setLastFear, tagLastFearConsulted],
   );
 
   // Replay the last question. It re-asks as a new turn (keeps the history of

@@ -193,4 +193,55 @@ describe("useConversation", () => {
     expect(userTexts(result.current.messages)).toEqual(["mesma pergunta", "mesma pergunta"]);
     expect(stream.mock.calls.length - n0).toBe(2);
   });
+
+  // --- lote #23: consulted-memory ids attached to the streamed reply ---
+
+  it("stores consultedMemoryIds on the reply when the stream reports them", async () => {
+    stream.mockImplementation(async (_req, onChunk, _signal, onIds) => {
+      onIds?.(["mem-1", "mem-2"]); // header ids land before the first token
+      onChunk("resposta com contexto");
+    });
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      await result.current.send("pergunta", "user");
+    });
+    const reply = result.current.messages.filter((m) => m.role === "fear").at(-1);
+    expect(reply?.content).toBe("resposta com contexto");
+    expect(reply?.consultedMemoryIds).toEqual(["mem-1", "mem-2"]);
+  });
+
+  it("keeps consultedMemoryIds empty when the stream reports none", async () => {
+    stream.mockImplementation(async (_req, onChunk) => {
+      onChunk("resposta sem contexto");
+    });
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      await result.current.send("pergunta", "user");
+    });
+    const reply = result.current.messages.filter((m) => m.role === "fear").at(-1);
+    expect(reply?.consultedMemoryIds ?? []).toEqual([]);
+  });
+
+  it("keeps already-read consultedMemoryIds on a manually stopped reply", async () => {
+    stream.mockImplementation(
+      (_req, onChunk, signal, onIds) =>
+        new Promise<void>((_resolve, reject) => {
+          onIds?.(["mem-1"]); // ids were read from the headers before the abort
+          onChunk("parcial");
+          (signal as AbortSignal | undefined)?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          );
+        }),
+    );
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      const p = result.current.send("pergunta", "user");
+      result.current.stop();
+      await p;
+    });
+    const reply = result.current.messages.filter((m) => m.role === "fear").at(-1);
+    expect(reply?.content).toContain("parcial");
+    expect(reply?.consultedMemoryIds).toEqual(["mem-1"]);
+    expect(result.current.status).toBe("online"); // stop stays neutral, never an error
+  });
 });

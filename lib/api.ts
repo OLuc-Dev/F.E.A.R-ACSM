@@ -88,6 +88,38 @@ export class ApiError extends Error {
   }
 }
 
+// The stream response carries the ids of the memories *consulted* to build the
+// reply's context (never content, never a claim of what the model "used") in
+// this header: percent-encoded ids, comma-separated, absent when none.
+export const CONSULTED_MEMORY_IDS_HEADER = "X-Fear-Consulted-Memory-Ids";
+
+/**
+ * Parse the consulted-memory header into a clean list of ids.
+ *
+ * Defensive on purpose — a missing/empty header, malformed percent-encoding,
+ * blank entries or duplicates must never break a reply: bad entries are
+ * dropped, order of first appearance is kept, and the worst case is [].
+ */
+export function parseConsultedMemoryIdsHeader(value: string | null): string[] {
+  if (!value || !value.trim()) return [];
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const entry of value.split(",")) {
+    const raw = entry.trim();
+    if (!raw) continue;
+    let id: string;
+    try {
+      id = decodeURIComponent(raw);
+    } catch {
+      continue; // malformed encoding — skip the entry, never throw mid-stream
+    }
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
 // Pull FastAPI's `{ detail }` out of an error body so the UI can show why.
 async function errorDetail(response: Response): Promise<string> {
   try {
@@ -132,10 +164,15 @@ export async function sendCommand(request: CommandRequest): Promise<CommandRespo
 
 // Streams the reply chunk-by-chunk via fetch + ReadableStream. Pass an
 // AbortSignal to cancel an in-flight stream (e.g. on unmount).
+// `onConsultedMemoryIds` (optional) fires once — after the headers arrive,
+// before the first chunk — with the ids of the memories consulted for this
+// reply; it is not called when the header is absent/empty. The body handling
+// is untouched either way.
 export async function streamCommand(
   request: CommandRequest,
   onChunk: (chunk: string) => void,
   signal?: AbortSignal,
+  onConsultedMemoryIds?: (ids: string[]) => void,
 ): Promise<void> {
   const response = await fetch(`${API_BASE}/command/stream`, {
     method: "POST",
@@ -144,6 +181,11 @@ export async function streamCommand(
     signal,
   });
   if (!response.ok || !response.body) throw new ApiError(`HTTP ${response.status}`, response.status);
+
+  if (onConsultedMemoryIds) {
+    const ids = parseConsultedMemoryIdsHeader(response.headers.get(CONSULTED_MEMORY_IDS_HEADER));
+    if (ids.length > 0) onConsultedMemoryIds(ids);
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
