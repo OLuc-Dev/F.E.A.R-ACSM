@@ -2,7 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Check, Database, Loader2, RotateCcw, Search, Trash2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Database,
+  Loader2,
+  RotateCcw,
+  Search,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import { forgetMemory, getMemory, type MemoryItem } from "@/lib/api";
 import {
@@ -37,8 +47,12 @@ const TOOLS_THRESHOLD = 3;
  * On longer lists it adds local navigation — text search, source filter chips,
  * and date grouping — all over the memories already loaded here (never a global
  * query the backend can't back).
+ *
+ * `highlightIds` marks memories as "consultada nesta resposta" (set when the
+ * inspector opens from a reply's chip). Ids that aren't in the loaded list are
+ * acknowledged with an honest note — never invented.
  */
-export function MemoryTab({ speaker }: { speaker: string }) {
+export function MemoryTab({ speaker, highlightIds }: { speaker: string; highlightIds?: string[] }) {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -47,6 +61,16 @@ export function MemoryTab({ speaker }: { speaker: string }) {
   const [notice, setNotice] = useState<Notice>(null);
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
+
+  // A fresh highlight (chip clicked while the panel is already open) resets the
+  // local search/filter so the marked memories can't be hidden by stale state.
+  const highlightKey = (highlightIds ?? []).join(",");
+  useEffect(() => {
+    if (highlightKey) {
+      setQuery("");
+      setSourceFilter(null);
+    }
+  }, [highlightKey]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,6 +123,12 @@ export function MemoryTab({ speaker }: { speaker: string }) {
 
   const visible = visibleMemories(items);
   const hiddenCount = items.length - visible.length;
+  const highlightSet = new Set(highlightIds ?? []);
+  // Consulted ids that don't correspond to anything visible here (past the
+  // 20-item cap, deleted, or filtered) get an honest note instead of fake data.
+  const missingHighlights = (highlightIds ?? []).filter(
+    (id) => !visible.some((item) => item.id === id),
+  ).length;
   const showTools = visible.length > TOOLS_THRESHOLD;
   const sources = presentSources(visible);
   // Ignore a stale filter whose source no longer exists (e.g. after deleting the
@@ -112,6 +142,9 @@ export function MemoryTab({ speaker }: { speaker: string }) {
   const renderItem = (item: MemoryItem) => {
     const confirming = confirmingId === item.id;
     const deleting = deletingId === item.id;
+    // Marked as consulted: a calm brand tint plus a text badge — never colour
+    // alone, never an alert.
+    const consulted = highlightSet.has(item.id);
     return (
       <motion.li
         key={item.id}
@@ -120,10 +153,18 @@ export function MemoryTab({ speaker }: { speaker: string }) {
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
         transition={springSoft}
-        className="rounded-xl border border-overlay/10 bg-overlay/[0.025] px-3 py-2.5"
+        className={`rounded-xl border px-3 py-2.5 ${
+          consulted ? "border-brand/30 bg-brand/[0.05]" : "border-overlay/10 bg-overlay/[0.025]"
+        }`}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1 space-y-1">
+            {consulted && (
+              <p className="label-tn flex items-center gap-1 text-brand/90" title={MEMORY_COPY.consultedHint}>
+                <Sparkles className="size-3 shrink-0" />
+                {MEMORY_COPY.consultedBadge}
+              </p>
+            )}
             <p className="text-sm leading-5 text-foreground/90">{item.text}</p>
             <p className="label-tn text-muted-foreground/60">
               {humanizeSource(item.source)} · {timeAgo(item.timestamp)}
@@ -324,6 +365,10 @@ export function MemoryTab({ speaker }: { speaker: string }) {
           <ul className="space-y-1.5">
             <AnimatePresence initial={false}>{visible.map(renderItem)}</AnimatePresence>
           </ul>
+        )}
+
+        {!loading && !loadError && missingHighlights > 0 && (
+          <p className="text-[11px] leading-4 text-muted-foreground/50">{MEMORY_COPY.consultedMissingNote}</p>
         )}
 
         {!loading && !loadError && hiddenCount > 0 && (

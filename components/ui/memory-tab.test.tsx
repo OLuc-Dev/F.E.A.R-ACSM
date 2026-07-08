@@ -284,3 +284,67 @@ describe("MemoryTab — search, filters, grouping", () => {
     expect(screen.queryByText("Reunião de produto amanhã")).toBeNull();
   });
 });
+
+// --- lote #24: "consultada nesta resposta" highlight ---
+
+describe("MemoryTab — consulted highlight", () => {
+  it("marks the memories whose id is highlighted — and only those", async () => {
+    withMemories([
+      item("hit", "memória consultada", "conversation"),
+      item("other", "memória comum", "voice"),
+    ]);
+    render(<MemoryTab speaker="Lucas" highlightIds={["hit"]} />);
+    await screen.findByText("memória consultada");
+
+    // Exactly one badge, on the right card (text marker, not colour alone).
+    expect(screen.getAllByText(MEMORY_COPY.consultedBadge)).toHaveLength(1);
+    const badge = screen.getByText(MEMORY_COPY.consultedBadge);
+    expect(badge.closest("li")?.textContent).toContain("memória consultada");
+    expect(badge.closest("li")?.textContent).not.toContain("memória comum");
+  });
+
+  it("shows no badge when no highlighted id matches", async () => {
+    withMemories([item("a", "memória comum", "conversation")]);
+    render(<MemoryTab speaker="Lucas" highlightIds={[]} />);
+    await screen.findByText("memória comum");
+    expect(screen.queryByText(MEMORY_COPY.consultedBadge)).toBeNull();
+  });
+
+  it("acknowledges consulted memories that are not in this view (honest note)", async () => {
+    withMemories([item("a", "memória carregada", "conversation")]);
+    render(<MemoryTab speaker="Lucas" highlightIds={["a", "nao-carregada"]} />);
+    await screen.findByText("memória carregada");
+    expect(screen.getByText(MEMORY_COPY.consultedMissingNote)).toBeTruthy();
+  });
+
+  it("omits the missing note when every consulted memory is visible", async () => {
+    withMemories([item("a", "memória carregada", "conversation")]);
+    render(<MemoryTab speaker="Lucas" highlightIds={["a"]} />);
+    await screen.findByText("memória carregada");
+    expect(screen.queryByText(MEMORY_COPY.consultedMissingNote)).toBeNull();
+  });
+
+  it("keeps the highlight while searching for the marked memory", async () => {
+    const memories = manyMemories();
+    withMemories(memories);
+    render(<MemoryTab speaker="Lucas" highlightIds={[memories[0].id]} />);
+    await screen.findByText("Prefiro café forte");
+    fireEvent.change(screen.getByPlaceholderText(MEMORY_COPY.searchPlaceholder), {
+      target: { value: "cafe" },
+    });
+    expect(screen.getByText("Prefiro café forte")).toBeTruthy();
+    expect(screen.getByText(MEMORY_COPY.consultedBadge)).toBeTruthy();
+  });
+
+  it("never resurrects a hidden assistant_reply, even if its id is highlighted", async () => {
+    withMemories([
+      item("visible", "memória do usuário", "conversation"),
+      item("reply-1", "resposta interna", "assistant_reply"),
+    ]);
+    render(<MemoryTab speaker="Lucas" highlightIds={["reply-1"]} />);
+    await screen.findByText("memória do usuário");
+    expect(screen.queryByText("resposta interna")).toBeNull(); // still hidden
+    // Its id counts as "not in this view" — the honest note appears instead.
+    expect(screen.getByText(MEMORY_COPY.consultedMissingNote)).toBeTruthy();
+  });
+});

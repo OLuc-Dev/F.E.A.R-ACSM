@@ -26,7 +26,19 @@ export const MEMORY_COPY = {
   // Honest about scope: search runs over what's loaded here, not the whole store.
   searchScopeNote: "A busca considera as memórias carregadas nesta visão.",
   filterAll: "Tudo",
+  // "Consultada", never "usada": the system knows which memories it fed the
+  // model as context — it cannot prove which ones shaped the reply.
+  consultedBadge: "Consultada nesta resposta",
+  consultedHint: "A marca indica memórias fornecidas como contexto para esta resposta.",
+  // Consulted ids can point past this view (the list is capped; entries can be
+  // deleted) — say so instead of inventing data.
+  consultedMissingNote: "Algumas memórias consultadas podem não aparecer nesta visão.",
 } as const;
+
+/** Chip label for a reply that consulted `count` memories (count > 0). */
+export function consultedChipLabel(count: number): string {
+  return count === 1 ? "1 memória consultada nesta resposta" : `${count} memórias consultadas nesta resposta`;
+}
 
 // Sources the store can attach to a memory. `assistant_reply` (F.E.A.R.'s own
 // words) is intentionally absent: it is hidden from the main list, so it never
