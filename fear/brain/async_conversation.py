@@ -105,6 +105,32 @@ class UserContext:
     persona_mode: str = ""
 
 
+@dataclass(slots=True)
+class StreamSession:
+    """A streaming reply plus the ids of the memories consulted to build it.
+
+    ``consulted_memory_ids`` are the memories retrieved *for this turn* (the
+    related + general query hits fed to the model as context) — not a claim
+    about what the model "used". They are known before the first token, so the
+    HTTP layer can surface them in a response header while ``stream`` emits the
+    body byte-for-byte unchanged.
+    """
+
+    consulted_memory_ids: list[str]
+    stream: AsyncIterator[str]
+
+
+async def _single_chunk(text: str) -> AsyncIterator[str]:
+    """A one-shot stream body (used for the non-model fallback replies)."""
+    yield text
+
+
+async def _no_chunks() -> AsyncIterator[str]:
+    """An empty stream body (used when there is nothing to say)."""
+    for _ in ():  # never iterates; makes this an async generator that yields nothing
+        yield _
+
+
 class AsyncConversationalBrain:
     """
     Async-safe conversational layer for F.E.A.R.
@@ -270,15 +296,35 @@ class AsyncConversationalBrain:
         self._record_turn(history_key, clean_text, reply)
         return CommandResponse(reply=reply, speaker=clean_speaker, remembered=True)
 
-    async def stream_command(
+    @staticmethod
+    def _consulted_ids(*groups: list[PersonalMemoryResult]) -> list[str]:
+        """De-duplicated memory ids from the given groups, in first-seen order."""
+        seen: set[str] = set()
+        ids: list[str] = []
+        for group in groups:
+            for memory in group:
+                if memory.id and memory.id not in seen:
+                    seen.add(memory.id)
+                    ids.append(memory.id)
+        return ids
+
+    async def open_stream(
         self, user_text: str, speaker_name: str = "user", user: UserContext | None = None
-    ) -> AsyncIterator[str]:
-        """Stream a reply chunk-by-chunk, persisting memory and recording the turn at the end."""
+    ) -> StreamSession:
+        """Prepare a streamed reply and expose the memory ids consulted for it.
+
+        Runs the same pipeline as before up to (and including) context gathering
+        — once — so the consulted-memory ids are known before the body starts.
+        The returned session's ``stream`` yields exactly the tokens the reply
+        would have, and ``consulted_memory_ids`` lists the related + general
+        memories retrieved for this turn (speaker facts are deliberately left
+        out: they are ambient recency, not response-specific).
+        """
         clean_text = user_text.strip()
         clean_speaker = speaker_name.strip() or "user"
 
         if not clean_text:
-            return
+            return StreamSession([], _no_chunks())
 
         client = self._client_for(user)
         model = user.chat_model if user and user.chat_model else self.settings.openrouter_chat_model
@@ -290,15 +336,13 @@ class AsyncConversationalBrain:
         if spotify_reply:
             await self._remember(clean_text, clean_speaker, "spotify", scope)
             self._record_turn(history_key, clean_text, spotify_reply)
-            yield spotify_reply
-            return
+            return StreamSession([], _single_chunk(spotify_reply))
 
         calendar_summary = await self._try_calendar(clean_text)
         if calendar_summary and client is None:
             await self._remember(clean_text, clean_speaker, "calendar", scope)
             self._record_turn(history_key, clean_text, calendar_summary)
-            yield calendar_summary
-            return
+            return StreamSession([], _single_chunk(calendar_summary))
 
         (
             speaker_facts,
@@ -306,6 +350,7 @@ class AsyncConversationalBrain:
             general_memories,
             reference_context,
         ) = await self._gather_context(clean_text, clean_speaker, scope)
+        consulted = self._consulted_ids(related_memories, general_memories)
 
         if client is None:
             fallback = (
@@ -315,8 +360,7 @@ class AsyncConversationalBrain:
             )
             await self._remember(clean_text, clean_speaker, "conversation", scope)
             self._record_turn(history_key, clean_text, fallback)
-            yield fallback
-            return
+            return StreamSession(consulted, _single_chunk(fallback))
 
         if not model:
             fallback = (
@@ -324,8 +368,7 @@ class AsyncConversationalBrain:
             )
             await self._remember(clean_text, clean_speaker, "conversation", scope)
             self._record_turn(history_key, clean_text, fallback)
-            yield fallback
-            return
+            return StreamSession(consulted, _single_chunk(fallback))
 
         messages = self._build_messages(
             clean_speaker,
@@ -340,30 +383,43 @@ class AsyncConversationalBrain:
         )
         # Persist the user input up front so it survives an early client disconnect.
         await self._remember(clean_text, clean_speaker, "conversation", scope)
+        ready_client = client  # non-None past the guard above; bound for the closure
 
-        parts: list[str] = []
-        try:
-            stream = await client.chat.completions.create(
-                model=model,
-                messages=cast(Any, messages),
-                stream=True,
-            )
-            async for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    parts.append(delta)
-                    yield delta
-        except Exception:
-            logger.exception("OpenRouter streaming failed")
-            if not parts:
-                self._record_turn(history_key, clean_text, LLM_ERROR_REPLY)
-                yield LLM_ERROR_REPLY
-                return
+        async def tokens() -> AsyncIterator[str]:
+            parts: list[str] = []
+            try:
+                stream = await ready_client.chat.completions.create(
+                    model=model,
+                    messages=cast(Any, messages),
+                    stream=True,
+                )
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        parts.append(delta)
+                        yield delta
+            except Exception:
+                logger.exception("OpenRouter streaming failed")
+                if not parts:
+                    self._record_turn(history_key, clean_text, LLM_ERROR_REPLY)
+                    yield LLM_ERROR_REPLY
+                    return
 
-        reply = "".join(parts)
-        if reply:
-            await self._remember(reply, "fear", "assistant_reply", scope)
-        self._record_turn(history_key, clean_text, reply)
+            reply = "".join(parts)
+            if reply:
+                await self._remember(reply, "fear", "assistant_reply", scope)
+            self._record_turn(history_key, clean_text, reply)
+
+        return StreamSession(consulted, tokens())
+
+    async def stream_command(
+        self, user_text: str, speaker_name: str = "user", user: UserContext | None = None
+    ) -> AsyncIterator[str]:
+        """Stream a reply chunk-by-chunk. Thin wrapper over ``open_stream`` that
+        drops the consulted-memory metadata — the tokens are byte-for-byte the same."""
+        session = await self.open_stream(user_text, speaker_name, user)
+        async for chunk in session.stream:
+            yield chunk
 
     async def _remember(self, text: str, speaker: str, source: str, user_id: str = "") -> None:
         """Persist a memory; a storage failure must not break the conversation."""
