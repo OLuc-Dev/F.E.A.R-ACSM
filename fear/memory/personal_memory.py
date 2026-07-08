@@ -99,11 +99,49 @@ class PersonalMemory:
         return {"$and": conditions}
 
     def forget(self, memory_id: str) -> bool:
-        """Delete a single memory by id; returns False for a blank id."""
+        """Delete a single memory by id; returns False for a blank id.
+
+        Low-level and unconditional — it does not check ownership. Callers that
+        act on a user's behalf must go through ``forget_for_user``.
+        """
         if not memory_id:
             return False
         self._collection.delete(ids=[memory_id])
         return True
+
+    @staticmethod
+    def _owns(metadata: dict[str, Any] | None, user_id: str) -> bool:
+        """Whether a memory with this metadata belongs to ``user_id``.
+
+        Ownership is decided by ``metadata.user_id`` — never by the id's shape —
+        so a memory claimed after accounts existed (its id keeps the old,
+        prefix-less form) still counts as the user's. An empty caller id, or a
+        memory with no owner, never matches (nothing to delete safely).
+        """
+        if not user_id or metadata is None:
+            return False
+        return metadata.get("user_id") == user_id
+
+    def forget_for_user(self, memory_id: str, user_id: str) -> bool:
+        """Delete a memory only if it belongs to ``user_id``; return whether it did.
+
+        Looks the memory up and checks ownership by metadata, so:
+        - a user's own memory (normal or claimed) is deleted -> True;
+        - another user's memory, an unowned one, or a missing id -> False,
+          and nothing is deleted.
+
+        This is the safe entry point for the ``/memory/forget`` endpoint: a user
+        can only ever forget their own memories, regardless of id shape.
+        """
+        if not memory_id or not user_id:
+            return False
+        raw = self._collection.get(ids=[memory_id], include=["metadatas"])
+        metadatas = raw.get("metadatas") or []
+        if not metadatas:
+            return False  # no such memory
+        if not self._owns(metadatas[0], user_id):
+            return False  # not the owner (or unowned) — never delete
+        return self.forget(memory_id)
 
     def claim_unowned(self, user_id: str) -> int:
         """Attach every un-owned memory (no user_id) to a user; return the count.
@@ -156,15 +194,27 @@ class PersonalMemory:
         """Return the most recent memories from a speaker, optionally scoped to a user."""
         return self._recent(self._scope(user_id, speaker), n_results)
 
-    def recent_for_user(self, user_id: str, n_results: int = 20) -> list[PersonalMemoryResult]:
+    def recent_for_user(
+        self, user_id: str, n_results: int = 20, include_assistant_replies: bool = True
+    ) -> list[PersonalMemoryResult]:
         """Return all of a user's memories (any speaker), newest first.
 
         Powers the memory inspector, where a signed-in user should see everything
         they've told F.E.A.R. regardless of the speaker label on each entry.
-        """
-        return self._recent(self._scope(user_id, None), n_results)
 
-    def _recent(self, where: dict[str, Any] | None, n_results: int) -> list[PersonalMemoryResult]:
+        When ``include_assistant_replies`` is False, F.E.A.R.'s own replies
+        (``source="assistant_reply"``) are dropped *before* the limit is applied,
+        so they never crowd useful memories out of the returned window.
+        """
+        exclude = None if include_assistant_replies else {"assistant_reply"}
+        return self._recent(self._scope(user_id, None), n_results, exclude_sources=exclude)
+
+    def _recent(
+        self,
+        where: dict[str, Any] | None,
+        n_results: int,
+        exclude_sources: set[str] | None = None,
+    ) -> list[PersonalMemoryResult]:
         # Fetch the matching memories, then sort by timestamp and take the
         # newest. Applying a Chroma `limit` before sorting would return an
         # arbitrary subset rather than the most recent facts.
@@ -179,6 +229,10 @@ class PersonalMemory:
             metadata = metadatas[index] if index < len(metadatas) else {}
             memory_id = str(ids[index]) if index < len(ids) else ""
             results.append(self._result_from_document(str(document), metadata, None, memory_id))
+
+        # Drop excluded sources before the limit, so they don't eat the window.
+        if exclude_sources:
+            results = [item for item in results if item.source not in exclude_sources]
 
         results.sort(key=lambda item: item.timestamp, reverse=True)
         return results[:n_results]
