@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
+
+logger = logging.getLogger(__name__)
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _words(text: str) -> set[str]:
+    """Lowercased whole words of `text`, for substring-proof intent matching."""
+    return set(_WORD_RE.findall(text.lower()))
 
 
 @dataclass(slots=True)
@@ -33,16 +44,32 @@ class SpotifyClient:
         return self._client is not None
 
     async def load(self) -> None:
-        """Initialize Spotipy if credentials are present in the environment."""
+        """Initialize Spotipy if credentials are present in the environment.
+
+        Never raises: a misconfigured Spotify must leave the client inert (like
+        the calendar does) rather than take the whole backend down at startup.
+        SpotifyOAuth also needs SPOTIPY_REDIRECT_URI, so requiring only the id
+        and secret used to let a partial setup abort the boot.
+        """
         if self._client is not None:
             return
 
-        if not os.getenv("SPOTIPY_CLIENT_ID") or not os.getenv("SPOTIPY_CLIENT_SECRET"):
+        required = ("SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET", "SPOTIPY_REDIRECT_URI")
+        missing = [name for name in required if not os.getenv(name)]
+        if missing:
+            if len(missing) < len(required):
+                # Partially configured: say which piece is absent instead of
+                # staying silently inert.
+                logger.warning("Spotify disabled; missing %s", ", ".join(missing))
             return
 
-        self._client = await asyncio.to_thread(
-            lambda: spotipy.Spotify(auth_manager=SpotifyOAuth(scope=self.scope))
-        )
+        try:
+            self._client = await asyncio.to_thread(
+                lambda: spotipy.Spotify(auth_manager=SpotifyOAuth(scope=self.scope))
+            )
+        except Exception:
+            logger.exception("Spotify could not be initialized; continuing without it")
+            self._client = None
 
     async def status(self) -> SpotifyStatus:
         """Return current playback status."""
@@ -112,19 +139,21 @@ class SpotifyClient:
 
     async def handle_intent(self, text: str) -> str:
         """Handle simple natural-language Spotify commands."""
-        lower = text.lower()
+        words = _words(text)
 
-        # Specific intents are checked before the greedy "play"/"resume" branch
-        # so phrases like "toggle Spotify playback" are not misread as "resume".
-        if "toggle" in lower:
+        # Whole words only: substring matching made "pause playback" hit "back"
+        # and skip to the previous track. Specific intents are still checked
+        # before the greedy "play"/"resume" branch, so "toggle Spotify playback"
+        # is not misread as "resume".
+        if "toggle" in words:
             return await self.toggle()
-        if "next" in lower or "skip" in lower:
+        if words & {"next", "skip"}:
             return await self.next_track()
-        if "previous" in lower or "back" in lower:
+        if words & {"previous", "back"}:
             return await self.previous_track()
-        if "pause" in lower or "stop" in lower:
+        if words & {"pause", "stop"}:
             return await self.pause()
-        if "resume" in lower or "play" in lower:
+        if words & {"resume", "play"}:
             return await self.resume()
 
         return ""

@@ -22,6 +22,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from fear.config import Settings
+from fear.integrations.google_calendar import write_token_securely
 
 
 def main() -> int:
@@ -46,8 +47,8 @@ def main() -> int:
     creds = flow.run_local_server(port=0)
 
     token_path = Path(settings.google_token_file).expanduser()
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(creds.to_json(), encoding="utf-8")
+    # 0600: the file carries a long-lived refresh token.
+    write_token_securely(token_path, creds.to_json())
 
     print(f"Autorizado. Token salvo em {token_path}. F.E.A.R. já lê sua agenda (somente leitura).")
     return 0

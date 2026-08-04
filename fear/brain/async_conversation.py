@@ -65,6 +65,10 @@ DEFAULT_PERSONA_MODE = "equilibrio"
 _MAX_HISTORY_USERS = 500
 _MAX_CLIENTS = 500
 
+# One conversational turn is stored as two messages (the user's, then F.E.A.R.'s),
+# so the rolling window holds twice as many entries as the configured turn count.
+_MESSAGES_PER_TURN = 2
+
 # The default voice of F.E.A.R.: a close, sharp companion that can banter, but
 # reads the room. Override it with a file via settings.persona_file.
 DEFAULT_PERSONA = (
@@ -560,7 +564,9 @@ class AsyncConversationalBrain:
 
         window = self._history.get(speaker)
         if window is None:
-            window = deque(maxlen=self._max_history_turns)
+            # Sized in messages, not turns: a window of `maxlen=max_history_turns`
+            # would silently keep only half the configured exchanges.
+            window = deque(maxlen=self._max_history_turns * _MESSAGES_PER_TURN)
             self._history[speaker] = window
             self._evict_lru(self._history, _MAX_HISTORY_USERS)
         else:

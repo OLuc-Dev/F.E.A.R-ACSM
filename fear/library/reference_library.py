@@ -113,12 +113,16 @@ class ReferenceLibrary:
             # small notes still become searchable knowledge.
             chunks = [clean]
 
+        prefix = f"{user_id}-" if user_id else ""
+        ids = [f"ref-{prefix}{source}-{index}" for index, _ in enumerate(chunks)]
+        # Embed BEFORE deleting: the embedder can fail (cold model cache, no
+        # network), and deleting first would destroy the previous version of the
+        # note with nothing to put in its place.
+        embeddings = self._embedding.embed_many(chunks)
+
         # Replace this user's existing chunks for this source (edit semantics).
         self._collection.delete(where=self._scope(user_id, source))
 
-        prefix = f"{user_id}-" if user_id else ""
-        ids = [f"ref-{prefix}{source}-{index}" for index, _ in enumerate(chunks)]
-        embeddings = self._embedding.embed_many(chunks)
         metadatas = [
             {"source": source, "section": section, "origin": "text", "user_id": user_id}
             for _ in chunks

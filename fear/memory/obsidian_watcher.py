@@ -10,6 +10,11 @@ from pathlib import Path
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+# `Observer` is a runtime alias for the platform's observer (inotify, FSEvents,
+# …), i.e. a variable — not usable as an annotation. `BaseObserver` is their
+# common base class and is what the attribute should be typed as.
+from watchdog.observers.api import BaseObserver
+
 from fear.memory.personal_memory import PersonalMemory
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
@@ -107,7 +112,7 @@ class ObsidianWatcher:
         self.memory = memory
         self.speaker = speaker
         self.source = source
-        self._observer: Observer | None = None
+        self._observer: BaseObserver | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._logger = logging.getLogger(self.__class__.__name__)
@@ -182,8 +187,14 @@ class ObsidianWatcher:
 
 
 def iter_markdown_files(root: Path) -> Iterable[Path]:
-    """Yield Markdown files inside a vault, skipping hidden folders."""
+    """Yield Markdown files inside a vault, skipping hidden folders.
+
+    Only the path *below* the vault is inspected: `root` is resolved to an
+    absolute path, so testing every part would skip the whole vault whenever it
+    lives under a dot-directory (``~/.notes/vault``, a synced folder, …).
+    """
     for path in root.rglob("*.md"):
-        if any(part.startswith(".") for part in path.parts):
+        relative = path.relative_to(root)
+        if any(part.startswith(".") for part in relative.parts):
             continue
         yield path
