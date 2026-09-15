@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,26 @@ logger = logging.getLogger(__name__)
 # Read-only Google Calendar access for F.E.A.R. The google libraries are imported
 # lazily (inside methods) so the conversational core can be imported and tested
 # without them, mirroring how ChromaDB is handled.
+
+# The token file holds a long-lived refresh token plus the client secret, so it
+# must never be readable by other local users.
+_OWNER_ONLY = stat.S_IRUSR | stat.S_IWUSR
+
+
+def write_token_securely(path: Path, payload: str) -> None:
+    """Write an OAuth token file readable only by its owner (0600).
+
+    A plain ``write_text`` uses the process umask (typically 0644), leaving the
+    refresh token world-readable — enough for any other local account to mint
+    access tokens for the user's calendar indefinitely.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload, encoding="utf-8")
+    try:
+        os.chmod(path, _OWNER_ONLY)
+    except OSError:
+        # Filesystems without POSIX permissions (some Windows/mounted volumes).
+        logger.warning("Could not restrict permissions on %s", path)
 
 
 class GoogleCalendarClient:
@@ -39,22 +61,33 @@ class GoogleCalendarClient:
         """Build the Calendar service from the cached token, if one exists."""
         if self._service is not None:
             return
-        if not Path(self.token_file).expanduser().exists():
+        if not self._token_path().exists():
             return  # not authorized yet — run scripts/google_login.py
         try:
             self._service = await asyncio.to_thread(self._build_service)
         except Exception:
             logger.exception("Could not initialize Google Calendar; staying inert")
 
+    def _token_path(self) -> Path:
+        """The token file with `~` expanded.
+
+        Every access must go through here: `Credentials.from_authorized_user_file`
+        opens the path literally, so mixing expanded and raw forms made a
+        GOOGLE_TOKEN_FILE like "~/.fear/token.json" pass the existence check and
+        then fail to open, leaving the calendar permanently inert.
+        """
+        return Path(self.token_file).expanduser()
+
     def _build_service(self) -> Any:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
 
-        creds = Credentials.from_authorized_user_file(self.token_file, [self.scope])
+        token_path = self._token_path()
+        creds = Credentials.from_authorized_user_file(str(token_path), [self.scope])
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            Path(self.token_file).expanduser().write_text(creds.to_json(), encoding="utf-8")
+            write_token_securely(token_path, creds.to_json())
         return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
     async def upcoming(self, max_results: int = 8) -> str:

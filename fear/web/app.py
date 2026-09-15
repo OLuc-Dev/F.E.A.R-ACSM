@@ -55,7 +55,7 @@ class CommandResponse(BaseModel):
 
 
 class MemoryResponse(BaseModel):
-    """Response body for /memory/{speaker}."""
+    """Response body for GET /memory."""
 
     speaker: str
     memories: list[dict[str, object]]
@@ -273,9 +273,44 @@ def _user_response(user: User) -> UserResponse:
     )
 
 
+def _cors_headers_for(request: Request) -> dict[str, str]:
+    """CORS headers for a response built outside CORSMiddleware (the 500 handler).
+
+    Mirrors the middleware's decision: echo the caller's Origin when it is
+    allowed (or when FEAR_CORS_ORIGINS is "*"), and nothing otherwise — never
+    widen access beyond what the configured policy already permits.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+    # `allowed_origins` (module level, set below) is the very list handed to
+    # CORSMiddleware, so the two can never disagree.
+    if "*" in allowed_origins:
+        return {"Access-Control-Allow-Origin": "*"}
+    if origin in allowed_origins:
+        return {"Access-Control-Allow-Origin": origin, "Vary": "Origin"}
+    return {}
+
+
+def _matches_invite(supplied: str, expected: str) -> bool:
+    """Constant-time invite-code check that tolerates any input.
+
+    ``hmac.compare_digest`` raises TypeError when handed a str with non-ASCII
+    characters, so a code containing (say) an accent would surface as a 500
+    instead of a clean refusal. Comparing the UTF-8 bytes keeps the timing
+    guarantee and accepts anything the client sends.
+    """
+    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
 def _normalize_email(email: str) -> str:
     """Lowercase + validate an email's shape (without the email-validator dep)."""
     cleaned = email.strip().lower()
+    # Exactly one "@", no inner whitespace: "a@b@c.com" and "a b@c.com" are not
+    # addresses, and letting them through would mint accounts that no real mail
+    # provider can match.
+    if cleaned.count("@") != 1 or any(character.isspace() for character in cleaned):
+        raise HTTPException(status_code=422, detail="E-mail inválido.")
     local, _, domain = cleaned.partition("@")
     if not local or "." not in domain or domain.startswith(".") or domain.endswith("."):
         raise HTTPException(status_code=422, detail="E-mail inválido.")
@@ -350,11 +385,27 @@ async def process_text_command(application: FastAPI, text: str, speaker: str):
     return await application.state.brain.process_command(text, speaker)
 
 
+async def speak_and_cleanup(tts: Any, text: str) -> None:
+    """Say `text` out loud and delete the audio file it produced.
+
+    ``NaturalTTS.say`` returns the temp file it synthesised; dropping that
+    return value leaks one file per spoken reply, so every caller must go
+    through here.
+    """
+    audio_path = await tts.say(text)
+    if audio_path is None:
+        return
+    try:
+        audio_path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Could not delete synthesised audio file", exc_info=True)
+
+
 async def process_voice_event(application: FastAPI, event: TranscriptEvent) -> None:
     """Process a transcript produced by the optional background voice listener."""
     result = await process_text_command(application, event.message, event.speaker)
     if result.reply:
-        await application.state.tts.say(result.reply)
+        await speak_and_cleanup(application.state.tts, result.reply)
 
 
 @asynccontextmanager
@@ -532,10 +583,18 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Log unhandled errors and return a clean payload instead of a stack trace."""
+    """Log unhandled errors and return a clean payload instead of a stack trace.
+
+    Starlette serves this from ServerErrorMiddleware, which sits *outside*
+    CORSMiddleware — so the usual CORS headers are never applied and a browser
+    would discard the body, turning a readable 500 into an opaque network
+    error. Echo the allowed origin here so the UI can still read the reason.
+    """
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(
-        status_code=500, content={"detail": "Internal error. The incident was logged."}
+        status_code=500,
+        content={"detail": "Internal error. The incident was logged."},
+        headers=_cors_headers_for(request),
     )
 
 
@@ -551,7 +610,7 @@ async def auth_register(
     """Create an account and return a session token."""
     _rate_limit(request, limiter, "register")
     # Optional closed registration: when FEAR_INVITE_CODE is set, require it.
-    if settings.invite_code and not hmac.compare_digest(payload.invite_code, settings.invite_code):
+    if settings.invite_code and not _matches_invite(payload.invite_code, settings.invite_code):
         raise HTTPException(status_code=403, detail="Convite inválido.")
     email = _normalize_email(payload.email)
     if len(payload.password) < 8:
@@ -649,12 +708,7 @@ async def command(
     result = await brain.process_command(payload.text, payload.speaker, user=ctx)
 
     if payload.speak and result.reply:
-        audio_path = await tts.say(result.reply)
-        if audio_path is not None:
-            try:
-                audio_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+        await speak_and_cleanup(tts, result.reply)
 
     return CommandResponse(reply=result.reply, speaker=result.speaker, audio_file=None)
 
@@ -841,9 +895,16 @@ async def config_set(
 
 
 @app.post("/voice/start")
-async def voice_start() -> dict[str, str]:
-    """Start push-to-talk capture when the optional voice listener is enabled."""
-    listener = getattr(app.state, "voice_listener", None)
+async def voice_start(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Start push-to-talk capture when the optional voice listener is enabled.
+
+    Authenticated: this drives the machine's microphone, so it must never be
+    reachable by an anonymous caller on the network.
+    """
+    listener = getattr(request.app.state, "voice_listener", None)
     if listener is None:
         return {"status": "disabled", "hint": "Set FEAR_ENABLE_VOICE_LISTENER=1"}
 
@@ -852,9 +913,12 @@ async def voice_start() -> dict[str, str]:
 
 
 @app.post("/voice/stop")
-async def voice_stop() -> dict[str, str]:
-    """Stop push-to-talk capture."""
-    listener = getattr(app.state, "voice_listener", None)
+async def voice_stop(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Stop push-to-talk capture (authenticated; see /voice/start)."""
+    listener = getattr(request.app.state, "voice_listener", None)
     if listener is None:
         return {"status": "disabled", "hint": "Set FEAR_ENABLE_VOICE_LISTENER=1"}
 
@@ -863,13 +927,18 @@ async def voice_stop() -> dict[str, str]:
 
 
 @app.post("/voice/capture-once")
-async def voice_capture_once() -> dict[str, str]:
-    """Capture one voice chunk when the optional voice listener is enabled."""
-    listener = getattr(app.state, "voice_listener", None)
+async def voice_capture_once(
+    request: Request,
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Capture one voice chunk (authenticated; see /voice/start)."""
+    listener = getattr(request.app.state, "voice_listener", None)
     if listener is None:
         return {"status": "disabled", "hint": "Set FEAR_ENABLE_VOICE_LISTENER=1"}
 
-    listener.capture_once()
+    # capture_once records synchronously for several seconds; calling it inline
+    # would freeze the event loop (every other request, every live stream).
+    await asyncio.to_thread(listener.capture_once)
     return {"status": "queued"}
 
 

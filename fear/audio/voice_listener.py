@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import re
 import tempfile
@@ -207,7 +208,12 @@ class VoiceListener:
                     break
                 frames.append(stream.read(self.chunk_size, exception_on_overflow=False))
 
-            _, raw_path = tempfile.mkstemp(prefix="fear_voice_", suffix=".wav")
+            # mkstemp returns an *open* fd. `wave.open` below uses its own handle,
+            # so this one must be closed explicitly — otherwise every recorded
+            # chunk leaks a descriptor and keeps its bytes on disk even after the
+            # file is unlinked, eventually exhausting the process fd limit.
+            handle, raw_path = tempfile.mkstemp(prefix="fear_voice_", suffix=".wav")
+            os.close(handle)
             output_path = Path(raw_path)
 
             with wave.open(str(output_path), "wb") as wav_file:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any
 
 import pyttsx3
 import requests  # type: ignore[import-untyped]
+
+logger = logging.getLogger(__name__)
 
 
 class NaturalTTS:
@@ -28,7 +31,12 @@ class NaturalTTS:
 
         async with self._lock:
             if self.remote_api_key and (voice != "default" or self.default_voice):
-                return await asyncio.to_thread(self._synthesize_remote, text, voice)
+                try:
+                    return await asyncio.to_thread(self._synthesize_remote, text, voice)
+                except Exception:
+                    # Quota, bad key, timeout: the reply is already written, so
+                    # honour the documented fallback instead of failing the turn.
+                    logger.warning("Remote voice failed; speaking offline instead", exc_info=True)
 
             await asyncio.to_thread(self._speak_offline, text)
             return None
@@ -59,10 +67,17 @@ class NaturalTTS:
         )
         response.raise_for_status()
 
-        _, raw_path = tempfile.mkstemp(prefix="fear_tts_", suffix=".mp3")
-        output_path = Path(raw_path)
-        output_path.write_bytes(response.content)
-        return output_path
+        # mkstemp hands back an *open* fd; write through it and close it, or the
+        # descriptor leaks on every reply (and the bytes stay on disk even after
+        # the caller unlinks the path).
+        handle, raw_path = tempfile.mkstemp(prefix="fear_tts_", suffix=".mp3")
+        try:
+            with os.fdopen(handle, "wb") as audio_file:
+                audio_file.write(response.content)
+        except Exception:
+            Path(raw_path).unlink(missing_ok=True)
+            raise
+        return Path(raw_path)
 
     def _speak_offline(self, text: str) -> None:
         """Speak locally with pyttsx3."""

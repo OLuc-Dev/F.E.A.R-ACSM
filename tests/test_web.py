@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -11,6 +13,7 @@ from fear.auth import Security, UserStore
 from fear.brain.async_conversation import CommandResponse, StreamSession
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
+from fear.web import app as app_module
 from fear.web.app import (
     app,
     get_brain,
@@ -104,12 +107,19 @@ class FakeMemory:
 
 
 class FakeTTS:
+    """Stands in for NaturalTTS, which returns the temp file it synthesised."""
+
     def __init__(self) -> None:
         self.said: list[str] = []
+        self.produced: list[Path] = []
 
-    async def say(self, text: str) -> None:
+    async def say(self, text: str) -> Path | None:
         self.said.append(text)
-        return None
+        handle, name = tempfile.mkstemp(suffix=".wav")
+        os.close(handle)
+        path = Path(name)
+        self.produced.append(path)
+        return path
 
 
 class FakeReferenceLibrary:
@@ -365,6 +375,159 @@ def test_ws_rejects_without_auth_handshake(
         for attr in ("user_store", "security", "settings", "brain"):
             if hasattr(app.state, attr):
                 delattr(app.state, attr)
+
+
+# --- microphone endpoints must never be anonymous ---
+
+
+class FakeVoiceListener:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def begin_capture(self) -> None:
+        self.calls.append("begin")
+
+    def end_capture(self) -> None:
+        self.calls.append("end")
+
+    def capture_once(self) -> None:
+        self.calls.append("once")
+
+
+VOICE_ROUTES = ("/voice/start", "/voice/stop", "/voice/capture-once")
+
+
+def test_voice_routes_reject_anonymous_callers(client: TestClient) -> None:
+    # These drive the machine's microphone. An unauthenticated caller on the LAN
+    # must not be able to start, stop, or trigger a capture.
+    listener = FakeVoiceListener()
+    app.state.voice_listener = listener
+    try:
+        for path in VOICE_ROUTES:
+            assert client.post(path).status_code == 401, path
+        assert listener.calls == []  # the listener was never touched
+    finally:
+        delattr(app.state, "voice_listener")
+
+
+def test_voice_routes_work_for_a_signed_in_user(client: TestClient) -> None:
+    listener = FakeVoiceListener()
+    app.state.voice_listener = listener
+    try:
+        _, headers = _register(client)
+        for path in VOICE_ROUTES:
+            assert client.post(path, headers=headers).status_code == 200, path
+        assert listener.calls == ["begin", "end", "once"]
+    finally:
+        delattr(app.state, "voice_listener")
+
+
+def test_voice_routes_report_disabled_when_no_listener(client: TestClient) -> None:
+    # Auth still comes first, but with the listener off the answer is a clean
+    # "disabled" hint rather than an error.
+    _, headers = _register(client)
+    body = client.post("/voice/capture-once", headers=headers).json()
+    assert body["status"] == "disabled"
+
+
+# --- synthesised audio must never pile up on disk ---
+
+
+def test_command_deletes_the_audio_it_synthesised(client: TestClient) -> None:
+    tts = FakeTTS()
+    app.dependency_overrides[get_tts] = lambda: tts
+    _, headers = _register(client)
+
+    response = client.post(
+        "/command", json={"text": "oi", "speaker": "Lucas", "speak": True}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert tts.said  # it really spoke
+    assert all(not path.exists() for path in tts.produced)  # and cleaned up after itself
+
+
+@pytest.mark.asyncio
+async def test_voice_replies_delete_their_audio_too() -> None:
+    # The voice path used to drop the returned path, leaking one file per reply.
+    tts = FakeTTS()
+    await app_module.speak_and_cleanup(tts, "resposta falada")
+
+    assert tts.said == ["resposta falada"]
+    assert all(not path.exists() for path in tts.produced)
+
+
+# --- invite code / email validation robustness ---
+
+
+def test_non_ascii_invite_code_is_refused_not_a_500(client: TestClient) -> None:
+    # hmac.compare_digest raises TypeError on non-ASCII str; the check must still
+    # answer with a clean 403 instead of blowing up.
+    app.dependency_overrides[get_settings] = lambda: Settings(invite_code="LETMEIN")
+    response = client.post(
+        "/auth/register",
+        json={"email": "a@b.com", "password": "longenough", "invite_code": "convité"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Convite inválido."
+
+
+def test_correct_invite_code_still_registers(client: TestClient) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(invite_code="LETMEIN")
+    response = client.post(
+        "/auth/register",
+        json={"email": "ok@example.com", "password": "longenough", "invite_code": "LETMEIN"},
+    )
+    assert response.status_code == 200
+
+
+def test_malformed_emails_are_rejected(client: TestClient) -> None:
+    for email in ("a@b@c.com", "a b@c.com", "a@b", "@b.com"):
+        response = client.post("/auth/register", json={"email": email, "password": "longenough"})
+        assert response.status_code == 422, email
+
+
+def _register_with_a_broken_route(client: TestClient, origin: str) -> object:
+    """Force an unhandled error inside /auth/register and return the response.
+
+    A dedicated client with ``raise_server_exceptions=False`` is used so the
+    500 is returned like a real HTTP response instead of being re-raised.
+    """
+    app.dependency_overrides[get_settings] = lambda: Settings(invite_code="LETMEIN")
+
+    def boom(_supplied: str, _expected: str) -> bool:
+        raise RuntimeError("simulated failure")
+
+    original = app_module._matches_invite
+    app_module._matches_invite = boom  # type: ignore[assignment]
+    # Not used as a context manager on purpose: entering it would run the
+    # lifespan, which imports the optional audio/ML stack (absent in tests).
+    quiet_client = TestClient(app, raise_server_exceptions=False)
+    try:
+        return quiet_client.post(
+            "/auth/register",
+            json={"email": "a@b.com", "password": "longenough", "invite_code": "LETMEIN"},
+            headers={"Origin": origin},
+        )
+    finally:
+        app_module._matches_invite = original  # type: ignore[assignment]
+
+
+def test_unhandled_errors_carry_cors_headers(client: TestClient) -> None:
+    # A 500 is served by ServerErrorMiddleware, outside CORSMiddleware, so the
+    # handler must add the headers itself or the browser discards the body.
+    response = _register_with_a_broken_route(client, "http://localhost:3000")
+
+    assert response.status_code == 500  # type: ignore[attr-defined]
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"  # type: ignore[attr-defined]
+    assert "Internal error" in response.json()["detail"]  # type: ignore[attr-defined]
+
+
+def test_unhandled_errors_do_not_echo_a_foreign_origin(client: TestClient) -> None:
+    response = _register_with_a_broken_route(client, "http://evil.example")
+
+    assert response.status_code == 500  # type: ignore[attr-defined]
+    assert "access-control-allow-origin" not in response.headers  # type: ignore[attr-defined]
 
 
 # --- item 5: auth hardening ---

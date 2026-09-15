@@ -83,8 +83,15 @@ class Settings(BaseSettings):
 
     @property
     def is_production(self) -> bool:
-        """True when running as a published service (FEAR_ENV=production)."""
-        return self.env.strip().lower() == "production"
+        """True when running as a published service (FEAR_ENV=production).
+
+        Matches any "prod…" spelling ("prod", "PRODUCTION", "production-eu").
+        This flag is the only gate on the fatal missing-FEAR_SECRET_KEY check,
+        and an exact match let a deployment written as FEAR_ENV=prod boot with
+        an ephemeral secret — silently logging every user out and making stored
+        API keys undecryptable on each restart.
+        """
+        return self.env.strip().lower().startswith("prod")
 
     @classmethod
     def from_env(cls) -> Settings:

@@ -270,7 +270,29 @@ async def test_history_window_is_capped() -> None:
     for index in range(3):
         await brain.process_command(f"mensagem {index}", "Lucas")
 
-    assert len(brain._history["Lucas"]) <= 2
+    # A "turn" is a user message plus its reply, so 2 turns == 4 stored messages.
+    window = brain._history["Lucas"]
+    assert len(window) == 4
+    assert [entry["content"] for entry in window] == ["mensagem 1", "r", "mensagem 2", "r"]
+
+
+@pytest.mark.asyncio
+async def test_history_keeps_the_configured_number_of_turns() -> None:
+    # The setting is named (and documented as) turns: asking for 3 must keep the
+    # last 3 exchanges, not half of them.
+    turns = 3
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m", max_history_turns=turns),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = FakeClient(reply="r")  # type: ignore[assignment]
+
+    for index in range(6):
+        await brain.process_command(f"m{index}", "Lucas")
+
+    window = brain._history["Lucas"]
+    user_messages = [entry["content"] for entry in window if entry["role"] == "user"]
+    assert user_messages == ["m3", "m4", "m5"]  # the 3 most recent turns survive
 
 
 def test_persona_file_overrides_default(tmp_path) -> None:
