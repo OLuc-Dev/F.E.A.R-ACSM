@@ -267,7 +267,7 @@ export function useConversation() {
         if (appId === "spotify") {
           setStatus("thinking");
           const data = await sendCommand({ text: "toggle Spotify playback", speaker: who });
-          pushMessage("fear", data.reply || "Spotify acionado.");
+          pushMessage("fear", data.reply || "Música acionada.");
           setStatus("online");
         } else if (appId === "voice") {
           // The backend records for several seconds before answering, so say

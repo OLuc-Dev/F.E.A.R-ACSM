@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import type { RobotStatus } from "@/lib/fear-robot-motion";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,8 @@ export interface FearRobotProps {
   pulse?: number;
   /** Bump to make the robot wave (it waves back when it sees you wave). */
   greetSignal?: number;
+  /** A hand to look at (0–1 view coordinates), read every frame; null: the cursor. */
+  gaze?: RefObject<{ x: number; y: number } | null>;
 }
 
 interface RobotHandle {
@@ -41,6 +43,7 @@ export function FearRobot({
   status = "online",
   pulse = 0,
   greetSignal = 0,
+  gaze,
 }: FearRobotProps) {
   const container = useRef<HTMLDivElement>(null);
   const scene = useRef<RobotHandle | null>(null);
@@ -48,6 +51,8 @@ export function FearRobot({
   // loading isn't lost, without making status a reason to rebuild the scene.
   const statusRef = useRef(status);
   statusRef.current = status;
+  const gazeRef = useRef(gaze);
+  gazeRef.current = gaze;
   const [load, setLoad] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
@@ -63,6 +68,7 @@ export function FearRobot({
           animate,
           interactive,
           status: statusRef.current,
+          gaze: () => gazeRef.current?.current ?? null,
           onReady: () => {
             if (!cancelled) setLoad("ready");
           },

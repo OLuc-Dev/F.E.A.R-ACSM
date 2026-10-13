@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     owner_email: str = Field("", validation_alias="FEAR_OWNER_EMAIL")
     # Set by the Windows app launcher: one built-in account, no sign-up or login.
     desktop: bool = Field(False, validation_alias="FEAR_DESKTOP")
+    # The Windows app's settings-panel switches (claps, Obsidian vault).
+    desktop_settings_path: str = Field(
+        "data/desktop.json", validation_alias="FEAR_DESKTOP_SETTINGS"
+    )
 
     # OpenRouter is used through an OpenAI-compatible client interface.
     openrouter_api_key: str = Field("", validation_alias="OPENROUTER_API_KEY")

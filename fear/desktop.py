@@ -28,17 +28,17 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
+from fear.desktop_prefs import APP_NAME, autostart_enabled, set_autostart
 from fear.logging_config import configure_logging
 
-APP_NAME = "F.E.A.R."
 APP_DIR_NAME = "FEAR"
 # Fixed so the window keeps the same origin (and so its saved theme etc.) across
 # launches; a random port is used only if this one is taken.
 PREFERRED_PORT = 47865
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 INSTANCE_HEADER = "X-Fear-Instance"
 _LOG_LIMIT_BYTES = 5 * 1024 * 1024
 
@@ -151,6 +151,25 @@ def wake_running_instance(instance_file: Path, timeout: float = 2.0) -> bool:
         return False
 
 
+class DesktopBridge:
+    """What the page may ask of the app itself, as ``window.pywebview.api``.
+
+    Only public methods are exposed to the page; the window stays private.
+    """
+
+    def __init__(self) -> None:
+        self._window: Any = None
+
+    def pick_folder(self) -> str:
+        """Open Windows' folder picker: the folder chosen, or "" if cancelled."""
+        import webview
+
+        if self._window is None:
+            return ""
+        chosen = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+        return str(chosen[0]) if chosen else ""
+
+
 def add_show_route(application: FastAPI, key: str, show: Callable[[], None]) -> None:
     """Let a second launch bring this window forward instead of starting another app."""
 
@@ -162,9 +181,6 @@ def add_show_route(application: FastAPI, key: str, show: Callable[[], None]) -> 
         return {"shown": True}
 
     application.add_api_route("/desktop/show", desktop_show, methods=["POST"])
-
-
-# --- "Iniciar com o Windows" (the same Run entry the installer writes) ------------
 
 
 def allow_camera_for_own_page(window, origin: str) -> None:
@@ -205,40 +221,6 @@ def allow_camera_for_own_page(window, origin: str) -> None:
         window.native.Invoke(Func[Type](attach))
     except Exception:
         logger.warning("Could not pre-approve the camera", exc_info=True)
-
-
-def autostart_command() -> str:
-    if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" --minimized'
-    return f'"{sys.executable}" -m fear.desktop --minimized'
-
-
-def autostart_enabled() -> bool:
-    if sys.platform != "win32":
-        return False
-    import winreg
-
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            winreg.QueryValueEx(key, APP_NAME)
-        return True
-    except OSError:
-        return False
-
-
-def set_autostart(enabled: bool) -> None:
-    if sys.platform != "win32":
-        return
-    import winreg
-
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-        if enabled:
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, autostart_command())
-        else:
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-            except FileNotFoundError:
-                pass
 
 
 # --- process setup ----------------------------------------------------------------
@@ -383,15 +365,18 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         store.close()
 
+    bridge = DesktopBridge()
     window = webview.create_window(
         APP_NAME,
         html=LOADING_HTML,
+        js_api=bridge,
         width=1320,
         height=860,
         min_size=(960, 640),
         hidden=args.minimized,
         background_color="#050506",
     )
+    bridge._window = window
     quitting = threading.Event()
 
     def show() -> None:

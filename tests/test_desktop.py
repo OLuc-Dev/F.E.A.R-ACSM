@@ -177,7 +177,9 @@ def test_prepare_environment_points_the_backend_at_the_install(monkeypatch, tmp_
 
 
 def test_autostart_command_starts_minimized() -> None:
-    assert desktop.autostart_command().endswith("--minimized")
+    from fear.desktop_prefs import autostart_command
+
+    assert autostart_command().endswith("--minimized")
 
 
 def test_ui_files_are_served_with_their_real_types(monkeypatch, tmp_path: Path) -> None:
@@ -203,3 +205,20 @@ def test_ui_files_are_served_with_their_real_types(monkeypatch, tmp_path: Path) 
     assert wasm.headers["content-type"] == "application/wasm"
     assert script.headers["content-type"].startswith("text/javascript")
     assert client.get("/").status_code == 200
+
+
+def test_the_folder_picker_returns_the_choice_or_nothing() -> None:
+    class FakeWindow:
+        def __init__(self, result):
+            self.result = result
+
+        def create_file_dialog(self, dialog_type):
+            return self.result
+
+    pytest.importorskip("webview")
+    bridge = desktop.DesktopBridge()
+    assert bridge.pick_folder() == ""  # no window yet
+    bridge._window = FakeWindow(["C:/Users/lucas/Obsidian"])
+    assert bridge.pick_folder() == "C:/Users/lucas/Obsidian"
+    bridge._window = FakeWindow(None)  # cancelled
+    assert bridge.pick_folder() == ""

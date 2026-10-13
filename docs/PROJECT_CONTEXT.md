@@ -52,11 +52,16 @@ gravada).
 - `fear/library/reference_library.py` — conhecimento (markdown/texto), escopo por usuário.
 - `fear/auth/` — `security.py` (senha/token/cripto), `store.py` (`UserStore` SQLite).
 - `fear/config.py` — `Settings` (pydantic-settings), lê o `.env`.
+- `fear/integrations/music.py` — intenção de música (pt/en) + teclas de mídia do Windows
+  (`MediaKeys`), usadas quando a API do Spotify não está configurada.
+- `fear/desktop.py` + `fear/desktop_prefs.py` — o app do Windows (janela, bandeja,
+  sessão local) e as chaves da aba **App** (palmas, vault, iniciar com o Windows).
 - `prompts/fear_persona.md` — a personalidade (carregada por `FEAR_PERSONA_FILE`).
 - Frontend: `app/page.tsx` (deck + gate de login + aviso de chave),
   `components/ui/fear-robot.tsx` + `lib/fear-robot-scene.ts` / `lib/fear-robot-motion.ts`
   (3D), `gesture-panel.tsx` + `lib/hand-gestures.ts` / `lib/hand-tracker.ts` /
-  `lib/hand-worker.ts` (gestos com MediaPipe, num Web Worker), `settings-panel.tsx`, `auth-panel.tsx`,
+  `lib/hand-worker.ts` (gestos com MediaPipe, num Web Worker), `settings-panel.tsx` +
+  `app-settings-tab.tsx` (aba App), `lib/updates.ts` (aviso de versão nova), `auth-panel.tsx`,
   `mac-os-dock.tsx`, `messages.tsx`; `lib/api.ts` (cliente tipado + header de
   auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`, `lib/speech.ts`.
 

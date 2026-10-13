@@ -1,6 +1,6 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 
-import { type GestureCommand, GestureInterpreter, type HandPose } from "@/lib/hand-gestures";
+import { type GestureCommand, GestureInterpreter, type HandPose, type HandSample } from "@/lib/hand-gestures";
 import type { HandTracker, HandTrackerFactory } from "@/lib/hand-tracker";
 
 export type GestureStatus = "off" | "starting" | "watching" | "paused" | "error";
@@ -48,6 +48,8 @@ interface Options {
   onCommand: (command: GestureCommand) => void;
   videoRef: RefObject<HTMLVideoElement>;
   canvasRef?: RefObject<HTMLCanvasElement>;
+  /** Every frame's hand (null: none), e.g. for the robot to look at it. */
+  onHand?: (hand: HandSample | null) => void;
   /** Injected in tests; defaults to the MediaPipe tracker. */
   createTracker?: HandTrackerFactory;
 }
@@ -62,6 +64,7 @@ export function useHandGestures({
   onCommand,
   videoRef,
   canvasRef,
+  onHand,
   createTracker = loadTracker,
 }: Options) {
   const [status, setStatus] = useState<GestureStatus>("off");
@@ -71,6 +74,8 @@ export function useHandGestures({
 
   const onCommandRef = useRef(onCommand);
   onCommandRef.current = onCommand;
+  const onHandRef = useRef(onHand);
+  onHandRef.current = onHand;
   const trackerRef = useRef<HandTracker | null>(null);
   const trackerPromiseRef = useRef<Promise<HandTracker> | null>(null);
   const interpreterRef = useRef(new GestureInterpreter());
@@ -80,6 +85,7 @@ export function useHandGestures({
 
   const onFrame = useCallback((t: number, hand: Parameters<GestureInterpreter["update"]>[1]) => {
     const command = interpreterRef.current.update(t, hand);
+    onHandRef.current?.(hand);
     const next = hand?.pose ?? null;
     if (next !== poseRef.current) {
       poseRef.current = next;
@@ -100,6 +106,7 @@ export function useHandGestures({
     runRef.current++;
     trackerRef.current?.stop();
     interpreterRef.current.reset();
+    onHandRef.current?.(null);
     poseRef.current = null;
     setPose(null);
   }, []);

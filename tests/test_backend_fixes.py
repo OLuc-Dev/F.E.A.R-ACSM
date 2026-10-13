@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import stat
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -458,3 +460,43 @@ def test_clap_detector_gives_up_on_a_dead_microphone(monkeypatch) -> None:
     detector._audio_loop()  # used to loop forever on the same OSError
 
     assert DeadStream.reads == module._MAX_READ_FAILURES
+
+
+# --- Obsidian: notes written while F.E.A.R. was closed still reach memory ------
+
+
+def _watcher(memory: _RecordingMemory, vault: Path, state: Path):
+    pytest.importorskip("watchdog")
+    from fear.memory.obsidian_watcher import ObsidianWatcher
+
+    return ObsidianWatcher(vault_path=vault, memory=memory, state_file=state)  # type: ignore[arg-type]
+
+
+def test_obsidian_catch_up_indexes_the_vault_once_then_only_changes(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    old, new = vault / "antiga.md", vault / "nova.md"
+    old.write_text("Uma nota que já existia antes do F.E.A.R. abrir.", encoding="utf-8")
+    new.write_text("Outra nota que já existia antes do F.E.A.R. abrir.", encoding="utf-8")
+    memory = _RecordingMemory()
+    state = tmp_path / "obsidian_state.json"
+
+    assert _watcher(memory, vault, state).catch_up() == 2  # the first time: everything
+    assert _watcher(memory, vault, state).catch_up() == 0  # nothing changed since
+    later = time.time() + 5
+    os.utime(new, (later, later))  # edited while F.E.A.R. was closed
+    assert _watcher(memory, vault, state).catch_up() == 1
+
+
+def test_an_interrupted_catch_up_is_not_recorded(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "nota.md").write_text(
+        "Uma nota longa o suficiente para virar memória.", encoding="utf-8"
+    )
+    state = tmp_path / "obsidian_state.json"
+    watcher = _watcher(_RecordingMemory(), vault, state)
+    watcher._stop_event.set()
+
+    assert watcher.catch_up() == 0
+    assert not state.exists()  # the next start scans again

@@ -47,6 +47,7 @@ const SOURCE_LABELS: Record<string, string> = {
   conversation: "conversa",
   voice: "voz",
   spotify: "Spotify",
+  music: "música",
   calendar: "calendário",
   obsidian: "Obsidian",
 };

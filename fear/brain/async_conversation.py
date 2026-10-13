@@ -16,7 +16,7 @@ from fear.memory.personal_memory import PersonalMemory, PersonalMemoryResult
 
 if TYPE_CHECKING:
     from fear.integrations.google_calendar import GoogleCalendarClient
-    from fear.integrations.spotify_client import SpotifyClient
+    from fear.integrations.music import MusicPlayer
 
 
 logger = logging.getLogger(__name__)
@@ -24,10 +24,10 @@ logger = logging.getLogger(__name__)
 # Shown to the user when a model call fails, instead of surfacing a 500.
 LLM_ERROR_REPLY = "Tive um problema para processar isso agora. Tenta de novo em instantes."
 
-# Only route to Spotify when the message clearly refers to music. This keeps the
+# Only route to the music player when the message clearly refers to music. This keeps the
 # assistant from hijacking ordinary conversation that happens to contain a verb
 # like "play" or "stop".
-SPOTIFY_HINTS = ("spotify", "music", "música", "song", "track", "faixa", "playback")
+MUSIC_HINTS = ("spotify", "music", "música", "song", "track", "faixa", "playback")
 
 # Route to the calendar only on a clear agenda question (read-only), so ordinary
 # chat that happens to mention a meeting isn't hijacked.
@@ -107,7 +107,7 @@ class UserContext:
     api_key: str = ""
     chat_model: str = ""
     persona_mode: str = ""
-    # Only the machine's owner may drive its Spotify or read its calendar.
+    # Only the machine's owner may drive its music or read its calendar.
     is_owner: bool = False
 
 
@@ -152,13 +152,13 @@ class AsyncConversationalBrain:
         settings: Settings,
         memory: PersonalMemory,
         reference_library: ReferenceLibrary | None = None,
-        spotify: SpotifyClient | None = None,
+        music: MusicPlayer | None = None,
         calendar: GoogleCalendarClient | None = None,
     ) -> None:
         self.settings = settings
         self.memory = memory
         self.reference_library = reference_library
-        self.spotify = spotify
+        self.music = music
         self.calendar = calendar
         self.client: AsyncOpenAI | None = None
         # Per-user OpenRouter clients (BYO key), cached by the key itself so a
@@ -233,11 +233,11 @@ class AsyncConversationalBrain:
         history_key = user.user_id if user else clean_speaker
 
         owns_machine = user is None or user.is_owner
-        spotify_reply = await self._try_spotify(clean_text) if owns_machine else ""
-        if spotify_reply:
-            await self._remember(clean_text, clean_speaker, "spotify", scope)
-            self._record_turn(history_key, clean_text, spotify_reply)
-            return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
+        music_reply = await self._try_music(clean_text) if owns_machine else ""
+        if music_reply:
+            await self._remember(clean_text, clean_speaker, "music", scope)
+            self._record_turn(history_key, clean_text, music_reply)
+            return CommandResponse(reply=music_reply, speaker=clean_speaker, remembered=True)
 
         calendar_summary = await self._try_calendar(clean_text) if owns_machine else ""
         # Without a model, hand back the raw agenda; with one, F.E.A.R. phrases it below.
@@ -340,11 +340,11 @@ class AsyncConversationalBrain:
         history_key = user.user_id if user else clean_speaker
 
         owns_machine = user is None or user.is_owner
-        spotify_reply = await self._try_spotify(clean_text) if owns_machine else ""
-        if spotify_reply:
-            await self._remember(clean_text, clean_speaker, "spotify", scope)
-            self._record_turn(history_key, clean_text, spotify_reply)
-            return StreamSession([], _single_chunk(spotify_reply))
+        music_reply = await self._try_music(clean_text) if owns_machine else ""
+        if music_reply:
+            await self._remember(clean_text, clean_speaker, "music", scope)
+            self._record_turn(history_key, clean_text, music_reply)
+            return StreamSession([], _single_chunk(music_reply))
 
         calendar_summary = await self._try_calendar(clean_text) if owns_machine else ""
         if calendar_summary and client is None:
@@ -489,20 +489,20 @@ class AsyncConversationalBrain:
         messages.append({"role": "user", "content": text})
         return messages
 
-    async def _try_spotify(self, text: str) -> str:
-        """Route clear music commands to Spotify, returning "" when not applicable."""
-        if self.spotify is None:
+    async def _try_music(self, text: str) -> str:
+        """Route clear music commands to the music player, "" when not applicable."""
+        if self.music is None:
             return ""
 
         lowered = text.lower()
-        if not any(hint in lowered for hint in SPOTIFY_HINTS):
+        if not any(hint in lowered for hint in MUSIC_HINTS):
             return ""
 
         try:
-            return await self.spotify.handle_intent(lowered)
+            return await self.music.handle_intent(lowered)
         except Exception:
-            logger.exception("Spotify intent failed")
-            return "Não consegui falar com o Spotify agora."
+            logger.exception("Music command failed")
+            return "Não consegui controlar a música agora."
 
     async def _try_calendar(self, text: str) -> str:
         """Route clear agenda questions to the calendar (read-only); "" otherwise."""

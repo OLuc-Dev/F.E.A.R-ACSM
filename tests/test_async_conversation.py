@@ -157,7 +157,7 @@ async def test_music_command_routes_to_spotify() -> None:
     brain = AsyncConversationalBrain(
         settings=Settings(),
         memory=memory,
-        spotify=spotify,  # type: ignore[arg-type]
+        music=spotify,  # type: ignore[arg-type]
     )
 
     result = await brain.process_command("next Spotify song", "Lucas")
@@ -165,7 +165,7 @@ async def test_music_command_routes_to_spotify() -> None:
     assert result.reply == "Skipped to the next track."
     assert result.remembered is True
     assert spotify.calls == ["next spotify song"]
-    assert memory.added == [("next Spotify song", "Lucas", "spotify")]
+    assert memory.added == [("next Spotify song", "Lucas", "music")]
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_non_music_command_does_not_touch_spotify() -> None:
     brain = AsyncConversationalBrain(
         settings=Settings(openrouter_api_key=""),
         memory=memory,
-        spotify=spotify,  # type: ignore[arg-type]
+        music=spotify,  # type: ignore[arg-type]
     )
 
     result = await brain.process_command("how are you today", "Lucas")
@@ -582,7 +582,7 @@ async def test_open_stream_has_no_consulted_ids_for_spotify_shortcut() -> None:
     brain = AsyncConversationalBrain(
         settings=Settings(openrouter_chat_model="m"),
         memory=IdMemory(),  # type: ignore[arg-type]
-        spotify=FakeSpotify(),  # type: ignore[arg-type]
+        music=FakeSpotify(),  # type: ignore[arg-type]
     )
 
     session = await brain.open_stream("next Spotify song", "Lucas")
@@ -663,7 +663,7 @@ async def test_other_accounts_cannot_drive_the_owners_spotify() -> None:
     brain = AsyncConversationalBrain(
         settings=Settings(openrouter_api_key=""),
         memory=FakeMemory(),  # type: ignore[arg-type]
-        spotify=spotify,  # type: ignore[arg-type]
+        music=spotify,  # type: ignore[arg-type]
     )
 
     await brain.process_command("next song on spotify", "Ana", user=UserContext(user_id="ana"))
@@ -693,7 +693,7 @@ async def test_the_owner_still_reaches_spotify_and_calendar() -> None:
     brain = AsyncConversationalBrain(
         settings=Settings(openrouter_api_key=""),
         memory=FakeMemory(),  # type: ignore[arg-type]
-        spotify=spotify,  # type: ignore[arg-type]
+        music=spotify,  # type: ignore[arg-type]
         calendar=calendar,  # type: ignore[arg-type]
     )
     owner = UserContext(user_id="lucas", is_owner=True)

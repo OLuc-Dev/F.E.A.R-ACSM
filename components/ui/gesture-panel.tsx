@@ -3,7 +3,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Camera, CameraOff, Grab, Hand, Loader2, X } from "lucide-react";
 
-import type { GestureCommand, HandPose } from "@/lib/hand-gestures";
+import type { GestureCommand, HandPose, HandSample } from "@/lib/hand-gestures";
 import { type GestureStatus, useHandGestures } from "@/lib/use-hand-gestures";
 
 export interface GestureFeedback {
@@ -31,20 +31,20 @@ const STATUS_LABEL: Record<GestureStatus, string> = {
   error: "câmera indisponível",
 };
 
-const LEGEND: { icon: ReactNode; gesture: string; action: string; spotify?: boolean }[] = [
+const LEGEND: { icon: ReactNode; gesture: string; action: string; music?: boolean }[] = [
   { icon: <Hand className="size-3.5" />, gesture: "Acenar", action: "o F.E.A.R. acena de volta" },
-  { icon: <Hand className="size-3.5" />, gesture: "Palma parada (1 s)", action: "play/pause", spotify: true },
+  { icon: <Hand className="size-3.5" />, gesture: "Palma parada (1 s)", action: "play/pause", music: true },
   {
     icon: <ArrowRight className="size-3.5" />,
     gesture: "Deslizar para a direita",
     action: "próxima",
-    spotify: true,
+    music: true,
   },
   {
     icon: <ArrowLeft className="size-3.5" />,
     gesture: "Deslizar para a esquerda",
     action: "anterior",
-    spotify: true,
+    music: true,
   },
   { icon: <Grab className="size-3.5" />, gesture: "Punho fechado (0,7 s)", action: "silencia o F.E.A.R." },
 ];
@@ -55,16 +55,18 @@ export function GesturePanel({
   onCommand,
   onTurnOff,
   feedback,
-  spotifyAvailable,
+  musicAvailable,
+  onHand,
 }: {
   onCommand: (command: GestureCommand) => void;
   onTurnOff: () => void;
   feedback: GestureFeedback | null;
-  spotifyAvailable: boolean;
+  musicAvailable: boolean;
+  onHand?: (hand: HandSample | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { status, error, pose } = useHandGestures({ enabled: true, onCommand, videoRef, canvasRef });
+  const { status, error, pose } = useHandGestures({ enabled: true, onCommand, videoRef, canvasRef, onHand });
 
   // The last command stays on screen for a few seconds, then fades out.
   const [showFeedback, setShowFeedback] = useState(false);
@@ -154,7 +156,7 @@ export function GesturePanel({
 
       <ul className="mt-2 space-y-1">
         {LEGEND.map((item) => {
-          const unavailable = item.spotify && !spotifyAvailable;
+          const unavailable = item.music && !musicAvailable;
           return (
             <li
               key={item.gesture}
@@ -164,7 +166,7 @@ export function GesturePanel({
               <span className="text-foreground/75">{item.gesture}</span>
               <span className="ml-auto text-muted-foreground">
                 {item.action}
-                {item.spotify ? " no Spotify" : ""}
+                {item.music ? " na música" : ""}
               </span>
             </li>
           );

@@ -23,11 +23,19 @@ sem login.
    "Iniciar com o Windows".
 
 Cada instalação é um F.E.A.R. particular: memória, chave e configurações ficam
-em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar. Para ligar as
-palmas (`FEAR_ENABLE_CLAP_DETECTOR=1`), o Obsidian (`OBSIDIAN_VAULT_PATH=...`) ou
-outras opções, crie um `.env` nessa pasta (veja `.env.example`) e reabra o app.
-A captura de voz pelo Whisper não vem no instalador (são gigabytes); ela só
-funciona rodando do código com `pip install -e ".[audio]"`.
+em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
+
+- **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
+  pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
+- **Música sem configuração**: comandos como "pausa a música", as palmas e os
+  gestos usam as teclas de mídia do Windows, então controlam o que estiver
+  tocando (app do Spotify, YouTube no navegador, VLC…), sem conta de
+  desenvolvedor nem Premium. Se a API do Spotify estiver configurada, ela é usada.
+- **Atualizações**: ao abrir, o app consulta a página de Releases do GitHub e
+  mostra um aviso com o link quando há versão nova.
+- Opções avançadas continuam valendo num `.env` nessa pasta (veja
+  `.env.example`). A captura de voz pelo Whisper não vem no instalador (são
+  gigabytes); ela só funciona rodando do código com `pip install -e ".[audio]"`.
 
 **Publicar uma versão:** crie e envie uma tag (`git tag v0.2.0 && git push origin
 v0.2.0`). O workflow *Windows app* gera o instalador, testa o app empacotado e
@@ -83,20 +91,24 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   engrenagem / app no dock) você adiciona conhecimento por texto colado. Tudo é
   indexado na `ReferenceLibrary` (isolado por usuário) e F.E.A.R. consulta sozinho
   ao responder.
-- **Spotify** por linguagem natural (português ou inglês), palmas, gestos e toques de wearable.
+- **Música** por linguagem natural (português ou inglês), palmas, gestos e toques de
+  wearable: pela API do Spotify quando configurada, ou pelas teclas de mídia do
+  Windows no app, que controlam qualquer player.
 - **Percepção de palmas** (`ClapDetector`) e **toques de wearable** (`/wearable/tap`).
 - **Voz** opcional (Whisper, push-to-talk) e **TTS** natural (ElevenLabs) com
   fallback offline (`pyttsx3`).
-- **Observador do Obsidian**: indexa notas do vault conforme você escreve.
-- **Gestos com as mãos** (MediaPipe): ligue no ícone de mão do dock. Acenar faz o
-  robô acenar de volta; palma parada por 1 s dá play/pause; deslizar a mão para a
-  direita ou para a esquerda troca de faixa; punho fechado por 0,7 s silencia o
-  F.E.A.R. Cada comando exige um gesto deliberado (pose segurada, deslize a partir
-  da mão parada, pausa entre comandos), para que mexer as mãos conversando não
-  pause a música. A câmera só fica ligada com a janela visível, e o reconhecimento
-  roda no próprio computador: as imagens nunca saem dele. No Windows, a câmera
-  precisa estar liberada em *Configurações → Privacidade → Câmera* para aplicativos
-  da área de trabalho.
+- **Observador do Obsidian**: na primeira vez lê o vault inteiro; depois indexa o
+  que você escreve, e ao abrir recupera o que mudou com o app fechado.
+- **Gestos com as mãos** (MediaPipe): ligue no ícone de mão do dock. O robô passa
+  a olhar para a sua mão; acenar faz ele acenar de volta; palma parada por 1 s dá
+  play/pause; deslizar a mão para a direita ou para a esquerda troca de faixa;
+  punho fechado por 0,7 s silencia o F.E.A.R. Cada comando exige um gesto
+  deliberado (pose segurada, deslize a partir da mão parada, pausa entre
+  comandos), para que mexer as mãos conversando não pause a música. A câmera só
+  fica ligada com a janela visível, e o reconhecimento roda no próprio
+  computador: as imagens nunca saem dele. No Windows, a câmera precisa estar
+  liberada em *Configurações → Privacidade → Câmera* para aplicativos da área de
+  trabalho.
 - **Presença 3D**: um robô de corpo inteiro em cromo, âmbar e ciano, com olhos
   carmim que seguem o cursor e reagem ao estado da conversa (ouvindo, pensando,
   respondendo), com um painel de status do sistema ao lado.

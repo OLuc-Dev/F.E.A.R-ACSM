@@ -183,6 +183,7 @@ def test_status(client: TestClient) -> None:
         "memory",
         "voice",
         "spotify",
+        "music",
         "obsidian",
         "calendar",
     }
@@ -728,3 +729,16 @@ def test_owner_email_setting_picks_the_owner(client: TestClient, tmp_path: Path)
         assert client.post("/voice/start", headers=second).status_code == 200
     finally:
         delattr(app.state, "voice_listener")
+
+
+def test_status_reports_music_control_to_the_owner(client: TestClient) -> None:
+    from fear.integrations.music import MediaKeys
+
+    app.state.music = MediaKeys(press=lambda key: None)
+    try:
+        _, owner = _register(client, "owner@example.com")
+        _, guest = _register(client, "guest@example.com")
+        assert client.get("/status", headers=owner).json()["music"] is True
+        assert client.get("/status", headers=guest).json()["music"] is False
+    finally:
+        delattr(app.state, "music")

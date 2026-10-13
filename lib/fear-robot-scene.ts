@@ -28,6 +28,8 @@ interface SceneOptions {
   animate: boolean;
   interactive: boolean;
   status?: RobotStatus;
+  /** Where to look instead of the cursor, in 0–1 view coordinates (null: nowhere). */
+  gaze?: () => { x: number; y: number } | null;
   onReady: () => void;
   onError: (error: unknown) => void;
 }
@@ -176,7 +178,10 @@ export function createRobotScene(container: HTMLDivElement, options: SceneOption
     if (disposed || !visible || document.hidden || !motion) return;
     const frozen = !options.animate || reduced.matches;
     if (!frozen) time += delta;
-    motion.update(time, delta, pointer, frozen);
+    // A tracked hand wins over the cursor: F.E.A.R. looks at whoever it sees.
+    const hand = options.gaze?.();
+    const target = hand ? { x: hand.x * 2 - 1, y: hand.y * 2 - 1, active: true } : pointer;
+    motion.update(time, delta, target, frozen);
     renderer.render(scene, camera);
   });
 

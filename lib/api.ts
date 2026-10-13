@@ -55,6 +55,8 @@ export interface StatusResponse {
   memory: boolean;
   voice: boolean;
   spotify: boolean;
+  /** Some way to control music here: Spotify's API or the system media keys. */
+  music: boolean;
   obsidian: boolean;
   calendar: boolean;
 }
@@ -274,6 +276,32 @@ export async function getConfig(): Promise<ConfigResponse> {
 export async function updateConfig(update: ConfigUpdate): Promise<ConfigResponse> {
   const response = await postJson("/config", update);
   return (await response.json()) as ConfigResponse;
+}
+
+// --- The Windows app's own switches (its settings panel) ---
+
+export interface DesktopSettings {
+  claps: boolean;
+  claps_available: boolean;
+  /** False when claps are on but the microphone could not be opened. */
+  claps_listening: boolean;
+  obsidian_vault: string;
+  obsidian_watching: boolean;
+  autostart: boolean;
+  autostart_available: boolean;
+}
+
+export type DesktopSettingsUpdate = Partial<Pick<DesktopSettings, "claps" | "obsidian_vault" | "autostart">>;
+
+export async function getDesktopSettings(): Promise<DesktopSettings> {
+  const response = await apiFetch("/desktop/settings");
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
+  return (await response.json()) as DesktopSettings;
+}
+
+export async function updateDesktopSettings(update: DesktopSettingsUpdate): Promise<DesktopSettings> {
+  const response = await postJson("/desktop/settings", update);
+  return (await response.json()) as DesktopSettings;
 }
 
 // --- Accounts (multi-user; the session token is attached automatically) ---

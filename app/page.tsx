@@ -14,6 +14,7 @@ import {
   Cpu,
   Crosshair,
   Database,
+  Download,
   Hand,
   KeyRound,
   Loader2,
@@ -29,6 +30,7 @@ import {
   VolumeX,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 
 import { AuthPanel } from "@/components/ui/auth-panel";
@@ -42,10 +44,11 @@ import { humanizeError } from "@/lib/chat-helpers";
 import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
-import { IS_DESKTOP } from "@/lib/desktop";
+import { APP_VERSION, IS_DESKTOP } from "@/lib/desktop";
 import { stopSpeaking } from "@/lib/speech";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
+import { type UpdateInfo, checkForUpdate } from "@/lib/updates";
 import { loadGesturePreference, saveGesturePreference } from "@/lib/use-hand-gestures";
 
 const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((module) => module.FearRobot), {
@@ -61,13 +64,14 @@ const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
   { id: "gestures", name: "Gestos", icon: <Hand className="h-full w-full text-amber-200" /> },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
-  { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
+  { id: "spotify", name: "Música", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
   { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-danger" /> },
 ];
 
-// The music gestures, as the commands the brain already routes to Spotify.
-const SPOTIFY_GESTURES: Partial<Record<GestureCommand, { title: string; text: string }>> = {
+// The music gestures, as the commands the brain routes to the music player
+// (Spotify's API, or the system media keys in the Windows app).
+const MUSIC_GESTURES: Partial<Record<GestureCommand, { title: string; text: string }>> = {
   palm_hold: { title: "Play/pause", text: "toggle Spotify playback" },
   swipe_right: { title: "Próxima faixa", text: "next Spotify song" },
   swipe_left: { title: "Faixa anterior", text: "previous Spotify song" },
@@ -198,8 +202,24 @@ export default function HomePage() {
   const [gestureFeedback, setGestureFeedback] = useState<GestureFeedback | null>(null);
   // Bumped when F.E.A.R. sees a wave, so the robot waves back.
   const [greetSignal, setGreetSignal] = useState(0);
+  // The hand the camera sees, for the robot's eyes; a ref, read every frame by
+  // the 3D scene, so tracking never re-renders the page.
+  const gazeRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => setGesturesOn(loadGesturePreference()), []);
+
+  // A downloaded install learns about newer releases (dismissed for this session).
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  useEffect(() => {
+    if (!IS_DESKTOP) return;
+    let active = true;
+    void checkForUpdate(APP_VERSION).then((found) => {
+      if (active) setUpdate(found);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function setGestures(on: boolean) {
     saveGesturePreference(on);
@@ -256,10 +276,10 @@ export default function HomePage() {
       show("Silêncio");
       return;
     }
-    const music = SPOTIFY_GESTURES[command];
+    const music = MUSIC_GESTURES[command];
     if (!music) return;
-    // Without Spotify the brain would hand the command to the model as chat.
-    if (!systemStatus?.spotify) {
+    // Nothing to play it on here: say so instead of sending a command that can't work.
+    if (!systemStatus?.music) {
       show(music.title, "conecte o Spotify para usar este gesto");
       return;
     }
@@ -306,6 +326,9 @@ export default function HomePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [settingsOpen]);
 
+  // Read on load, and again after the settings panel closes: its switches
+  // (Obsidian vault, claps) change what the system panel should show.
+  const [statusTick, setStatusTick] = useState(0);
   useEffect(() => {
     let active = true;
     getStatus()
@@ -321,7 +344,7 @@ export default function HomePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [statusTick]);
 
   // First run without a key: open the account panel once (AuthPanel focuses the
   // key field). Closing it won't reopen — no nag loop.
@@ -419,8 +442,8 @@ export default function HomePage() {
     },
     {
       icon: <Music className="size-3.5" />,
-      label: "Spotify",
-      ...flag(systemStatus?.spotify, "ok"),
+      label: "Música",
+      ...flag(systemStatus?.music, systemStatus?.spotify ? "Spotify" : "teclas de mídia"),
     },
     {
       icon: <BookOpen className="size-3.5" />,
@@ -503,6 +526,32 @@ export default function HomePage() {
 
         {/* Nudge a signed-in user to add their OpenRouter key, without which
             F.E.A.R. can't reply. Disappears the moment the key is saved. */}
+        {update && (
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-energy/30 bg-energy/[0.07] px-3.5 py-2.5 text-[13px] text-foreground/85">
+            <span className="flex items-center gap-2">
+              <Download className="size-4 shrink-0 text-energy" />
+              Nova versão {update.version} do F.E.A.R. disponível.
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <a
+                href={update.url}
+                target="_blank"
+                rel="noreferrer"
+                className="tap rounded-lg border border-energy/35 bg-energy/10 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-energy/20"
+              >
+                Baixar
+              </a>
+              <button
+                onClick={() => setUpdate(null)}
+                aria-label="Dispensar aviso de atualização"
+                className="tap grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            </span>
+          </div>
+        )}
+
         {!user.has_openrouter_key && (
           <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-brand/25 bg-brand/[0.06] px-3.5 py-2.5 text-[13px] text-brand/90">
             <span className="flex items-center gap-2">
@@ -688,6 +737,7 @@ export default function HomePage() {
                     status={status}
                     pulse={memoryTick}
                     greetSignal={greetSignal}
+                    gaze={gazeRef}
                     className="h-full"
                   />
                 </div>
@@ -699,7 +749,10 @@ export default function HomePage() {
                 onCommand={runGesture}
                 onTurnOff={() => setGestures(false)}
                 feedback={gestureFeedback}
-                spotifyAvailable={Boolean(systemStatus?.spotify)}
+                musicAvailable={Boolean(systemStatus?.music)}
+                onHand={(hand) => {
+                  gazeRef.current = hand;
+                }}
               />
             )}
 
@@ -770,12 +823,14 @@ export default function HomePage() {
         open={settingsOpen}
         onClose={() => {
           setSettingsOpen(false);
+          setStatusTick((tick) => tick + 1);
           setConsultedFocus([]);
         }}
         status={systemStatus}
         speaker={speaker}
         initialTab={settingsTab}
         highlightMemoryIds={consultedFocus}
+        hasOpenRouterKey={user.has_openrouter_key}
       />
 
       <AuthPanel

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import importlib.util
 import logging
 import os
 import secrets
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -24,6 +26,14 @@ from fear.brain.async_conversation import (
     UserContext,
 )
 from fear.config import DEFAULT_CHAT_MODEL, Settings
+from fear.desktop_prefs import (
+    DesktopPrefs,
+    autostart_available,
+    autostart_enabled,
+    load_prefs,
+    save_prefs,
+    set_autostart,
+)
 from fear.input.wearable_taps import GestureName, WearableTapEvent, gesture_to_command
 from fear.library.reference_library import ReferenceLibrary
 from fear.logging_config import configure_logging
@@ -33,7 +43,6 @@ from fear.web.ratelimit import RateLimiter
 
 if TYPE_CHECKING:
     from fear.audio.voice_listener import TranscriptEvent, VoiceListener
-    from fear.input.clap_detector import ClapDetector
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +92,8 @@ class StatusResponse(BaseModel):
     memory: bool
     voice: bool
     spotify: bool
+    # Some way to control music: Spotify's API, or the system media keys.
+    music: bool
     obsidian: bool
     calendar: bool
 
@@ -122,6 +133,26 @@ class ConfigUpdate(BaseModel):
 
     model: str | None = None
     persona_mode: str | None = None
+
+
+class DesktopSettingsResponse(BaseModel):
+    """The Windows app's switches, and whether each one is actually working."""
+
+    claps: bool
+    claps_available: bool
+    claps_listening: bool
+    obsidian_vault: str
+    obsidian_watching: bool
+    autostart: bool
+    autostart_available: bool
+
+
+class DesktopSettingsUpdate(BaseModel):
+    """Partial update of the Windows app's switches (None leaves one as it is)."""
+
+    claps: bool | None = None
+    obsidian_vault: str | None = None
+    autostart: bool | None = None
 
 
 class RegisterRequest(BaseModel):
@@ -335,12 +366,15 @@ async def _is_owner(user: User, store: UserStore, settings: Settings) -> bool:
     return owner is not None and owner.id == user.id
 
 
-async def _require_owner(user: User, store: UserStore, settings: Settings) -> None:
+async def _require_owner(
+    user: User,
+    store: UserStore,
+    settings: Settings,
+    detail: str = "Só o dono deste F.E.A.R. controla o microfone.",
+) -> None:
     """403 unless ``user`` is the machine's owner — it's their mic, not the caller's."""
     if not await _is_owner(user, store, settings):
-        raise HTTPException(
-            status_code=403, detail="Só o dono deste F.E.A.R. controla o microfone."
-        )
+        raise HTTPException(status_code=403, detail=detail)
 
 
 async def _user_context(
@@ -480,6 +514,76 @@ async def process_voice_event(application: FastAPI, event: TranscriptEvent) -> N
         await speak_and_cleanup(application.state.tts, result.reply)
 
 
+def start_obsidian_watcher(application: FastAPI, vault_path: str) -> None:
+    """Watch `vault_path` (replacing any earlier watch); its notes become the owner's."""
+    from fear.memory.obsidian_watcher import ObsidianWatcher
+
+    stop_obsidian_watcher(application)
+    state = application.state
+    settings: Settings = state.settings
+    store: UserStore = state.user_store
+
+    def vault_owner_id() -> str:
+        owner = store.owner(settings.owner_email)
+        return owner.id if owner is not None else ""
+
+    watcher = ObsidianWatcher(
+        vault_path=vault_path,
+        memory=state.memory,
+        speaker=os.getenv("OBSIDIAN_SPEAKER", "fear_user"),
+        user_id=vault_owner_id,
+        state_file=Path(settings.chroma_path).expanduser().parent / "obsidian_state.json",
+    )
+    watcher.start()
+    state.obsidian_watcher = watcher
+
+
+def stop_obsidian_watcher(application: FastAPI) -> None:
+    watcher = getattr(application.state, "obsidian_watcher", None)
+    if watcher is not None:
+        watcher.stop()
+    application.state.obsidian_watcher = None
+
+
+def clap_detection_available() -> bool:
+    """Whether the microphone library the clap detector needs is installed."""
+    return importlib.util.find_spec("pyaudio") is not None
+
+
+def start_clap_detector(application: FastAPI) -> bool:
+    """Listen for double claps, which play/pause the music; False without pyaudio."""
+    stop_clap_detector(application)
+    try:
+        from fear.input.clap_detector import ClapDetector
+    except ImportError:
+        logger.warning("Clap detection is enabled but pyaudio is not installed")
+        return False
+    settings: Settings = application.state.settings
+
+    async def toggle_from_clap() -> None:
+        await process_machine_command(application, "toggle Spotify playback", "clap")
+
+    def on_double_clap() -> None:
+        application.state.loop.call_soon_threadsafe(_spawn, application, toggle_from_clap())
+
+    detector = ClapDetector(
+        on_double_clap=on_double_clap,
+        threshold=settings.clap_threshold,
+        sample_rate=settings.sample_rate,
+        chunk_size=settings.chunk_size,
+    )
+    detector.start()
+    application.state.clap_detector = detector
+    return True
+
+
+def stop_clap_detector(application: FastAPI) -> None:
+    detector = getattr(application.state, "clap_detector", None)
+    if detector is not None:
+        detector.stop()
+    application.state.clap_detector = None
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Initialize and stop the unified F.E.A.R. runtime."""
@@ -491,8 +595,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # testing the HTTP layer) does not require the audio/ML stack to be present.
     from fear.audio.natural_tts import NaturalTTS
     from fear.integrations.google_calendar import GoogleCalendarClient
+    from fear.integrations.music import MediaKeys, choose_music_player
     from fear.integrations.spotify_client import SpotifyClient
-    from fear.memory.obsidian_watcher import ObsidianWatcher
 
     # One CPU embedder (ONNX MiniLM, no torch) shared by both stores so the
     # model loads once.
@@ -513,6 +617,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     # Loads only when SPOTIPY_* credentials are present; otherwise stays inert.
     spotify = SpotifyClient(scope=settings.spotify_scope)
     await spotify.load()
+    # Without Spotify's API, the system media keys drive whatever player is open.
+    music = choose_music_player(spotify, MediaKeys())
 
     # Loads only after a one-time google_login.py has cached a token; else inert.
     calendar = GoogleCalendarClient(
@@ -535,6 +641,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.memory = memory
     application.state.reference_library = reference_library
     application.state.spotify = spotify
+    application.state.music = music
     application.state.calendar = calendar
     application.state.security = security
     application.state.user_store = user_store
@@ -544,7 +651,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         settings=settings,
         memory=memory,
         reference_library=reference_library,
-        spotify=spotify,
+        music=music,
         calendar=calendar,
     )
 
@@ -553,21 +660,11 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.obsidian_watcher = None
     application.state.clap_detector = None
 
-    obsidian_path = os.getenv("OBSIDIAN_VAULT_PATH", "").strip()
+    # The Windows app's own switches (its settings panel); .env still wins.
+    prefs = load_prefs(settings.desktop_settings_path) if settings.desktop else DesktopPrefs()
+    obsidian_path = os.getenv("OBSIDIAN_VAULT_PATH", "").strip() or prefs.obsidian_vault
     if obsidian_path:
-
-        def vault_owner_id() -> str:
-            owner = user_store.owner(settings.owner_email)
-            return owner.id if owner is not None else ""
-
-        watcher = ObsidianWatcher(
-            vault_path=obsidian_path,
-            memory=memory,
-            speaker=os.getenv("OBSIDIAN_SPEAKER", "fear_user"),
-            user_id=vault_owner_id,
-        )
-        watcher.start()
-        application.state.obsidian_watcher = watcher
+        start_obsidian_watcher(application, obsidian_path)
 
     voice_listener_class: type[VoiceListener] | None = None
     if env_bool("FEAR_ENABLE_VOICE_LISTENER", default=False):
@@ -596,29 +693,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         listener.start()
         application.state.voice_listener = listener
 
-    clap_detector_class: type[ClapDetector] | None = None
-    if env_bool("FEAR_ENABLE_CLAP_DETECTOR", default=False):
-        try:
-            from fear.input.clap_detector import ClapDetector as clap_detector_class
-        except ImportError:
-            logger.warning("Clap detection is enabled but pyaudio is not installed")
-
-    if clap_detector_class is not None:
-
-        async def toggle_from_clap() -> None:
-            await process_machine_command(application, "toggle Spotify playback", "clap")
-
-        def on_double_clap() -> None:
-            application.state.loop.call_soon_threadsafe(_spawn, application, toggle_from_clap())
-
-        clap_detector = clap_detector_class(
-            on_double_clap=on_double_clap,
-            threshold=settings.clap_threshold,
-            sample_rate=settings.sample_rate,
-            chunk_size=settings.chunk_size,
-        )
-        clap_detector.start()
-        application.state.clap_detector = clap_detector
+    if env_bool("FEAR_ENABLE_CLAP_DETECTOR", default=False) or prefs.claps:
+        start_clap_detector(application)
 
     try:
         yield
@@ -627,13 +703,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         if active_listener is not None:
             active_listener.stop()
 
-        active_watcher = getattr(application.state, "obsidian_watcher", None)
-        if active_watcher is not None:
-            active_watcher.stop()
-
-        active_clap_detector = getattr(application.state, "clap_detector", None)
-        if active_clap_detector is not None:
-            active_clap_detector.stop()
+        stop_obsidian_watcher(application)
+        stop_clap_detector(application)
 
         active_store = getattr(application.state, "user_store", None)
         if active_store is not None:
@@ -770,6 +841,7 @@ async def status(
     """
     state = request.app.state
     spotify = getattr(state, "spotify", None)
+    music = getattr(state, "music", None)
     calendar = getattr(state, "calendar", None)
     owner = user is not None and await _is_owner(user, store, settings)
     return StatusResponse(
@@ -778,6 +850,7 @@ async def status(
         memory=getattr(state, "memory", None) is not None,
         voice=owner and getattr(state, "voice_listener", None) is not None,
         spotify=owner and bool(spotify is not None and spotify.is_configured),
+        music=owner and bool(music is not None and music.is_configured),
         obsidian=owner and getattr(state, "obsidian_watcher", None) is not None,
         calendar=owner and bool(calendar is not None and calendar.is_configured),
     )
@@ -1053,6 +1126,81 @@ async def voice_capture_once(
     # would freeze the event loop (every other request, every live stream).
     await asyncio.to_thread(listener.capture_once)
     return {"status": "queued"}
+
+
+async def _require_desktop_owner(user: User, store: UserStore, settings: Settings) -> None:
+    if not settings.desktop:
+        raise HTTPException(status_code=404, detail="Disponível só no app do F.E.A.R.")
+    await _require_owner(user, store, settings, "Só o dono deste F.E.A.R. muda o app.")
+
+
+def _desktop_settings_view(application: FastAPI, prefs: DesktopPrefs) -> DesktopSettingsResponse:
+    detector = getattr(application.state, "clap_detector", None)
+    return DesktopSettingsResponse(
+        claps=prefs.claps,
+        claps_available=clap_detection_available(),
+        # Off when the microphone couldn't be opened, even with the switch on.
+        claps_listening=bool(detector is not None and detector.is_running),
+        obsidian_vault=prefs.obsidian_vault,
+        obsidian_watching=getattr(application.state, "obsidian_watcher", None) is not None,
+        autostart=autostart_enabled(),
+        autostart_available=autostart_available(),
+    )
+
+
+@app.get("/desktop/settings", response_model=DesktopSettingsResponse)
+async def desktop_settings_get(
+    request: Request,
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
+) -> DesktopSettingsResponse:
+    """The Windows app's switches: claps, the Obsidian vault, start with Windows."""
+    await _require_desktop_owner(user, store, settings)
+    prefs = await asyncio.to_thread(load_prefs, settings.desktop_settings_path)
+    return _desktop_settings_view(request.app, prefs)
+
+
+@app.post("/desktop/settings", response_model=DesktopSettingsResponse)
+async def desktop_settings_set(
+    payload: DesktopSettingsUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
+) -> DesktopSettingsResponse:
+    """Change the Windows app's switches; each takes effect at once and is remembered."""
+    await _require_desktop_owner(user, store, settings)
+    application = request.app
+    prefs = await asyncio.to_thread(load_prefs, settings.desktop_settings_path)
+
+    if payload.obsidian_vault is not None:
+        vault = payload.obsidian_vault.strip()
+        if vault and not Path(vault).expanduser().is_dir():
+            raise HTTPException(status_code=422, detail="Essa pasta não existe.")
+        if vault:
+            await asyncio.to_thread(start_obsidian_watcher, application, vault)
+        else:
+            await asyncio.to_thread(stop_obsidian_watcher, application)
+        prefs.obsidian_vault = vault
+
+    if payload.claps is not None:
+        if payload.claps:
+            if not await asyncio.to_thread(start_clap_detector, application):
+                raise HTTPException(
+                    status_code=422, detail="Este F.E.A.R. não tem acesso ao microfone."
+                )
+        else:
+            await asyncio.to_thread(stop_clap_detector, application)
+        prefs.claps = payload.claps
+
+    if payload.autostart is not None:
+        if not autostart_available():
+            raise HTTPException(status_code=422, detail="Disponível só no Windows.")
+        await asyncio.to_thread(set_autostart, payload.autostart)
+
+    await asyncio.to_thread(save_prefs, settings.desktop_settings_path, prefs)
+    return _desktop_settings_view(application, prefs)
 
 
 @app.websocket("/ws")

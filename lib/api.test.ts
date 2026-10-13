@@ -96,6 +96,7 @@ describe("api client", () => {
             memory: true,
             voice: false,
             spotify: false,
+            music: true,
             obsidian: false,
           }),
         ),
@@ -103,6 +104,7 @@ describe("api client", () => {
     const status = await getStatus();
     expect(status.assistant).toBe("F.E.A.R.");
     expect(status.memory).toBe(true);
+    expect(status.music).toBe(true);
   });
 });
 

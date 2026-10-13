@@ -152,6 +152,34 @@ describe("useHandGestures", () => {
   });
 });
 
+describe("the robot's gaze", () => {
+  it("gets every frame's hand, and none once the camera stops", async () => {
+    const seen: ({ x: number } | null)[] = [];
+    let tracker: FakeTracker | null = null;
+    const factory: HandTrackerFactory = async (onFrame) => (tracker = new FakeTracker(onFrame));
+    const videoRef = { current: document.createElement("video") };
+    const hook = renderHook(
+      ({ enabled }) =>
+        useHandGestures({
+          enabled,
+          onCommand: () => {},
+          onHand: (hand) => seen.push(hand),
+          videoRef,
+          createTracker: factory,
+        }),
+      { initialProps: { enabled: true } },
+    );
+    await act(async () => {});
+    await act(async () => {
+      (tracker as FakeTracker | null)?.emit(0, { pose: "None", x: 0.7, y: 0.4 });
+    });
+    expect(seen.at(-1)).toEqual({ pose: "None", x: 0.7, y: 0.4 });
+
+    await act(async () => hook.rerender({ enabled: false }));
+    expect(seen.at(-1)).toBeNull();
+  });
+});
+
 describe("gesture helpers", () => {
   it("remembers whether gestures were left on", () => {
     expect(loadGesturePreference()).toBe(false);

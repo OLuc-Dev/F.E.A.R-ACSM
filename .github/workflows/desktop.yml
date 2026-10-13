@@ -16,6 +16,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Work out the version
+        # v0.2.0 -> 0.2.0. Manual runs are dev builds, which never check for updates.
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            echo "FEAR_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "FEAR_VERSION=0.0.0-dev" >> "$GITHUB_ENV"
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -23,7 +33,7 @@ jobs:
         shell: bash
         run: |
           npm ci
-          NEXT_PUBLIC_FEAR_DESKTOP=1 npm run build
+          NEXT_PUBLIC_FEAR_DESKTOP=1 NEXT_PUBLIC_FEAR_VERSION="$FEAR_VERSION" npm run build
 
       - uses: actions/setup-python@v5
         with:
@@ -51,11 +61,10 @@ jobs:
       - name: Build the installer
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.0-dev" }
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          & $iscc "/DAppVersion=$version" packaging\installer.iss
+          & $iscc "/DAppVersion=$env:FEAR_VERSION" packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
 
       - uses: actions/upload-artifact@v4
