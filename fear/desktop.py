@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import importlib
 import json
 import logging
 import mimetypes
@@ -300,28 +301,36 @@ def give_webview2_flags(flags: str) -> None:
 
     With a storage folder, pywebview creates WebView2's environment itself and
     passes no options; WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS didn't reach the
-    browser then (in the Windows workflow, its DevTools port never opened). So
-    the same call is made with the flags where WebView2 documents them. If that
-    fails for any reason, pywebview's own call runs instead: the window opens
-    either way.
+    browser then (in the Windows workflow, its command line had none of them).
+    So the same call is made with the flags where WebView2 documents them. If
+    that fails for any reason, pywebview's own call runs instead: the window
+    opens either way.
     """
     if sys.platform != "win32":
         return
     try:
+        # pywebview's module first: it loads .NET and registers WebView2's
+        # assemblies, without which the types below can't be imported.
+        edgechromium = importlib.import_module("webview.platforms.edgechromium")
         from Microsoft.Web.WebView2.Core import (  # type: ignore[import-not-found]
             CoreWebView2Environment,
             CoreWebView2EnvironmentOptions,
         )
         from System import Action  # type: ignore[import-not-found]
         from System.Threading.Tasks import Task  # type: ignore[import-not-found]
-        from webview.platforms import edgechromium  # type: ignore[attr-defined]
-    except Exception:
-        logger.warning("WebView2 is not reachable; F.E.A.R. may need a click before it speaks")
+    except Exception as error:
+        logger.warning(
+            "WebView2 flags can't be set (%s); F.E.A.R. may need a click to speak", error
+        )
         return
     original = edgechromium.EdgeChrome.setup_webview2_environment
 
     def setup_webview2_environment(self) -> None:
         def ready(task) -> None:
+            if task.IsFaulted:  # refused the flags: still open, without them
+                logger.error("WebView2 refused the browser flags: %s", task.Exception)
+                original(self)
+                return
             self.webview.EnsureCoreWebView2Async(task.Result)
 
         try:

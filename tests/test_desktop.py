@@ -260,6 +260,8 @@ def _fake_webview2(monkeypatch, storage: str):
         AdditionalBrowserArguments = None
 
     class Environment:
+        faulted = False
+
         @staticmethod
         def CreateAsync(folder, user_data, options):  # noqa: N802 — .NET name
             calls["create"] = (folder, user_data, options.AdditionalBrowserArguments)
@@ -277,7 +279,15 @@ def _fake_webview2(monkeypatch, storage: str):
 
     class Generic:
         def __getitem__(self, _type):
-            return lambda fn: lambda task: fn(types.SimpleNamespace(Result=f"env from {task}"))
+            return lambda fn: (
+                lambda task: fn(
+                    types.SimpleNamespace(
+                        IsFaulted=Environment.faulted,
+                        Exception="bad flag",
+                        Result=f"env from {task}",
+                    )
+                )
+            )
 
     edgechromium = types.ModuleType("webview.platforms.edgechromium")
     edgechromium.EdgeChrome = EdgeChrome  # type: ignore[attr-defined]
@@ -316,6 +326,16 @@ def test_webview2_gets_the_flags_in_its_environment_options(monkeypatch) -> None
     )
     assert calls["ensure"] == "env from task"  # the window starts on that environment
     assert "original" not in calls
+
+
+def test_webview2_still_opens_when_it_refuses_the_flags(monkeypatch) -> None:
+    edge_chrome, environment, calls = _fake_webview2(monkeypatch, "C:/FEAR/webview")
+    monkeypatch.setattr(environment, "faulted", True)
+    desktop.give_webview2_flags("--autoplay-policy=no-user-gesture-required")
+
+    edge_chrome().setup_webview2_environment()
+
+    assert "ensure" not in calls and calls["original"] is True  # pywebview's own setup
 
 
 def test_webview2_still_opens_when_the_flags_cannot_be_given(monkeypatch) -> None:
