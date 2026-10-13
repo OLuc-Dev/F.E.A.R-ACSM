@@ -14,6 +14,7 @@ import {
   Cpu,
   Crosshair,
   Database,
+  Hand,
   KeyRound,
   Loader2,
   Mic,
@@ -31,16 +32,21 @@ import {
 } from "lucide-react";
 
 import { AuthPanel } from "@/components/ui/auth-panel";
+import { type GestureFeedback, GesturePanel } from "@/components/ui/gesture-panel";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { getStatus, type StatusResponse } from "@/lib/api";
+import { getStatus, sendCommand, type StatusResponse } from "@/lib/api";
+import { humanizeError } from "@/lib/chat-helpers";
+import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { IS_DESKTOP } from "@/lib/desktop";
+import { stopSpeaking } from "@/lib/speech";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
+import { loadGesturePreference, saveGesturePreference } from "@/lib/use-hand-gestures";
 
 const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((module) => module.FearRobot), {
   ssr: false,
@@ -53,11 +59,19 @@ const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((modul
 
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
+  { id: "gestures", name: "Gestos", icon: <Hand className="h-full w-full text-amber-200" /> },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
   { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-danger" /> },
 ];
+
+// The music gestures, as the commands the brain already routes to Spotify.
+const SPOTIFY_GESTURES: Partial<Record<GestureCommand, { title: string; text: string }>> = {
+  palm_hold: { title: "Play/pause", text: "toggle Spotify playback" },
+  swipe_right: { title: "Próxima faixa", text: "next Spotify song" },
+  swipe_left: { title: "Faixa anterior", text: "previous Spotify song" },
+};
 
 const STATUS_LABEL: Record<Status, string> = {
   online: "pronto",
@@ -179,6 +193,18 @@ export default function HomePage() {
   const [isDesktop, setIsDesktop] = useState(false);
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Hand gestures start off; the choice is remembered once made.
+  const [gesturesOn, setGesturesOn] = useState(false);
+  const [gestureFeedback, setGestureFeedback] = useState<GestureFeedback | null>(null);
+  // Bumped when F.E.A.R. sees a wave, so the robot waves back.
+  const [greetSignal, setGreetSignal] = useState(0);
+
+  useEffect(() => setGesturesOn(loadGesturePreference()), []);
+
+  function setGestures(on: boolean) {
+    saveGesturePreference(on);
+    setGesturesOn(on);
+  }
 
   const { user, ready, signIn, signUp, signOut, saveOpenRouterKey } = useAuth();
 
@@ -216,6 +242,35 @@ export default function HomePage() {
   // F.E.A.R. addresses the person by their account (email local part) — no more
   // free-text "speaker". Only read in the deck, where a user always exists.
   const speaker = user ? accountName(user.email) : "user";
+
+  async function runGesture(command: GestureCommand) {
+    const show = (title: string, detail?: string) => setGestureFeedback({ title, detail, at: Date.now() });
+    if (command === "wave") {
+      setGreetSignal((count) => count + 1);
+      show("Aceno", "o F.E.A.R. te viu");
+      return;
+    }
+    if (command === "fist_hold") {
+      stop();
+      stopSpeaking();
+      show("Silêncio");
+      return;
+    }
+    const music = SPOTIFY_GESTURES[command];
+    if (!music) return;
+    // Without Spotify the brain would hand the command to the model as chat.
+    if (!systemStatus?.spotify) {
+      show(music.title, "conecte o Spotify para usar este gesto");
+      return;
+    }
+    show(music.title);
+    try {
+      const data = await sendCommand({ text: music.text, speaker });
+      show(music.title, data.reply);
+    } catch (error) {
+      show(music.title, humanizeError(error));
+    }
+  }
 
   // Show the right modifier hint per platform (avoids a hydration mismatch by
   // starting from a stable default and correcting after mount).
@@ -629,9 +684,23 @@ export default function HomePage() {
                     the amber/metal core is calibrated for dark) and its edges
                     melt into the page instead of ending on a hard seam. */}
                 <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] bg-[hsl(var(--stage))] [-webkit-mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)] [mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)]">
-                  <FearRobot status={status} pulse={memoryTick} className="h-full" />
+                  <FearRobot
+                    status={status}
+                    pulse={memoryTick}
+                    greetSignal={greetSignal}
+                    className="h-full"
+                  />
                 </div>
               </div>
+            )}
+
+            {gesturesOn && (
+              <GesturePanel
+                onCommand={runGesture}
+                onTurnOff={() => setGestures(false)}
+                feedback={gestureFeedback}
+                spotifyAvailable={Boolean(systemStatus?.spotify)}
+              />
             )}
 
             {/* System: compact 2-column readout. Collapsible on mobile, always
@@ -685,10 +754,15 @@ export default function HomePage() {
 
       <MacOSDock
         apps={fearApps}
-        onAppClick={(appId) =>
-          appId === "memory" ? openSettings("memoria") : handleAppAction(appId, speaker)
-        }
-        openApps={settingsOpen && settingsTab === "memoria" ? ["memory"] : []}
+        onAppClick={(appId) => {
+          if (appId === "memory") openSettings("memoria");
+          else if (appId === "gestures") setGestures(!gesturesOn);
+          else void handleAppAction(appId, speaker);
+        }}
+        openApps={[
+          ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
+          ...(gesturesOn ? ["gestures"] : []),
+        ]}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />
 

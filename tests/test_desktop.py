@@ -178,3 +178,28 @@ def test_prepare_environment_points_the_backend_at_the_install(monkeypatch, tmp_
 
 def test_autostart_command_starts_minimized() -> None:
     assert desktop.autostart_command().endswith("--minimized")
+
+
+def test_ui_files_are_served_with_their_real_types(monkeypatch, tmp_path: Path) -> None:
+    # Python's mimetypes also reads the Windows registry, where a stray entry can
+    # map .js to text/plain; the browser then refuses the gestures' WASM runtime.
+    import mimetypes
+
+    mimetypes.init()
+    monkeypatch.setitem(mimetypes.types_map, ".js", "text/plain")
+    monkeypatch.setitem(mimetypes.types_map, ".wasm", "text/plain")
+    ui = tmp_path / "ui"
+    (ui / "mediapipe" / "wasm").mkdir(parents=True)
+    (ui / "index.html").write_text("<html></html>", encoding="utf-8")
+    (ui / "mediapipe" / "wasm" / "runtime.js").write_text("void 0;", encoding="utf-8")
+    (ui / "mediapipe" / "wasm" / "runtime.wasm").write_bytes(b"\x00asm\x01\x00\x00\x00")
+    application = FastAPI()
+    desktop.mount_ui(application, tmp_path)
+    client = TestClient(application)
+
+    wasm = client.get("/mediapipe/wasm/runtime.wasm")
+    script = client.get("/mediapipe/wasm/runtime.js")
+
+    assert wasm.headers["content-type"] == "application/wasm"
+    assert script.headers["content-type"].startswith("text/javascript")
+    assert client.get("/").status_code == 200

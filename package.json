@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/copy-mediapipe.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/copy-mediapipe.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -13,6 +15,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,css}\""
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.1.0",
     "clsx": "^2.1.1",
     "framer-motion": "^11.3.0",
     "lucide-react": "^0.439.0",

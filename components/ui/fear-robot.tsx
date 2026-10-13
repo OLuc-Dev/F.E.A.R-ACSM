@@ -20,6 +20,8 @@ export interface FearRobotProps {
   status?: RobotStatus;
   /** Bump to send a "new memory" surge through the core. */
   pulse?: number;
+  /** Bump to make the robot wave (it waves back when it sees you wave). */
+  greetSignal?: number;
 }
 
 interface RobotHandle {
@@ -38,6 +40,7 @@ export function FearRobot({
   showGreeting = false,
   status = "online",
   pulse = 0,
+  greetSignal = 0,
 }: FearRobotProps) {
   const container = useRef<HTMLDivElement>(null);
   const scene = useRef<RobotHandle | null>(null);
@@ -88,6 +91,13 @@ export function FearRobot({
     lastPulse.current = pulse;
     scene.current?.surge();
   }, [pulse]);
+
+  const lastGreet = useRef(greetSignal);
+  useEffect(() => {
+    if (greetSignal === lastGreet.current) return;
+    lastGreet.current = greetSignal;
+    scene.current?.greet();
+  }, [greetSignal]);
 
   return (
     <div className={cn("relative h-[500px] w-full overflow-hidden", className)}>

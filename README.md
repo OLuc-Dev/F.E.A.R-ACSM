@@ -83,14 +83,23 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   engrenagem / app no dock) você adiciona conhecimento por texto colado. Tudo é
   indexado na `ReferenceLibrary` (isolado por usuário) e F.E.A.R. consulta sozinho
   ao responder.
-- **Spotify** por linguagem natural, palmas e toques de wearable.
+- **Spotify** por linguagem natural (português ou inglês), palmas, gestos e toques de wearable.
 - **Percepção de palmas** (`ClapDetector`) e **toques de wearable** (`/wearable/tap`).
 - **Voz** opcional (Whisper, push-to-talk) e **TTS** natural (ElevenLabs) com
   fallback offline (`pyttsx3`).
 - **Observador do Obsidian**: indexa notas do vault conforme você escreve.
-- **Presença 3D**: uma cabeça de metal esculpida (modelo glTF) com olhos vermelhos
-  profundos que reagem ao estado e seguem o cursor (React Three Fiber), com um
-  painel de status do sistema ao lado.
+- **Gestos com as mãos** (MediaPipe): ligue no ícone de mão do dock. Acenar faz o
+  robô acenar de volta; palma parada por 1 s dá play/pause; deslizar a mão para a
+  direita ou para a esquerda troca de faixa; punho fechado por 0,7 s silencia o
+  F.E.A.R. Cada comando exige um gesto deliberado (pose segurada, deslize a partir
+  da mão parada, pausa entre comandos), para que mexer as mãos conversando não
+  pause a música. A câmera só fica ligada com a janela visível, e o reconhecimento
+  roda no próprio computador: as imagens nunca saem dele. No Windows, a câmera
+  precisa estar liberada em *Configurações → Privacidade → Câmera* para aplicativos
+  da área de trabalho.
+- **Presença 3D**: um robô de corpo inteiro em cromo, âmbar e ciano, com olhos
+  carmim que seguem o cursor e reagem ao estado da conversa (ouvindo, pensando,
+  respondendo), com um painel de status do sistema ao lado.
 
 ## Requisitos
 

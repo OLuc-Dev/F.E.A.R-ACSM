@@ -55,7 +55,8 @@ gravada).
 - `prompts/fear_persona.md` — a personalidade (carregada por `FEAR_PERSONA_FILE`).
 - Frontend: `app/page.tsx` (deck + gate de login + aviso de chave),
   `components/ui/fear-robot.tsx` + `lib/fear-robot-scene.ts` / `lib/fear-robot-motion.ts`
-  (3D), `settings-panel.tsx`, `auth-panel.tsx`,
+  (3D), `gesture-panel.tsx` + `lib/hand-gestures.ts` / `lib/hand-tracker.ts` /
+  `lib/hand-worker.ts` (gestos com MediaPipe, num Web Worker), `settings-panel.tsx`, `auth-panel.tsx`,
   `mac-os-dock.tsx`, `messages.tsx`; `lib/api.ts` (cliente tipado + header de
   auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`, `lib/speech.ts`.
 

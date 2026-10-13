@@ -104,41 +104,41 @@ class SpotifyClient:
     async def pause(self) -> str:
         """Pause playback."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.pause_playback)
-        return "Paused Spotify."
+        return "Música pausada."
 
     async def resume(self) -> str:
         """Resume playback."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.start_playback)
-        return "Resumed Spotify."
+        return "Música retomada."
 
     async def next_track(self) -> str:
         """Skip to the next track."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.next_track)
-        return "Skipped to the next track."
+        return "Próxima faixa."
 
     async def previous_track(self) -> str:
         """Return to the previous track."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.previous_track)
-        return "Went back to the previous track."
+        return "Faixa anterior."
 
     async def toggle(self) -> str:
         """Pause when playing, otherwise resume."""
         status = await self.status()
 
         if not status.is_configured:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         if status.is_playing:
             return await self.pause()

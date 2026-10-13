@@ -3,7 +3,8 @@
 Each install is a private, single-person F.E.A.R. The launcher creates the one
 local account itself and hands the window a fresh session on every start, so
 there is never a login. Closing the window only hides it to the tray (the mic
-and clap detector keep running); "Sair" in the tray quits for real.
+and clap detector keep running; hand gestures pause with the window, since the
+camera is only on while you can see the app); "Sair" in the tray quits for real.
 
 Run from source with ``python -m fear.desktop`` (needs the ``desktop`` extra and
 a UI built with ``NEXT_PUBLIC_FEAR_DESKTOP=1 npm run build``).
@@ -15,6 +16,7 @@ import argparse
 import hmac
 import json
 import logging
+import mimetypes
 import os
 import re
 import secrets
@@ -22,6 +24,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -40,6 +43,19 @@ INSTANCE_HEADER = "X-Fear-Instance"
 _LOG_LIMIT_BYTES = 5 * 1024 * 1024
 
 logger = logging.getLogger("fear.desktop")
+
+# Python's mimetypes also reads the Windows registry, where a stray entry can map
+# .js to text/plain; the UI's files (and gestures' WASM) need their real types.
+STATIC_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".wasm": "application/wasm",
+    ".task": "application/octet-stream",
+    ".glb": "model/gltf-binary",
+    ".svg": "image/svg+xml",
+}
 
 LOADING_HTML = """<!doctype html><html><body style="margin:0;height:100vh;display:grid;
 place-items:center;background:#050506;color:#9aa0a6;font:14px system-ui,sans-serif">
@@ -65,6 +81,15 @@ def ui_dir(resources: Path) -> Path:
     """The static UI: bundled as ui/ in the app, or the fresh `out/` export from source."""
     bundled = resources / "ui"
     return bundled if bundled.exists() else resources / "out"
+
+
+def mount_ui(application: FastAPI, resources: Path) -> None:
+    """Serve the static UI at "/", after every API route so those keep precedence."""
+    from fastapi.staticfiles import StaticFiles
+
+    for extension, media_type in STATIC_TYPES.items():
+        mimetypes.add_type(media_type, extension)
+    application.mount("/", StaticFiles(directory=ui_dir(resources), html=True), name="ui")
 
 
 def load_or_create_secret(path: Path) -> str:
@@ -140,6 +165,46 @@ def add_show_route(application: FastAPI, key: str, show: Callable[[], None]) -> 
 
 
 # --- "Iniciar com o Windows" (the same Run entry the installer writes) ------------
+
+
+def allow_camera_for_own_page(window, origin: str) -> None:
+    """Let the app's own page use the webcam for hand gestures, without a prompt.
+
+    WebView2 would otherwise ask on its own; only pages served by this app's
+    backend (``origin``) are approved, and only the camera — any other page or
+    permission still goes through WebView2's default prompt.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        from Microsoft.Web.WebView2.Core import (  # type: ignore[import-not-found]
+            CoreWebView2PermissionKind,
+            CoreWebView2PermissionState,
+        )
+        from System import Func, Type  # type: ignore[import-not-found]
+    except Exception:
+        logger.warning("WebView2 is not reachable; the camera will ask for permission")
+        return
+
+    def on_permission_requested(_sender, args) -> None:
+        if args.PermissionKind == CoreWebView2PermissionKind.Camera and str(args.Uri).startswith(
+            origin
+        ):
+            args.State = CoreWebView2PermissionState.Allow
+
+    def attach() -> None:
+        # CoreWebView2 may only be touched on the window's UI thread.
+        try:
+            window.native.browser.webview.CoreWebView2.PermissionRequested += (
+                on_permission_requested
+            )
+        except Exception:
+            logger.warning("Could not pre-approve the camera", exc_info=True)
+
+    try:
+        window.native.Invoke(Func[Type](attach))
+    except Exception:
+        logger.warning("Could not pre-approve the camera", exc_info=True)
 
 
 def autostart_command() -> str:
@@ -240,12 +305,10 @@ def smoke_test(home: Path, resources: Path) -> int:
     and the bundled embedding model must all work, or the release is not made.
     """
     prepare_environment(home, resources)
-    from fastapi.staticfiles import StaticFiles
-
     from fear.memory.embedding import LocalEmbedding
     from fear.web.app import app
 
-    app.mount("/", StaticFiles(directory=ui_dir(resources), html=True), name="ui")
+    mount_ui(app, resources)
     port = pick_port(0)
     server, thread = _start_backend(port)
     try:
@@ -260,11 +323,27 @@ def smoke_test(home: Path, resources: Path) -> int:
             if b"<html" not in response.read().lower():
                 logger.error("smoke test: the UI is missing")
                 return 1
+        # Hand gestures: the model and the WASM runtime, with the type the
+        # browser needs to compile it.
+        with urllib.request.urlopen(f"{base}/mediapipe/gesture_recognizer.task", timeout=10) as r:
+            if len(r.read()) < 1_000_000:
+                logger.error("smoke test: the gesture model is missing")
+                return 1
+        wasm = f"{base}/mediapipe/wasm/vision_wasm_internal.wasm"
+        with urllib.request.urlopen(wasm, timeout=10) as response:
+            if response.headers.get_content_type() != "application/wasm":
+                logger.error(
+                    "smoke test: gesture WASM served as %s", response.headers.get_content_type()
+                )
+                return 1
         if len(LocalEmbedding().embed("teste")) != 384:
             logger.error("smoke test: the embedding model is broken")
             return 1
         logger.info("smoke test passed")
         return 0
+    except urllib.error.HTTPError as error:
+        logger.error("smoke test: %s is missing from the bundle (HTTP %s)", error.url, error.code)
+        return 1
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -292,7 +371,6 @@ def main(argv: list[str] | None = None) -> None:
 
     import pystray
     import webview
-    from fastapi.staticfiles import StaticFiles
 
     from fear.auth import Security, UserStore
     from fear.config import Settings
@@ -331,8 +409,17 @@ def main(argv: list[str] | None = None) -> None:
     port = pick_port()
     key = secrets.token_urlsafe(24)
     add_show_route(app, key, show)
-    # Mounted last so every API route above keeps precedence over the UI files.
-    app.mount("/", StaticFiles(directory=ui_dir(resources), html=True), name="ui")
+    mount_ui(app, resources)
+
+    camera_ready = threading.Event()
+
+    def on_loaded() -> None:
+        # WebView2 exists once the first page has loaded; hook it up only once.
+        if not camera_ready.is_set():
+            camera_ready.set()
+            allow_camera_for_own_page(window, f"http://127.0.0.1:{port}/")
+
+    window.events.loaded += on_loaded
 
     def quit_app(icon) -> None:
         quitting.set()
