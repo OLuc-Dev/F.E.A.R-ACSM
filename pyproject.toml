@@ -35,6 +35,12 @@ dev = [
   "mypy>=1.13,<2",
   "types-requests>=2.32,<3",
 ]
+# The Windows app (fear/desktop.py): its window, tray icon and tray image.
+desktop = [
+  "pywebview>=5.3,<6",
+  "pystray>=0.19,<0.20",
+  "pillow>=10,<12",
+]
 # Optional microphone voice input (push-to-talk + clap detector). Needs the
 # system portaudio library for pyaudio. Install with `pip install -e ".[audio]"`.
 audio = [

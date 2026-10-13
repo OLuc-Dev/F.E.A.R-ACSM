@@ -308,7 +308,7 @@ def test_persona_file_overrides_default(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_command_streams_and_records() -> None:
+async def test_open_stream_streams_and_records() -> None:
     memory = FakeMemory()
     brain = AsyncConversationalBrain(
         settings=Settings(openrouter_chat_model="m"),
@@ -318,7 +318,7 @@ async def test_stream_command_streams_and_records() -> None:
     fake.stream_pieces = ["Olá", ", ", "Lucas."]
     brain.client = fake  # type: ignore[assignment]
 
-    chunks = [chunk async for chunk in brain.stream_command("oi", "Lucas")]
+    chunks = [chunk async for chunk in (await brain.open_stream("oi", "Lucas")).stream]
 
     assert chunks == ["Olá", ", ", "Lucas."]
     assert fake.calls[0]["stream"] is True
@@ -329,11 +329,11 @@ async def test_stream_command_streams_and_records() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_command_fallback_without_openrouter() -> None:
+async def test_open_stream_fallback_without_openrouter() -> None:
     memory = FakeMemory()
     brain = AsyncConversationalBrain(settings=Settings(), memory=memory)  # type: ignore[arg-type]
 
-    chunks = [chunk async for chunk in brain.stream_command("oi", "Lucas")]
+    chunks = [chunk async for chunk in (await brain.open_stream("oi", "Lucas")).stream]
 
     assert len(chunks) == 1
     assert "OpenRouter is not configured" in chunks[0]
@@ -482,14 +482,14 @@ async def test_process_command_survives_llm_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_command_survives_llm_failure() -> None:
+async def test_open_stream_survives_llm_failure() -> None:
     brain = AsyncConversationalBrain(
         settings=Settings(openrouter_chat_model="m"),
         memory=FakeMemory(),  # type: ignore[arg-type]
     )
     brain.client = FailingClient()  # type: ignore[assignment]
 
-    chunks = [chunk async for chunk in brain.stream_command("oi", "Lucas")]
+    chunks = [chunk async for chunk in (await brain.open_stream("oi", "Lucas")).stream]
 
     assert any("problema" in chunk.lower() for chunk in chunks)
 
@@ -652,3 +652,83 @@ def test_client_cache_is_lru_bounded(monkeypatch) -> None:
     assert len(brain._clients_by_key) == 2
     assert "k1" not in brain._clients_by_key
     assert "k3" in brain._clients_by_key
+
+
+# --- the machine's integrations belong to its owner ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_other_accounts_cannot_drive_the_owners_spotify() -> None:
+    spotify = FakeSpotify()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+        spotify=spotify,  # type: ignore[arg-type]
+    )
+
+    await brain.process_command("next song on spotify", "Ana", user=UserContext(user_id="ana"))
+    await brain.open_stream("next song on spotify", "Ana", user=UserContext(user_id="ana"))
+
+    assert spotify.calls == []
+
+
+@pytest.mark.asyncio
+async def test_other_accounts_cannot_read_the_owners_calendar() -> None:
+    calendar = FakeCalendar()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+        calendar=calendar,  # type: ignore[arg-type]
+    )
+
+    result = await brain.process_command("minha agenda", "Ana", user=UserContext(user_id="ana"))
+
+    assert calendar.calls == []
+    assert "Reunião" not in result.reply
+
+
+@pytest.mark.asyncio
+async def test_the_owner_still_reaches_spotify_and_calendar() -> None:
+    spotify, calendar = FakeSpotify(), FakeCalendar()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key=""),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+        spotify=spotify,  # type: ignore[arg-type]
+        calendar=calendar,  # type: ignore[arg-type]
+    )
+    owner = UserContext(user_id="lucas", is_owner=True)
+
+    music = await brain.process_command("next song on spotify", "Lucas", user=owner)
+    agenda = await brain.process_command("minha agenda", "Lucas", user=owner)
+
+    assert music.reply == "Skipped to the next track."
+    assert "Reunião" in agenda.reply
+
+
+@pytest.mark.asyncio
+async def test_stream_skips_chunks_without_choices() -> None:
+    # OpenRouter sends keep-alive / usage chunks with an empty `choices` list;
+    # indexing them used to raise and cut the reply after the first piece.
+    client = FakeClient()
+
+    async def create(*, model, messages, stream=False):
+        async def gen():
+            for piece in ["F.E.A.", None, "R."]:
+                if piece is None:
+                    yield types.SimpleNamespace(choices=[])
+                    continue
+                delta = types.SimpleNamespace(content=piece)
+                yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+        return gen()
+
+    client.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m"),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = client  # type: ignore[assignment]
+
+    chunks = [chunk async for chunk in (await brain.open_stream("oi", "Lucas")).stream]
+
+    assert "".join(chunks) == "F.E.A.R."

@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Check, KeyRound, Loader2, LogOut, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 
 import { type AuthUser } from "@/lib/api";
+import { IS_DESKTOP } from "@/lib/desktop";
 import { fade, springSoft } from "@/lib/motion";
 
 type Mode = "login" | "register";
@@ -217,17 +218,21 @@ export function AuthPanel({
                       <p className="text-[11px] leading-4 text-brand/80">Chave guardada, criptografada.</p>
                     )}
                     <p className="text-[11px] leading-4 text-muted-foreground/60">
-                      Pegue a sua em openrouter.ai/keys. Fica só no servidor, criptografada — nunca aparece de
+                      Pegue a sua em openrouter.ai/keys. Fica só{" "}
+                      {IS_DESKTOP ? "neste computador" : "no servidor"}, criptografada — nunca aparece de
                       volta aqui.
                     </p>
                   </form>
 
-                  <button
-                    onClick={onSignOut}
-                    className="tap inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-overlay/10 bg-overlay/[0.03] text-sm text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
-                  >
-                    <LogOut className="size-4" /> Sair
-                  </button>
+                  {/* The desktop app has one built-in account: nothing to sign out of. */}
+                  {!IS_DESKTOP && (
+                    <button
+                      onClick={onSignOut}
+                      className="tap inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl border border-overlay/10 bg-overlay/[0.03] text-sm text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
+                    >
+                      <LogOut className="size-4" /> Sair
+                    </button>
+                  )}
                 </motion.div>
               ) : (
                 <motion.div

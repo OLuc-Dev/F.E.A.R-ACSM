@@ -5,7 +5,7 @@ import hmac
 import logging
 import os
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -29,11 +29,11 @@ from fear.library.reference_library import ReferenceLibrary
 from fear.logging_config import configure_logging
 from fear.memory.embedding import LocalEmbedding
 from fear.memory.personal_memory import PersonalMemory
-from fear.runtime_state import load_runtime_config
 from fear.web.ratelimit import RateLimiter
 
 if TYPE_CHECKING:
-    from fear.audio.voice_listener import TranscriptEvent
+    from fear.audio.voice_listener import TranscriptEvent, VoiceListener
+    from fear.input.clap_detector import ClapDetector
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +245,18 @@ async def _user_from_token(
     return user
 
 
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    store: UserStore = Depends(get_user_store),
+    security: Security = Depends(get_security),
+    settings: Settings = Depends(get_settings),
+) -> User | None:
+    """The logged-in user when a valid token is sent, otherwise None (never 401)."""
+    if credentials is None:
+        return None
+    return await _user_from_token(credentials.credentials, store, security, settings)
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     store: UserStore = Depends(get_user_store),
@@ -317,7 +329,23 @@ def _normalize_email(email: str) -> str:
     return cleaned
 
 
-async def _user_context(user: User | None, store: UserStore) -> UserContext | None:
+async def _is_owner(user: User, store: UserStore, settings: Settings) -> bool:
+    """Whether ``user`` owns this machine's integrations (see Settings.owner_email)."""
+    owner = await asyncio.to_thread(store.owner, settings.owner_email)
+    return owner is not None and owner.id == user.id
+
+
+async def _require_owner(user: User, store: UserStore, settings: Settings) -> None:
+    """403 unless ``user`` is the machine's owner — it's their mic, not the caller's."""
+    if not await _is_owner(user, store, settings):
+        raise HTTPException(
+            status_code=403, detail="Só o dono deste F.E.A.R. controla o microfone."
+        )
+
+
+async def _user_context(
+    user: User | None, store: UserStore, settings: Settings
+) -> UserContext | None:
     """Build the brain's per-user context, including the decrypted OpenRouter key."""
     if user is None:
         return None
@@ -327,7 +355,33 @@ async def _user_context(user: User | None, store: UserStore) -> UserContext | No
         api_key=api_key,
         chat_model=user.chat_model,
         persona_mode=user.persona_mode,
+        is_owner=await _is_owner(user, store, settings),
     )
+
+
+async def _owner_context(application: FastAPI) -> UserContext | None:
+    """The owner's context, for input that comes from the machine itself (mic, claps)."""
+    state = application.state
+    owner = await asyncio.to_thread(state.user_store.owner, state.settings.owner_email)
+    return await _user_context(owner, state.user_store, state.settings)
+
+
+def _spawn(application: FastAPI, coroutine: Coroutine[Any, Any, None]) -> None:
+    """Run a background coroutine on the app loop, keeping it alive and its errors logged.
+
+    The event loop holds tasks only weakly, so an unreferenced task can be
+    garbage-collected mid-flight, and its exception would otherwise vanish.
+    """
+    task = asyncio.get_running_loop().create_task(coroutine)
+    tasks: set[asyncio.Task[None]] = application.state.background_tasks
+    tasks.add(task)
+
+    def finished(done: asyncio.Task[None]) -> None:
+        tasks.discard(done)
+        if not done.cancelled() and done.exception() is not None:
+            logger.error("Background task failed", exc_info=done.exception())
+
+    task.add_done_callback(finished)
 
 
 def resolve_secret_key(settings: Settings) -> str:
@@ -367,6 +421,16 @@ def _rate_limit(request: Request, limiter: RateLimiter, bucket: str) -> None:
         )
 
 
+def _refuse_in_desktop(settings: Settings) -> None:
+    """The desktop app's only account is created by its launcher.
+
+    Leaving sign-up open would let any program on the PC mint an account on
+    the local API.
+    """
+    if settings.desktop:
+        raise HTTPException(status_code=403, detail="O app do F.E.A.R. não usa cadastro nem login.")
+
+
 def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibrary:
     """Guard endpoints that need the knowledge store, returning a clean 503 if absent."""
     if library is None:
@@ -380,9 +444,17 @@ def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibr
     return library
 
 
-async def process_text_command(application: FastAPI, text: str, speaker: str):
-    """Process a text command through the configured brain (used by /ws and callbacks)."""
-    return await application.state.brain.process_command(text, speaker)
+async def process_machine_command(application: FastAPI, text: str, speaker: str):
+    """Process input from the machine itself (mic, claps) as its owner.
+
+    Returns None when no owner account exists yet: running it unscoped would
+    read every account's memories into a reply spoken out loud.
+    """
+    ctx = await _owner_context(application)
+    if ctx is None:
+        logger.warning("Ignoring %s input: no owner account exists yet", speaker)
+        return None
+    return await application.state.brain.process_command(text, speaker, user=ctx)
 
 
 async def speak_and_cleanup(tts: Any, text: str) -> None:
@@ -403,8 +475,8 @@ async def speak_and_cleanup(tts: Any, text: str) -> None:
 
 async def process_voice_event(application: FastAPI, event: TranscriptEvent) -> None:
     """Process a transcript produced by the optional background voice listener."""
-    result = await process_text_command(application, event.message, event.speaker)
-    if result.reply:
+    result = await process_machine_command(application, event.message, event.speaker)
+    if result is not None and result.reply:
         await speak_and_cleanup(application.state.tts, result.reply)
 
 
@@ -476,18 +548,6 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         calendar=calendar,
     )
 
-    # Re-apply the panel's last model/mode choice on top of the .env defaults.
-    overrides = load_runtime_config(settings.chroma_path)
-    model_override = overrides.get("model")
-    if isinstance(model_override, str):
-        application.state.brain.set_chat_model(model_override)
-    mode_override = overrides.get("persona_mode")
-    if isinstance(mode_override, str):
-        try:
-            application.state.brain.set_persona_mode(mode_override)
-        except ValueError:
-            logger.warning("Ignoring unknown persisted persona mode: %s", mode_override)
-
     application.state.loop = asyncio.get_running_loop()
     application.state.voice_listener = None
     application.state.obsidian_watcher = None
@@ -495,27 +555,39 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
     obsidian_path = os.getenv("OBSIDIAN_VAULT_PATH", "").strip()
     if obsidian_path:
+
+        def vault_owner_id() -> str:
+            owner = user_store.owner(settings.owner_email)
+            return owner.id if owner is not None else ""
+
         watcher = ObsidianWatcher(
             vault_path=obsidian_path,
             memory=memory,
             speaker=os.getenv("OBSIDIAN_SPEAKER", "fear_user"),
+            user_id=vault_owner_id,
         )
         watcher.start()
         application.state.obsidian_watcher = watcher
 
+    voice_listener_class: type[VoiceListener] | None = None
     if env_bool("FEAR_ENABLE_VOICE_LISTENER", default=False):
         # Imported here so the heavy audio stack (whisper, pyaudio) is only
         # needed when voice input is explicitly enabled — install it with
-        # `pip install -e ".[audio]"`.
-        from fear.audio.voice_listener import VoiceListener
+        # `pip install -e ".[audio]"`. Missing it turns voice off, not the app
+        # (the Windows app ships without Whisper).
+        try:
+            from fear.audio.voice_listener import VoiceListener as voice_listener_class
+        except ImportError:
+            logger.warning("Voice input is enabled but whisper/pyaudio is not installed")
+
+    if voice_listener_class is not None:
 
         def on_transcript(event: TranscriptEvent) -> None:
-            loop = application.state.loop
-            loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(process_voice_event(application, event))
+            application.state.loop.call_soon_threadsafe(
+                _spawn, application, process_voice_event(application, event)
             )
 
-        listener = VoiceListener(
+        listener = voice_listener_class(
             on_transcript=on_transcript,
             model_name=settings.whisper_model_name,
             sample_rate=settings.sample_rate,
@@ -524,18 +596,22 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         listener.start()
         application.state.voice_listener = listener
 
+    clap_detector_class: type[ClapDetector] | None = None
     if env_bool("FEAR_ENABLE_CLAP_DETECTOR", default=False):
-        from fear.input.clap_detector import ClapDetector
+        try:
+            from fear.input.clap_detector import ClapDetector as clap_detector_class
+        except ImportError:
+            logger.warning("Clap detection is enabled but pyaudio is not installed")
+
+    if clap_detector_class is not None:
+
+        async def toggle_from_clap() -> None:
+            await process_machine_command(application, "toggle Spotify playback", "clap")
 
         def on_double_clap() -> None:
-            loop = application.state.loop
-            loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(
-                    process_text_command(application, "toggle Spotify playback", "clap")
-                )
-            )
+            application.state.loop.call_soon_threadsafe(_spawn, application, toggle_from_clap())
 
-        clap_detector = ClapDetector(
+        clap_detector = clap_detector_class(
             on_double_clap=on_double_clap,
             threshold=settings.clap_threshold,
             sample_rate=settings.sample_rate,
@@ -565,6 +641,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="F.E.A.R. Unified API", lifespan=lifespan)
+app.state.background_tasks = set()
 allowed_origins = cors_origins()
 app.add_middleware(
     CORSMiddleware,
@@ -608,6 +685,7 @@ async def auth_register(
     limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> AuthResponse:
     """Create an account and return a session token."""
+    _refuse_in_desktop(settings)
     _rate_limit(request, limiter, "register")
     # Optional closed registration: when FEAR_INVITE_CODE is set, require it.
     if settings.invite_code and not _matches_invite(payload.invite_code, settings.invite_code):
@@ -628,9 +706,11 @@ async def auth_login(
     request: Request,
     store: UserStore = Depends(get_user_store),
     security: Security = Depends(get_security),
+    settings: Settings = Depends(get_settings),
     limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> AuthResponse:
     """Exchange email + password for a session token."""
+    _refuse_in_desktop(settings)
     _rate_limit(request, limiter, "login")
     user = await asyncio.to_thread(
         store.verify_credentials, payload.email.strip().lower(), payload.password
@@ -680,18 +760,26 @@ async def health() -> dict[str, str]:
 async def status(
     request: Request,
     settings: Settings = Depends(get_settings),
+    user: User | None = Depends(get_optional_user),
+    store: UserStore = Depends(get_user_store),
 ) -> StatusResponse:
-    """Report which integrations are configured/active (drives the system panel)."""
-    spotify = getattr(request.app.state, "spotify", None)
-    calendar = getattr(request.app.state, "calendar", None)
+    """Report which integrations are configured/active (drives the system panel).
+
+    The machine's own integrations are reported only to its owner — for anyone
+    else they are off, because the brain won't route their requests to them.
+    """
+    state = request.app.state
+    spotify = getattr(state, "spotify", None)
+    calendar = getattr(state, "calendar", None)
+    owner = user is not None and await _is_owner(user, store, settings)
     return StatusResponse(
         assistant=settings.assistant_name,
         openrouter=bool(settings.openrouter_api_key and settings.openrouter_chat_model),
-        memory=getattr(request.app.state, "memory", None) is not None,
-        voice=getattr(request.app.state, "voice_listener", None) is not None,
-        spotify=bool(spotify is not None and spotify.is_configured),
-        obsidian=getattr(request.app.state, "obsidian_watcher", None) is not None,
-        calendar=bool(calendar is not None and calendar.is_configured),
+        memory=getattr(state, "memory", None) is not None,
+        voice=owner and getattr(state, "voice_listener", None) is not None,
+        spotify=owner and bool(spotify is not None and spotify.is_configured),
+        obsidian=owner and getattr(state, "obsidian_watcher", None) is not None,
+        calendar=owner and bool(calendar is not None and calendar.is_configured),
     )
 
 
@@ -702,12 +790,14 @@ async def command(
     tts: Any = Depends(get_tts),
     user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
 ) -> CommandResponse:
     """Process a text command and optionally speak it locally."""
-    ctx = await _user_context(user, store)
+    ctx = await _user_context(user, store, settings)
     result = await brain.process_command(payload.text, payload.speaker, user=ctx)
 
-    if payload.speak and result.reply:
+    # The speakers are the owner's: nobody else gets to talk through their room.
+    if payload.speak and result.reply and ctx is not None and ctx.is_owner:
         await speak_and_cleanup(tts, result.reply)
 
     return CommandResponse(reply=result.reply, speaker=result.speaker, audio_file=None)
@@ -719,6 +809,7 @@ async def command_stream(
     brain: AsyncConversationalBrain = Depends(get_brain),
     user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Stream the reply as plain-text chunks as the model produces them.
 
@@ -728,7 +819,7 @@ async def command_stream(
     body is byte-for-byte unchanged; the header is simply absent when nothing
     was consulted.
     """
-    ctx = await _user_context(user, store)
+    ctx = await _user_context(user, store, settings)
     session = await brain.open_stream(payload.text, payload.speaker, user=ctx)
 
     # Disable proxy/browser buffering so tokens reach the client as they are produced.
@@ -833,13 +924,26 @@ async def knowledge_delete(
 @app.post("/wearable/tap", response_model=CommandResponse)
 async def wearable_tap(
     payload: TapGesturePayload,
+    request: Request,
     brain: AsyncConversationalBrain = Depends(get_brain),
     user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
 ) -> CommandResponse:
     """Process a wearable tap as a command, on the signed-in user's context."""
+    if payload.gesture == "long_press":
+        # A long press means "listen to me": it opens the mic, it isn't a chat line.
+        await _require_owner(user, store, settings)
+        listener = getattr(request.app.state, "voice_listener", None)
+        if listener is None:
+            reply = "A captura de voz está desligada. Ative FEAR_ENABLE_VOICE_LISTENER=1."
+        else:
+            _spawn(request.app, asyncio.to_thread(listener.capture_once))
+            reply = "Estou ouvindo."
+        return CommandResponse(reply=reply, speaker=payload.speaker, audio_file=None)
+
     text = gesture_to_command(WearableTapEvent(payload.gesture, payload.device_id))
-    ctx = await _user_context(user, store)
+    ctx = await _user_context(user, store, settings)
     result = await brain.process_command(text or payload.gesture, payload.speaker, user=ctx)
     return CommandResponse(reply=result.reply, speaker=result.speaker, audio_file=None)
 
@@ -898,12 +1002,15 @@ async def config_set(
 async def voice_start(
     request: Request,
     user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
     """Start push-to-talk capture when the optional voice listener is enabled.
 
-    Authenticated: this drives the machine's microphone, so it must never be
-    reachable by an anonymous caller on the network.
+    Owner-only: this drives the machine's microphone, so neither an anonymous
+    caller nor another account may switch it on.
     """
+    await _require_owner(user, store, settings)
     listener = getattr(request.app.state, "voice_listener", None)
     if listener is None:
         return {"status": "disabled", "hint": "Set FEAR_ENABLE_VOICE_LISTENER=1"}
@@ -916,8 +1023,11 @@ async def voice_start(
 async def voice_stop(
     request: Request,
     user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
-    """Stop push-to-talk capture (authenticated; see /voice/start)."""
+    """Stop push-to-talk capture (owner-only; see /voice/start)."""
+    await _require_owner(user, store, settings)
     listener = getattr(request.app.state, "voice_listener", None)
     if listener is None:
         return {"status": "disabled", "hint": "Set FEAR_ENABLE_VOICE_LISTENER=1"}
@@ -930,8 +1040,11 @@ async def voice_stop(
 async def voice_capture_once(
     request: Request,
     user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
-    """Capture one voice chunk (authenticated; see /voice/start)."""
+    """Capture one voice chunk (owner-only; see /voice/start)."""
+    await _require_owner(user, store, settings)
     listener = getattr(request.app.state, "voice_listener", None)
     if listener is None:
         return {"status": "disabled", "hint": "Set FEAR_ENABLE_VOICE_LISTENER=1"}
@@ -974,7 +1087,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=1008)  # policy violation — never reached the brain
         return
 
-    ctx = await _user_context(user, store)
+    ctx = await _user_context(user, store, settings)
     try:
         while True:
             text = await websocket.receive_text()

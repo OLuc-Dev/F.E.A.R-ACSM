@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -28,14 +29,10 @@ from fear.web.app import (
 )
 from fear.web.ratelimit import RateLimiter
 
-PERSONA_MODES = ["equilibrio", "sombrio", "cirurgico"]
-
 
 class FakeBrain:
     def __init__(self) -> None:
         self.reset_calls: list[str] = []
-        self.model = "openai/gpt-oss-120b:free"
-        self.persona_mode = "equilibrio"
         # Records the per-request UserContext (or None) the last call received.
         self.last_user: object | None = None
         # Consulted-memory ids the fake stream reports (controllable per test).
@@ -60,22 +57,6 @@ class FakeBrain:
 
     def reset_conversation(self, speaker: str) -> None:
         self.reset_calls.append(speaker)
-
-    def set_chat_model(self, model: str) -> None:
-        if model.strip():
-            self.model = model.strip()
-
-    def set_persona_mode(self, mode: str) -> None:
-        if mode not in PERSONA_MODES:
-            raise ValueError(mode)
-        self.persona_mode = mode
-
-    def get_config(self) -> dict[str, object]:
-        return {
-            "model": self.model,
-            "persona_mode": self.persona_mode,
-            "persona_modes": PERSONA_MODES,
-        }
 
 
 class FakeMemory:
@@ -662,3 +643,88 @@ def test_config_rejects_invalid_mode(client: TestClient) -> None:
     _, headers = _register(client)
     response = client.post("/config", json={"persona_mode": "caotico"}, headers=headers)
     assert response.status_code == 422
+
+
+# --- the machine's mic, speakers and integrations belong to its owner ---
+
+
+def test_voice_routes_refuse_accounts_other_than_the_owner(client: TestClient) -> None:
+    listener = FakeVoiceListener()
+    app.state.voice_listener = listener
+    try:
+        _register(client, "owner@example.com")  # the first account owns the machine
+        _, guest = _register(client, "guest@example.com")
+        for path in VOICE_ROUTES:
+            assert client.post(path, headers=guest).status_code == 403, path
+        assert listener.calls == []
+    finally:
+        delattr(app.state, "voice_listener")
+
+
+def test_status_reports_machine_integrations_only_to_the_owner(client: TestClient) -> None:
+    app.state.voice_listener = FakeVoiceListener()
+    try:
+        _, owner = _register(client, "owner@example.com")
+        _, guest = _register(client, "guest@example.com")
+        assert client.get("/status", headers=owner).json()["voice"] is True
+        assert client.get("/status", headers=guest).json()["voice"] is False
+        assert client.get("/status").json()["voice"] is False
+    finally:
+        delattr(app.state, "voice_listener")
+
+
+def test_command_speaks_only_for_the_owner(client: TestClient) -> None:
+    tts = FakeTTS()
+    app.dependency_overrides[get_tts] = lambda: tts
+    _, owner = _register(client, "owner@example.com")
+    _, guest = _register(client, "guest@example.com")
+
+    client.post("/command", json={"text": "oi", "speak": True}, headers=guest)
+    assert tts.said == []
+    client.post("/command", json={"text": "oi", "speak": True}, headers=owner)
+    assert tts.said == ["echo: oi"]
+
+
+def test_long_press_opens_the_mic_instead_of_chatting(client: TestClient, brain: FakeBrain) -> None:
+    listener = FakeVoiceListener()
+    app.state.voice_listener = listener
+    try:
+        _, headers = _register(client)
+        response = client.post("/wearable/tap", json={"gesture": "long_press"}, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["reply"] == "Estou ouvindo."
+        # The capture runs in the background so the tap returns at once.
+        deadline = time.monotonic() + 2.0
+        while not listener.calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert listener.calls == ["once"]
+        assert brain.last_user is None  # nothing was sent to the brain as text
+    finally:
+        delattr(app.state, "voice_listener")
+
+
+def test_long_press_is_refused_for_other_accounts(client: TestClient) -> None:
+    listener = FakeVoiceListener()
+    app.state.voice_listener = listener
+    try:
+        _register(client, "owner@example.com")
+        _, guest = _register(client, "guest@example.com")
+        response = client.post("/wearable/tap", json={"gesture": "long_press"}, headers=guest)
+        assert response.status_code == 403
+        assert listener.calls == []
+    finally:
+        delattr(app.state, "voice_listener")
+
+
+def test_owner_email_setting_picks_the_owner(client: TestClient, tmp_path: Path) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        owner_email="second@example.com", chroma_path=str(tmp_path / "chroma")
+    )
+    app.state.voice_listener = FakeVoiceListener()
+    try:
+        _, first = _register(client, "first@example.com")
+        _, second = _register(client, "second@example.com")
+        assert client.post("/voice/start", headers=first).status_code == 403
+        assert client.post("/voice/start", headers=second).status_code == 200
+    finally:
+        delattr(app.state, "voice_listener")

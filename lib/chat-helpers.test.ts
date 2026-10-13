@@ -29,6 +29,13 @@ describe("humanizeError", () => {
     expect(humanizeError(new ApiError("slow down", 429))).toMatch(/espera/i);
   });
 
+  it("treats a 403 as a refusal, not an expired session", () => {
+    const refusal = "Só o dono deste F.E.A.R. controla o microfone.";
+    expect(humanizeError(new ApiError(refusal, 403))).toBe(refusal);
+    expect(humanizeError(new ApiError("HTTP 403", 403))).toMatch(/permiss[aã]o/i);
+    expect(humanizeError(new ApiError("HTTP 403", 403))).not.toMatch(/sess[aã]o/i);
+  });
+
   it("surfaces a meaningful backend detail as-is", () => {
     expect(humanizeError(new ApiError("Configure sua chave do OpenRouter", 400))).toBe(
       "Configure sua chave do OpenRouter",

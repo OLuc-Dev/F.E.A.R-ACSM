@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 
@@ -18,6 +20,10 @@ class LocalEmbedding:
         from chromadb.utils import embedding_functions
 
         self._embed = embedding_functions.ONNXMiniLM_L6_V2()
+        # The Windows app ships the model, so the first launch needs no download.
+        bundled = os.getenv("FEAR_ONNX_MODEL_DIR", "").strip()
+        if bundled:
+            self._embed.DOWNLOAD_PATH = Path(bundled)
 
     def embed(self, text: str) -> list[float]:
         """Return the embedding vector for a single text."""

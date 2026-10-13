@@ -27,8 +27,9 @@ export function isBlankMessage(text: string): boolean {
  */
 export function humanizeError(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 401 || error.status === 403)
-      return "Sua sessão expirou. Entra de novo pra continuar.";
+    if (error.status === 401) return "Sua sessão expirou. Entra de novo pra continuar.";
+    if (error.status === 403 && /^HTTP \d+$/.test(error.message))
+      return "Você não tem permissão pra fazer isso aqui.";
     if (error.status === 429) return "Muita coisa de uma vez. Espera um segundo e tenta de novo.";
     if (typeof error.status === "number" && error.status >= 500)
       return "O servidor tropeçou aqui. Tenta de novo em instantes.";

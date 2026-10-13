@@ -30,7 +30,6 @@ class Settings(BaseSettings):
     whisper_model_name: str = Field("base", validation_alias="WHISPER_MODEL")
 
     chroma_path: str = Field("data/chroma", validation_alias="CHROMA_PATH")
-    chroma_collection_name: str = Field("fear_memory", validation_alias="CHROMA_COLLECTION")
 
     # Deployment environment: local | development | test | production. Safe
     # default (local). In production a missing FEAR_SECRET_KEY is fatal at boot.
@@ -46,6 +45,11 @@ class Settings(BaseSettings):
     session_max_age_days: int = Field(30, validation_alias="FEAR_SESSION_MAX_AGE_DAYS", ge=1)
     # When set, /auth/register requires this code (closed / invite-only signup).
     invite_code: str = Field("", validation_alias="FEAR_INVITE_CODE")
+    # The account that owns this machine's integrations (microphone, claps,
+    # Spotify, Google Calendar, Obsidian vault). Empty: the first account created.
+    owner_email: str = Field("", validation_alias="FEAR_OWNER_EMAIL")
+    # Set by the Windows app launcher: one built-in account, no sign-up or login.
+    desktop: bool = Field(False, validation_alias="FEAR_DESKTOP")
 
     # OpenRouter is used through an OpenAI-compatible client interface.
     openrouter_api_key: str = Field("", validation_alias="OPENROUTER_API_KEY")
@@ -53,7 +57,6 @@ class Settings(BaseSettings):
         "https://openrouter.ai/api/v1", validation_alias="OPENROUTER_BASE_URL"
     )
     openrouter_chat_model: str = Field(DEFAULT_CHAT_MODEL, validation_alias="OPENROUTER_CHAT_MODEL")
-    openrouter_embedding_model: str = Field("", validation_alias="OPENROUTER_EMBEDDING_MODEL")
     openrouter_http_referer: str = Field(
         "http://127.0.0.1:8765", validation_alias="OPENROUTER_HTTP_REFERER"
     )

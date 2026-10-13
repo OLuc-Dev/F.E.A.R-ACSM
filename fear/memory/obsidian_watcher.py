@@ -4,7 +4,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -20,6 +20,10 @@ from fear.memory.personal_memory import PersonalMemory
 FRONTMATTER_RE = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
 
 
+def _no_owner() -> str:
+    return ""
+
+
 class ObsidianMarkdownHandler(FileSystemEventHandler):
     """Watchdog handler that indexes new or modified Markdown files."""
 
@@ -30,11 +34,16 @@ class ObsidianMarkdownHandler(FileSystemEventHandler):
         speaker: str = "fear_user",
         source: str = "obsidian",
         debounce_seconds: float = 1.0,
+        user_id: Callable[[], str] = _no_owner,
+        vault_root: Path | None = None,
     ) -> None:
         self.memory = memory
         self.speaker = speaker
         self.source = source
         self.debounce_seconds = debounce_seconds
+        # Resolved per note, so notes indexed after the owner signs up are theirs.
+        self.user_id = user_id
+        self.vault_root = vault_root
         self._last_indexed_at: dict[Path, float] = {}
         self._logger = logging.getLogger(self.__class__.__name__)
 
@@ -49,7 +58,7 @@ class ObsidianMarkdownHandler(FileSystemEventHandler):
             return
 
         path = Path(str(event.src_path))
-        if path.suffix.lower() != ".md":
+        if path.suffix.lower() != ".md" or self._is_hidden(path):
             return
 
         now = time.time()
@@ -64,16 +73,28 @@ class ObsidianMarkdownHandler(FileSystemEventHandler):
         except Exception:
             self._logger.exception("Failed to index Obsidian file: %s", path)
 
+    def _is_hidden(self, path: Path) -> bool:
+        """Skip .trash, .obsidian and other dot-folders, as the initial walk does."""
+        if self.vault_root is None:
+            return False
+        try:
+            relative = path.resolve().relative_to(self.vault_root)
+        except ValueError:
+            return False
+        return any(part.startswith(".") for part in relative.parts)
+
     def index_markdown_file(self, path: Path) -> None:
         """Read a Markdown file, split it into paragraphs, and store each paragraph."""
         raw_text = path.read_text(encoding="utf-8", errors="ignore")
         content = strip_yaml_frontmatter(raw_text)
+        owner_id = self.user_id()
 
         for paragraph in split_markdown_paragraphs(content):
             self.memory.add_memory(
                 paragraph,
                 speaker=self.speaker,
                 source=self.source,
+                user_id=owner_id,
             )
 
 
@@ -107,11 +128,13 @@ class ObsidianWatcher:
         memory: PersonalMemory,
         speaker: str = "fear_user",
         source: str = "obsidian",
+        user_id: Callable[[], str] = _no_owner,
     ) -> None:
         self.vault_path = Path(vault_path).expanduser().resolve()
         self.memory = memory
         self.speaker = speaker
         self.source = source
+        self.user_id = user_id
         self._observer: BaseObserver | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -150,11 +173,7 @@ class ObsidianWatcher:
             self._logger.warning("Obsidian vault does not exist: %s", self.vault_path)
             return
 
-        handler = ObsidianMarkdownHandler(
-            memory=self.memory,
-            speaker=self.speaker,
-            source=self.source,
-        )
+        handler = self._handler()
 
         for path in iter_markdown_files(self.vault_path):
             try:
@@ -162,16 +181,21 @@ class ObsidianWatcher:
             except Exception:
                 self._logger.exception("Failed to index existing file: %s", path)
 
+    def _handler(self) -> ObsidianMarkdownHandler:
+        return ObsidianMarkdownHandler(
+            memory=self.memory,
+            speaker=self.speaker,
+            source=self.source,
+            user_id=self.user_id,
+            vault_root=self.vault_path,
+        )
+
     def _run(self) -> None:
         if not self.vault_path.exists():
             self._logger.warning("Obsidian vault does not exist: %s", self.vault_path)
             return
 
-        handler = ObsidianMarkdownHandler(
-            memory=self.memory,
-            speaker=self.speaker,
-            source=self.source,
-        )
+        handler = self._handler()
 
         observer = Observer()
         observer.schedule(handler, str(self.vault_path), recursive=True)

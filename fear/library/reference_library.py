@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,7 +38,11 @@ class ReferenceLibrary:
         self.collection_name = collection_name
         # Share one embedder across stores when provided; otherwise make our own.
         self._embedding = embedding or LocalEmbedding()
-        self._client = chromadb.PersistentClient(path=self.path)
+        self._client = chromadb.PersistentClient(
+            path=self.path,
+            # Chroma phones home with usage events by default; memory stays local.
+            settings=chromadb.config.Settings(anonymized_telemetry=False),
+        )
         self._collection = self._client.get_or_create_collection(name=self.collection_name)
 
     def index_folder(self, folder: str | Path, *, source: str) -> int:
@@ -62,11 +67,19 @@ class ReferenceLibrary:
         if not chunks:
             return 0
 
-        ids = [f"ref-{source}-{section}-{index}" for index, _ in enumerate(chunks)]
+        # Keyed by the file's path, not its name: two "notes.md" in different
+        # folders used to overwrite each other.
+        file_key = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:12]
+        ids = [f"ref-{source}-{file_key}-{index}" for index, _ in enumerate(chunks)]
         embeddings = self._embedding.embed_many(chunks)
+        # An empty user_id marks the chunk as shared: every account retrieves it.
         metadatas = [
-            {"source": source, "section": section, "file_path": str(file_path)} for _ in chunks
+            {"source": source, "section": section, "file_path": str(file_path), "user_id": ""}
+            for _ in chunks
         ]
+
+        # A file that shrank would otherwise keep its old trailing chunks forever.
+        self._collection.delete(where={"file_path": str(file_path)})
 
         self._collection.upsert(
             ids=ids,
@@ -94,6 +107,20 @@ class ReferenceLibrary:
         if len(conditions) == 1:
             return conditions[0]
         return {"$and": conditions}
+
+    @staticmethod
+    def _retrieval_scope(user_id: str, source: str | None) -> dict[str, Any] | None:
+        """Like ``_scope``, but a user also reads the shared library (``user_id=""``).
+
+        Listing and deleting stay strictly per-user; only retrieval widens, so
+        the books indexed by scripts/index_reference_library.py reach every account.
+        """
+        if not user_id:
+            return ReferenceLibrary._scope("", source)
+        visible = {"$or": [{"user_id": user_id}, {"user_id": ""}]}
+        if not source:
+            return visible
+        return {"$and": [visible, {"source": source}]}
 
     def index_text(
         self, text: str, *, source: str, section: str = "nota", user_id: str = ""
@@ -168,7 +195,7 @@ class ReferenceLibrary:
         raw = self._collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,
-            where=self._scope(user_id, source),
+            where=self._retrieval_scope(user_id, source),
         )
 
         return self._format_results(raw)

@@ -13,10 +13,6 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,css}\""
   },
   "dependencies": {
-    "@react-three/drei": "^9.114.0",
-    "@react-three/fiber": "^8.17.10",
-    "@react-three/postprocessing": "^2.16.3",
-    "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "framer-motion": "^11.3.0",
     "lucide-react": "^0.439.0",
@@ -34,6 +30,7 @@
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.168.0",
     "autoprefixer": "^10.4.19",
     "eslint": "^8.57.0",
     "eslint-config-next": "^14.2.5",

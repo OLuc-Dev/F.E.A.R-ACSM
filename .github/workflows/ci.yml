@@ -54,3 +54,7 @@ jobs:
         run: npm test
       - name: Build frontend
         run: npm run build
+      - name: Build the Windows app's static UI
+        # The desktop app ships the UI as a static export; catch anything that
+        # breaks it here rather than in the release workflow.
+        run: NEXT_PUBLIC_FEAR_DESKTOP=1 npm run build

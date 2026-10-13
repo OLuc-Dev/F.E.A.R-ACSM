@@ -22,4 +22,7 @@ def configure_logging() -> None:
         level=level,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
+    # chromadb 0.6 calls posthog with a signature newer posthog releases reject,
+    # logging an ERROR per event even with telemetry disabled (nothing is sent).
+    logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
     _configured = True

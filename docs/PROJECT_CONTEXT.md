@@ -29,8 +29,8 @@ gravada).
 - **Auth:** SQLite (usuários), hash de senha PBKDF2 (stdlib), `cryptography`/
   Fernet (tokens de sessão + criptografia das chaves de API por usuário).
 - **Frontend:** Next.js 14.2 (App Router, **fixo no 14**), React 18.3,
-  TypeScript strict, Tailwind 3.4, framer-motion 11, **React Three Fiber + drei +
-  postprocessing** (presença 3D), Web Speech API (TTS no navegador), lucide-react.
+  TypeScript strict, Tailwind 3.4, framer-motion 11, **three.js** (presença 3D de corpo
+  inteiro), Web Speech API (TTS no navegador), lucide-react.
 - **Integrações:** Spotify, Google Calendar (somente leitura), watcher do
   Obsidian. Áudio opcional (Whisper + pyaudio), atrás do extra `.[audio]`.
 - **Infra:** Docker (`Dockerfile`, sem torch) + `fly.toml` (Fly.io) pro backend,
@@ -54,7 +54,8 @@ gravada).
 - `fear/config.py` — `Settings` (pydantic-settings), lê o `.env`.
 - `prompts/fear_persona.md` — a personalidade (carregada por `FEAR_PERSONA_FILE`).
 - Frontend: `app/page.tsx` (deck + gate de login + aviso de chave),
-  `components/ui/fear-presence.tsx` (3D), `settings-panel.tsx`, `auth-panel.tsx`,
+  `components/ui/fear-robot.tsx` + `lib/fear-robot-scene.ts` / `lib/fear-robot-motion.ts`
+  (3D), `settings-panel.tsx`, `auth-panel.tsx`,
   `mac-os-dock.tsx`, `messages.tsx`; `lib/api.ts` (cliente tipado + header de
   auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`, `lib/speech.ts`.
 

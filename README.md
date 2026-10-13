@@ -7,6 +7,36 @@ visível. Alguns apenas sabem.
 
 ---
 
+## Baixar para Windows
+
+O F.E.A.R. é um aplicativo: instale uma vez e ele fica no seu PC, sem site e
+sem login.
+
+1. Baixe o `FEAR-Setup-x.y.z.exe` na página de
+   [Releases](https://github.com/OLuc-Dev/F.E.A.R-ACSM/releases) e rode.
+   Não pede administrador.
+2. Na primeira abertura, cole sua chave do OpenRouter (pegue em
+   openrouter.ai/keys). Ela fica criptografada só neste computador.
+3. Pronto. O F.E.A.R. liga junto com o Windows, minimizado no ícone perto do
+   relógio. Fechar a janela só esconde; para sair de verdade, clique com o
+   botão direito no ícone e escolha **Sair**. No mesmo menu dá pra desligar o
+   "Iniciar com o Windows".
+
+Cada instalação é um F.E.A.R. particular: memória, chave e configurações ficam
+em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar. Para ligar as
+palmas (`FEAR_ENABLE_CLAP_DETECTOR=1`), o Obsidian (`OBSIDIAN_VAULT_PATH=...`) ou
+outras opções, crie um `.env` nessa pasta (veja `.env.example`) e reabra o app.
+A captura de voz pelo Whisper não vem no instalador (são gigabytes); ela só
+funciona rodando do código com `pip install -e ".[audio]"`.
+
+**Publicar uma versão:** crie e envie uma tag (`git tag v0.2.0 && git push origin
+v0.2.0`). O workflow *Windows app* gera o instalador, testa o app empacotado e
+publica a Release. Para só testar o instalador, rode o workflow manualmente
+na aba Actions: o `.exe` sai como artefato.
+
+**Rodar o app a partir do código:** `pip install -e ".[desktop]"`,
+`NEXT_PUBLIC_FEAR_DESKTOP=1 npm run build` e `python -m fear.desktop`.
+
 ## Visão geral
 
 F.E.A.R. é um assistente pessoal **local-first**:
@@ -24,9 +54,14 @@ ChromaDB, sem PyTorch) e pode consultar uma biblioteca de notas em markdown.
 Cada pessoa tem **login** (e-mail + senha), com **memória, chave do OpenRouter e
 configuração isoladas** — ninguém enxerga os dados do outro. As chaves ficam
 criptografadas no servidor (derivado de `FEAR_SECRET_KEY`) e cada usuário traz a
-própria chave do OpenRouter. Rodando local, o login é opcional; publicado, é
-exigido. Para colocar no ar como site (API no Fly.io + tela no Vercel), veja
+própria chave do OpenRouter. O login é sempre exigido, inclusive rodando local.
+Para colocar no ar como site (API no Fly.io + tela no Vercel), veja
 **[DEPLOY.md](DEPLOY.md)**.
+
+O que é da máquina tem **dono**: microfone, palmas, alto-falante, Spotify, Google
+Agenda e o vault do Obsidian pertencem a uma conta só — a de `FEAR_OWNER_EMAIL`,
+ou, se vazio, a primeira conta criada. As outras contas conversam normalmente, mas
+nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
 
 ## Funcionalidades
 

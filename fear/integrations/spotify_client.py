@@ -12,7 +12,15 @@ from spotipy.oauth2 import SpotifyOAuth
 
 logger = logging.getLogger(__name__)
 
-_WORD_RE = re.compile(r"[a-z0-9]+")
+# \w, not [a-z]: an ASCII class split "próxima" into "pr" + "xima".
+_WORD_RE = re.compile(r"\w+")
+
+# Intent words, English and Brazilian Portuguese (F.E.A.R. is spoken to in both).
+_TOGGLE = {"toggle", "alternar", "alterna"}
+_NEXT = {"next", "skip", "próxima", "proxima", "pular", "pula", "avançar", "avança"}
+_PREVIOUS = {"previous", "back", "anterior", "voltar", "volta"}
+_PAUSE = {"pause", "stop", "pausar", "pausa", "parar"}
+_RESUME = {"resume", "play", "tocar", "toca", "continuar", "continua", "retomar"}
 
 
 def _words(text: str) -> set[str]:
@@ -145,15 +153,15 @@ class SpotifyClient:
         # and skip to the previous track. Specific intents are still checked
         # before the greedy "play"/"resume" branch, so "toggle Spotify playback"
         # is not misread as "resume".
-        if "toggle" in words:
+        if words & _TOGGLE:
             return await self.toggle()
-        if words & {"next", "skip"}:
+        if words & _NEXT:
             return await self.next_track()
-        if words & {"previous", "back"}:
+        if words & _PREVIOUS:
             return await self.previous_track()
-        if words & {"pause", "stop"}:
+        if words & _PAUSE:
             return await self.pause()
-        if words & {"resume", "play"}:
+        if words & _RESUME:
             return await self.resume()
 
         return ""

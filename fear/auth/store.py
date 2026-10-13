@@ -9,6 +9,10 @@ from pathlib import Path
 
 from fear.auth.security import Security, hash_password, verify_password
 
+# Verified against when the email is unknown, so a login for a missing account
+# costs the same PBKDF2 work as a wrong password and can't be told apart by timing.
+_DUMMY_HASH = hash_password("fear-timing-equalizer")
+
 
 @dataclass(slots=True)
 class User:
@@ -97,7 +101,10 @@ class UserStore:
             row = self._conn.execute(
                 "SELECT * FROM users WHERE email = ?", (normalized,)
             ).fetchone()
-        if row is None or not verify_password(password, row["password_hash"]):
+        if row is None:
+            verify_password(password, _DUMMY_HASH)
+            return None
+        if not verify_password(password, row["password_hash"]):
             return None
         return self._row_to_user(row)
 
@@ -110,6 +117,20 @@ class UserStore:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM users WHERE email = ?", (email.strip().lower(),)
+            ).fetchone()
+        return self._row_to_user(row) if row is not None else None
+
+    def owner(self, owner_email: str = "") -> User | None:
+        """The account that owns this machine's integrations.
+
+        The configured email when set (None if that account doesn't exist yet),
+        otherwise the first account ever created.
+        """
+        if owner_email.strip():
+            return self.get_by_email(owner_email)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM users ORDER BY created_at ASC, rowid ASC LIMIT 1"
             ).fetchone()
         return self._row_to_user(row) if row is not None else None
 
