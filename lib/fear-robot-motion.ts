@@ -4,6 +4,21 @@ import { MathUtils, Mesh, MeshStandardMaterial, Object3D, PointLight } from "thr
 // cursor tracking, irregular blinks, a pulsing core and a wave on demand. The
 // model ships with no baked animation, so every pose is computed here.
 
+export type RobotStatus = "online" | "listening" | "thinking" | "speaking" | "error";
+
+// How long (seconds) a "new memory" surge takes to bloom through the core.
+const SURGE_SECONDS = 3.2;
+
+// Eye glow per state, matching the head presence: a cold steady rest, a slow
+// brood while thinking, hotter while speaking, hottest on error.
+const EYE_BASE: Record<RobotStatus, number> = {
+  online: 0.9,
+  listening: 1.05,
+  thinking: 0.7,
+  speaking: 1.15,
+  error: 1.5,
+};
+
 export interface RobotPointer {
   x: number;
   y: number;
@@ -30,14 +45,11 @@ export function createRobotMotion(root: Object3D) {
     ]),
   );
   const materials = new Set<MeshStandardMaterial>();
+  const eyeMaterials = new Set<MeshStandardMaterial>();
   root.traverse((o) => {
-    if (
-      o instanceof Mesh &&
-      o.material instanceof MeshStandardMaterial &&
-      o.material.name === "FEAR_CORE_EMISSIVE"
-    ) {
-      materials.add(o.material);
-    }
+    if (!(o instanceof Mesh) || !(o.material instanceof MeshStandardMaterial)) return;
+    if (o.material.name === "FEAR_CORE_EMISSIVE") materials.add(o.material);
+    if (o.material.name === "FEAR_EYES_EMISSIVE") eyeMaterials.add(o.material);
   });
 
   let yaw = 0;
@@ -45,6 +57,8 @@ export function createRobotMotion(root: Object3D) {
   let nextBlink = 4.6;
   let blinkStart = -10;
   let greetingStart = -10;
+  let surgeStart = -10;
+  let status: RobotStatus = "online";
 
   function reset() {
     for (const [o, state] of rest) {
@@ -52,7 +66,8 @@ export function createRobotMotion(root: Object3D) {
       o.rotation.copy(state.rotation);
       o.scale.copy(state.scale);
     }
-    for (const material of materials) material.emissiveIntensity = 1.6;
+    for (const material of materials) material.emissiveIntensity = status === "speaking" ? 2 : 1.6;
+    for (const material of eyeMaterials) material.emissiveIntensity = EYE_BASE[status];
     yaw = 0;
     pitch = 0;
   }
@@ -61,6 +76,12 @@ export function createRobotMotion(root: Object3D) {
     reset,
     greet(time: number) {
       greetingStart = time;
+    },
+    setStatus(next: RobotStatus) {
+      status = next;
+    },
+    surge(time: number) {
+      surgeStart = time;
     },
     update(time: number, delta: number, pointer: RobotPointer, reduced = false) {
       if (reduced) {
@@ -74,10 +95,22 @@ export function createRobotMotion(root: Object3D) {
       const targetPitch = pointer.active ? py * 0.16 : Math.sin(time * 0.64 + 0.7) * 0.025;
       yaw = MathUtils.damp(yaw, targetYaw, 7, dt);
       pitch = MathUtils.damp(pitch, targetPitch, 7, dt);
+      const speaking = status === "speaking";
+      const thinking = status === "thinking";
+      // A quick nod while speaking, a slow brooding tilt while thinking, and a
+      // slight lean in while listening.
+      const nod = speaking
+        ? Math.sin(time * 9) * 0.045
+        : thinking
+          ? Math.sin(time * 1.4) * 0.04
+          : status === "listening"
+            ? 0.05
+            : 0;
+      const tilt = thinking ? Math.sin(time * 0.9) * 0.06 : 0;
 
       if (head) {
         head.rotation.y = rest.get(head)!.rotation.y + yaw;
-        head.rotation.x = rest.get(head)!.rotation.x + pitch;
+        head.rotation.x = rest.get(head)!.rotation.x + pitch + nod;
       }
       body.position.y = rest.get(body)!.position.y + Math.sin(time * 1.1) * 0.009;
       body.rotation.y = rest.get(body)!.rotation.y + yaw * 0.2;
@@ -101,14 +134,20 @@ export function createRobotMotion(root: Object3D) {
         const amount = Math.sin(Math.PI * greetT) ** 2;
         if (arms[0]) arms[0].rotation.z += amount * 1.05;
         if (forearms[0]) forearms[0].rotation.x -= amount * 0.95;
-        if (head) head.rotation.z = rest.get(head)!.rotation.z - amount * 0.075;
+        if (head) head.rotation.z = rest.get(head)!.rotation.z + tilt - amount * 0.075;
       } else if (head) {
-        head.rotation.z = rest.get(head)!.rotation.z;
+        head.rotation.z = rest.get(head)!.rotation.z + tilt;
       }
 
-      const pulse = (1 + Math.sin((time * Math.PI * 2) / 2.9)) / 2;
-      for (const material of materials) material.emissiveIntensity = 1.35 + pulse * 0.45;
-      if (ring) ring.rotation.z = rest.get(ring)!.rotation.z + time * 0.23;
+      // The core beats faster while F.E.A.R. works, and a new memory sends a
+      // surge through it that blooms fast and settles slowly.
+      const period = thinking ? 1.3 : speaking ? 1.9 : 2.9;
+      const pulse = (1 + Math.sin((time * Math.PI * 2) / period)) / 2;
+      const since = time - surgeStart;
+      const surge = since >= 0 && since < SURGE_SECONDS ? (1 - since / SURGE_SECONDS) ** 2 : 0;
+      const coreBase = speaking ? 1.6 : 1.35;
+      for (const material of materials) material.emissiveIntensity = coreBase + pulse * 0.45 + surge * 1.8;
+      if (ring) ring.rotation.z = rest.get(ring)!.rotation.z + time * (thinking ? 0.6 : 0.23) + surge * 0.8;
       cubes.forEach((cube, i) => {
         if (!cube) return;
         const state = rest.get(cube)!;
@@ -123,6 +162,16 @@ export function createRobotMotion(root: Object3D) {
         nextBlink = time + 4 + ((((Math.sin(time * 12.9898) * 43758.5453) % 1) + 1) % 1) * 3;
       }
       const blink = time - blinkStart;
+      const sway = speaking
+        ? Math.sin(time * 9) * 0.2
+        : thinking
+          ? Math.sin(time * 1.4) * 0.15
+          : Math.sin(time * 1.6) * 0.05;
+      // Error: an unstable, stuttering glow instead of a smooth sway.
+      const flicker = status === "error" && Math.sin(time * 23) > 0.6 ? -0.5 : 0;
+      for (const material of eyeMaterials) {
+        material.emissiveIntensity = Math.max(0.2, EYE_BASE[status] + sway + flicker);
+      }
       if (eyes) {
         eyes.scale.y =
           rest.get(eyes)!.scale.y *
@@ -130,7 +179,7 @@ export function createRobotMotion(root: Object3D) {
       }
       for (const name of ["FEAR_CORE_LIGHT", "FEAR_HOVER_LIGHT"]) {
         const light = get(name);
-        if (light instanceof PointLight) light.intensity = 0.065 + pulse * 0.025;
+        if (light instanceof PointLight) light.intensity = 0.065 + pulse * 0.025 + surge * 0.12;
       }
     },
   };

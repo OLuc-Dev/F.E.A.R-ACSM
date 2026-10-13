@@ -41,17 +41,14 @@ import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 
-const FearPresence = dynamic(
-  () => import("@/components/ui/fear-presence").then((module) => module.FearPresence),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
-        carregando presença…
-      </div>
-    ),
-  },
-);
+const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((module) => module.FearRobot), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">
+      carregando presença…
+    </div>
+  ),
+});
 
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
@@ -227,7 +224,7 @@ export default function HomePage() {
   }, []);
 
   // Only mount the 3D presence on real desktop widths (Tailwind's lg). CSS
-  // `hidden` alone would still mount <FearPresence>, loading the Three.js chunk
+  // `hidden` alone would still mount <FearRobot>, loading the Three.js chunk
   // and preloading the model on mobile — so we gate the render itself.
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1024px)");
@@ -617,7 +614,7 @@ export default function HomePage() {
                     the amber/metal core is calibrated for dark) and its edges
                     melt into the page instead of ending on a hard seam. */}
                 <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] bg-[hsl(var(--stage))] [-webkit-mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)] [mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)]">
-                  <FearPresence status={status} pulse={memoryTick} />
+                  <FearRobot status={status} pulse={memoryTick} className="h-full" />
                 </div>
               </div>
             )}

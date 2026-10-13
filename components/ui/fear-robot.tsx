@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
+import type { RobotStatus } from "@/lib/fear-robot-motion";
 import { cn } from "@/lib/utils";
 
 // The full-body presence: a humanoid shell in F.E.A.R.'s chrome and amber, with
@@ -16,6 +17,16 @@ export interface FearRobotProps {
   animate?: boolean;
   interactive?: boolean;
   showGreeting?: boolean;
+  status?: RobotStatus;
+  /** Bump to send a "new memory" surge through the core. */
+  pulse?: number;
+}
+
+interface RobotHandle {
+  dispose: () => void;
+  greet: () => void;
+  setStatus: (status: RobotStatus) => void;
+  surge: () => void;
 }
 
 export function FearRobot({
@@ -25,16 +36,22 @@ export function FearRobot({
   animate = true,
   interactive = true,
   showGreeting = false,
+  status = "online",
+  pulse = 0,
 }: FearRobotProps) {
   const container = useRef<HTMLDivElement>(null);
-  const scene = useRef<{ dispose: () => void; greet: () => void } | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const scene = useRef<RobotHandle | null>(null);
+  // Read at scene creation so a status that changed while three.js was still
+  // loading isn't lost, without making status a reason to rebuild the scene.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const [load, setLoad] = useState<"loading" | "ready" | "error">("loading");
 
   useEffect(() => {
     const element = container.current;
     if (!element) return;
     let cancelled = false;
-    setStatus("loading");
+    setLoad("loading");
     import("@/lib/fear-robot-scene")
       .then(({ createRobotScene }) => {
         if (cancelled) return;
@@ -42,16 +59,17 @@ export function FearRobot({
           modelUrl,
           animate,
           interactive,
+          status: statusRef.current,
           onReady: () => {
-            if (!cancelled) setStatus("ready");
+            if (!cancelled) setLoad("ready");
           },
           onError: () => {
-            if (!cancelled) setStatus("error");
+            if (!cancelled) setLoad("error");
           },
         });
       })
       .catch(() => {
-        if (!cancelled) setStatus("error");
+        if (!cancelled) setLoad("error");
       });
     return () => {
       cancelled = true;
@@ -59,6 +77,17 @@ export function FearRobot({
       scene.current = null;
     };
   }, [modelUrl, animate, interactive]);
+
+  useEffect(() => {
+    scene.current?.setStatus(status);
+  }, [status]);
+
+  const lastPulse = useRef(pulse);
+  useEffect(() => {
+    if (pulse === lastPulse.current) return;
+    lastPulse.current = pulse;
+    scene.current?.surge();
+  }, [pulse]);
 
   return (
     <div className={cn("relative h-[500px] w-full overflow-hidden", className)}>
@@ -68,10 +97,10 @@ export function FearRobot({
         role="img"
         aria-label="F.E.A.R. em 3D, com movimentos suaves e olhar que acompanha o cursor."
       />
-      {status !== "ready" ? (
+      {load !== "ready" ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <Image src={posterUrl} alt="F.E.A.R." fill sizes="100vw" className="object-contain" />
-          {status === "loading" ? (
+          {load === "loading" ? (
             // Cyan, not amber: loading is the "working" signal, and amber is
             // reserved for F.E.A.R.'s own energy.
             <span
@@ -82,7 +111,7 @@ export function FearRobot({
           ) : null}
         </div>
       ) : null}
-      {showGreeting && status === "ready" && animate ? (
+      {showGreeting && load === "ready" && animate ? (
         <button
           type="button"
           onClick={() => scene.current?.greet()}

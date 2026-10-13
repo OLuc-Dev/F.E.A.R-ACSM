@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { createRobotMotion, type RobotPointer } from "./fear-robot-motion";
+import { createRobotMotion, type RobotPointer, type RobotStatus } from "./fear-robot-motion";
 
 // Renderer, camera, lighting and teardown for the full-body presence. The
 // lighting follows the same signal language as the head presence: amber is
@@ -27,6 +27,7 @@ interface SceneOptions {
   modelUrl: string;
   animate: boolean;
   interactive: boolean;
+  status?: RobotStatus;
   onReady: () => void;
   onError: (error: unknown) => void;
 }
@@ -81,6 +82,7 @@ export function createRobotScene(container: HTMLDivElement, options: SceneOption
   let model: THREE.Object3D | undefined;
   let motion: ReturnType<typeof createRobotMotion> | undefined;
   let time = 0;
+  let status: RobotStatus = options.status ?? "online";
   let last = performance.now();
   const pointer: RobotPointer = { x: 0, y: 0, active: false };
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -158,6 +160,7 @@ export function createRobotScene(container: HTMLDivElement, options: SceneOption
       hoverLight.name = "FEAR_HOVER_LIGHT";
       model.getObjectByName("FEAR_CYAN_PARTS_hover_ring")?.add(hoverLight);
       motion = createRobotMotion(model);
+      motion.setStatus(status);
       last = performance.now();
       resize();
       options.onReady();
@@ -180,6 +183,13 @@ export function createRobotScene(container: HTMLDivElement, options: SceneOption
   return {
     greet() {
       if (options.animate && !reduced.matches) motion?.greet(time);
+    },
+    setStatus(next: RobotStatus) {
+      status = next;
+      motion?.setStatus(next);
+    },
+    surge() {
+      if (options.animate && !reduced.matches) motion?.surge(time);
     },
     dispose() {
       if (disposed) return;
