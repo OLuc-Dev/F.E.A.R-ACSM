@@ -8,11 +8,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // async vi.mock factory it corrupts the next mockImplementation's arg binding.
 // Each test sets its own implementation (which replaces the previous), and call
 // counts are checked with deltas.
-vi.mock("@/lib/speech", () => ({
-  speak: vi.fn(),
-  stopSpeaking: vi.fn(),
-  primeSpeech: vi.fn(),
-}));
+// The speech module keeps its real sentence splitter; only the audio is faked.
+const spoken: string[] = [];
+const fakeSpeaker = { say: (sentence: string) => spoken.push(sentence), stop: vi.fn() };
+vi.mock("@/lib/speech", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/speech")>();
+  return {
+    ...actual,
+    startSpeaking: vi.fn(() => fakeSpeaker),
+    stopSpeaking: vi.fn(),
+    primeSpeech: vi.fn(),
+  };
+});
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -283,5 +290,48 @@ describe("useConversation", () => {
       await result.current.handleAppAction("voice", "user");
     });
     expect(result.current.messages.at(-1)?.content).toBe("Só o dono deste F.E.A.R. controla o microfone.");
+  });
+
+  it("speaks each sentence as soon as it has streamed in", async () => {
+    spoken.length = 0;
+    let heardDuringStream: string[] = [];
+    stream.mockImplementation(async (_req, onChunk) => {
+      onChunk("Primeira frase. Segun");
+      heardDuringStream = [...spoken];
+      onChunk("da frase");
+    });
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      result.current.toggleVoice();
+    });
+    await act(async () => {
+      await result.current.send("oi", "user");
+    });
+    expect(heardDuringStream).toEqual(["Primeira frase."]);
+    expect(spoken).toEqual(["Primeira frase.", "Segunda frase"]);
+  });
+
+  it("answers a spoken question out loud even with the voice toggle off", async () => {
+    spoken.length = 0;
+    stream.mockImplementation(async (_req, onChunk) => {
+      onChunk("Estou aqui.");
+    });
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      await result.current.send("oi", "user", { speak: true });
+    });
+    expect(spoken).toEqual(["Estou aqui."]);
+  });
+
+  it("stays silent with the voice off", async () => {
+    spoken.length = 0;
+    stream.mockImplementation(async (_req, onChunk) => {
+      onChunk("Texto sem voz.");
+    });
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      await result.current.send("oi", "user");
+    });
+    expect(spoken).toEqual([]);
   });
 });

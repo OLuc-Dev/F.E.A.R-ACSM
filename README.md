@@ -25,6 +25,16 @@ sem login.
 Cada instalação é um F.E.A.R. particular: memória, chave e configurações ficam
 em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
 
+- **Fale com ele**: clique no microfone ao lado do campo de texto e fale — ele
+  escuta até você parar. Ou segure o botão (ou **Ctrl+Espaço**) enquanto fala e
+  solte para enviar; com os gestos ligados, apontar o indicador para cima por
+  0,6 s também abre o microfone. A fala vira texto no próprio PC (Whisper): o
+  áudio nunca sai dele. A resposta vem em voz alta, frase a frase, enquanto é
+  escrita — na voz do F.E.A.R. (grave e levemente metálica) ou numa voz natural,
+  à escolha em **Configurações → Voz**. Abrir o microfone enquanto ele fala faz
+  ele se calar e ouvir você.
+  O Windows precisa liberar o microfone em *Configurações → Privacidade →
+  Microfone* para aplicativos da área de trabalho.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
   pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
 - **Música sem configuração**: comandos como "pausa a música", as palmas e os
@@ -34,15 +44,19 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
 - **Atualizações**: ao abrir, o app consulta a página de Releases do GitHub e
   mostra um aviso com o link quando há versão nova.
 - Opções avançadas continuam valendo num `.env` nessa pasta (veja
-  `.env.example`). A captura de voz pelo Whisper não vem no instalador (são
-  gigabytes); ela só funciona rodando do código com `pip install -e ".[audio]"`.
+  `.env.example`).
+- O instalador é grande porque já traz a voz (reconhecimento e fala), que
+  funciona sem internet. A voz usa o Piper, que é GPL-3.0; a lista de
+  componentes e licenças vai junto, em `_internal\THIRD_PARTY_NOTICES.md` na
+  pasta do app.
 
 **Publicar uma versão:** crie e envie uma tag (`git tag v0.2.0 && git push origin
 v0.2.0`). O workflow *Windows app* gera o instalador, testa o app empacotado e
 publica a Release. Para só testar o instalador, rode o workflow manualmente
 na aba Actions: o `.exe` sai como artefato.
 
-**Rodar o app a partir do código:** `pip install -e ".[desktop]"`,
+**Rodar o app a partir do código:** `pip install -e ".[desktop,voice]"`,
+`python packaging/fetch_voice_models.py` (baixa os modelos de voz, ~520 MB),
 `NEXT_PUBLIC_FEAR_DESKTOP=1 npm run build` e `python -m fear.desktop`.
 
 ## Visão geral
@@ -95,14 +109,22 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   wearable: pela API do Spotify quando configurada, ou pelas teclas de mídia do
   Windows no app, que controlam qualquer player.
 - **Percepção de palmas** (`ClapDetector`) e **toques de wearable** (`/wearable/tap`).
-- **Voz** opcional (Whisper, push-to-talk) e **TTS** natural (ElevenLabs) com
-  fallback offline (`pyttsx3`).
+- **Conversa por voz** na janela: o microfone do campo de texto (clique, segure,
+  Ctrl+Espaço ou o gesto de apontar) grava no navegador, o backend transcreve
+  localmente com faster-whisper (`/voice/transcribe`) e a resposta é falada
+  frase a frase pelo Piper (`/voice/speak`), na voz do F.E.A.R. ou natural — com
+  a voz do sistema como reserva. Sem os modelos, tudo continua por texto e pela
+  voz do navegador.
+- **Voz da máquina** (opcional, rodando do código): push-to-talk no microfone do
+  servidor (Whisper) e **TTS** natural (ElevenLabs) com fallback offline
+  (`pyttsx3`).
 - **Observador do Obsidian**: na primeira vez lê o vault inteiro; depois indexa o
   que você escreve, e ao abrir recupera o que mudou com o app fechado.
 - **Gestos com as mãos** (MediaPipe): ligue no ícone de mão do dock. O robô passa
   a olhar para a sua mão; acenar faz ele acenar de volta; palma parada por 1 s dá
   play/pause; deslizar a mão para a direita ou para a esquerda troca de faixa;
-  punho fechado por 0,7 s silencia o F.E.A.R. Cada comando exige um gesto
+  punho fechado por 0,7 s silencia o F.E.A.R.; apontar o indicador para cima por
+  0,6 s abre o microfone para você falar. Cada comando exige um gesto
   deliberado (pose segurada, deslize a partir da mão parada, pausa entre
   comandos), para que mexer as mãos conversando não pause a música. A câmera só
   fica ligada com a janela visível, e o reconhecimento roda no próprio
@@ -117,9 +139,14 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
 
 - Python **3.11**
 - Node **18+** (para o frontend)
-- _Opcional_ — só para **entrada de voz por microfone** (`pip install -e ".[audio]"`):
-  `portaudio` no sistema. No Debian/Ubuntu: `sudo apt-get install portaudio19-dev`.
-  Sem isso, tudo funciona — só a captura de voz fica desligada.
+- _Opcional_ — para **falar com o F.E.A.R. pela janela** (`pip install -e ".[voice]"`):
+  os modelos de voz, baixados com `python packaging/fetch_voice_models.py` e
+  apontados por `FEAR_STT_MODEL` e `FEAR_PIPER_VOICE` (veja `.env.example`). O app
+  do Windows já vem com eles.
+- _Opcional_ — só para a **voz da máquina** (microfone do servidor,
+  `pip install -e ".[audio]"`): `portaudio` no sistema. No Debian/Ubuntu:
+  `sudo apt-get install portaudio19-dev`. Sem isso, tudo funciona — só essa
+  captura fica desligada.
 
 ## Instalação
 
@@ -182,7 +209,9 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | GET    | `/config`             | Config de runtime (modelo + modo de persona). |
 | POST   | `/config`             | `{model?, persona_mode?}` → ajusta na sessão (sem segredos). |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |
-| POST   | `/voice/{start,stop,capture-once}` | Captura push-to-talk (se habilitada). |
+| POST   | `/voice/transcribe`   | Áudio gravado (webm/opus, wav…) → `{text}`, transcrito no próprio PC. |
+| POST   | `/voice/speak`        | `{text, style}` → WAV falado pelo Piper (`fear` ou `natural`). |
+| POST   | `/voice/{start,stop,capture-once}` | Captura push-to-talk no microfone do servidor (se habilitada). |
 | WS     | `/ws`                 | Canal de comandos por texto.                |
 
 ## Desenvolvimento

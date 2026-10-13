@@ -57,6 +57,8 @@ STATIC_TYPES = {
     ".svg": "image/svg+xml",
 }
 
+PIPER_VOICE_FILE = "pt_BR-cadu-medium.onnx"
+
 LOADING_HTML = """<!doctype html><html><body style="margin:0;height:100vh;display:grid;
 place-items:center;background:#050506;color:#9aa0a6;font:14px system-ui,sans-serif">
 <div>Despertando o F.E.A.R.…</div></body></html>"""
@@ -183,11 +185,11 @@ def add_show_route(application: FastAPI, key: str, show: Callable[[], None]) -> 
     application.add_api_route("/desktop/show", desktop_show, methods=["POST"])
 
 
-def allow_camera_for_own_page(window, origin: str) -> None:
-    """Let the app's own page use the webcam for hand gestures, without a prompt.
+def allow_media_for_own_page(window, origin: str) -> None:
+    """Let the app's own page use the webcam (gestures) and microphone (voice), unprompted.
 
     WebView2 would otherwise ask on its own; only pages served by this app's
-    backend (``origin``) are approved, and only the camera — any other page or
+    backend (``origin``) are approved, and only those two — any other page or
     permission still goes through WebView2's default prompt.
     """
     if sys.platform != "win32":
@@ -199,13 +201,13 @@ def allow_camera_for_own_page(window, origin: str) -> None:
         )
         from System import Func, Type  # type: ignore[import-not-found]
     except Exception:
-        logger.warning("WebView2 is not reachable; the camera will ask for permission")
+        logger.warning("WebView2 is not reachable; camera and microphone will ask first")
         return
 
+    allowed = (CoreWebView2PermissionKind.Camera, CoreWebView2PermissionKind.Microphone)
+
     def on_permission_requested(_sender, args) -> None:
-        if args.PermissionKind == CoreWebView2PermissionKind.Camera and str(args.Uri).startswith(
-            origin
-        ):
+        if args.PermissionKind in allowed and str(args.Uri).startswith(origin):
             args.State = CoreWebView2PermissionState.Allow
 
     def attach() -> None:
@@ -215,12 +217,12 @@ def allow_camera_for_own_page(window, origin: str) -> None:
                 on_permission_requested
             )
         except Exception:
-            logger.warning("Could not pre-approve the camera", exc_info=True)
+            logger.warning("Could not pre-approve camera and microphone", exc_info=True)
 
     try:
         window.native.Invoke(Func[Type](attach))
     except Exception:
-        logger.warning("Could not pre-approve the camera", exc_info=True)
+        logger.warning("Could not pre-approve camera and microphone", exc_info=True)
 
 
 # --- process setup ----------------------------------------------------------------
@@ -247,13 +249,59 @@ def prepare_environment(home: Path, resources: Path) -> None:
     os.chdir(home)
     # The person's own overrides (e.g. FEAR_ENABLE_CLAP_DETECTOR=1) live here.
     load_dotenv(home / ".env")
-    os.environ.setdefault("FEAR_DESKTOP", "1")
-    os.environ.setdefault("FEAR_ENV", "local")
-    os.environ.setdefault("FEAR_SECRET_KEY", load_or_create_secret(home / "secret.key"))
-    os.environ.setdefault("FEAR_PERSONA_FILE", str(resources / "prompts" / "fear_persona.md"))
+    _provide("FEAR_DESKTOP", "1")
+    _provide("FEAR_ENV", "local")
+    _provide("FEAR_SECRET_KEY", load_or_create_secret(home / "secret.key"))
+    # A persona of their own counts only if it's really there: .env.example's
+    # prompts/fear_persona.md means the repo's copy, which isn't in this folder.
+    persona = os.environ.get("FEAR_PERSONA_FILE", "").strip()
+    if not (persona and Path(persona).is_file()):
+        os.environ["FEAR_PERSONA_FILE"] = str(resources / "prompts" / "fear_persona.md")
     model_dir = resources / "onnx_models" / "all-MiniLM-L6-v2"
     if model_dir.exists():
-        os.environ.setdefault("FEAR_ONNX_MODEL_DIR", str(model_dir))
+        _provide("FEAR_ONNX_MODEL_DIR", str(model_dir))
+    voice = voice_dir(resources)
+    if voice is not None:
+        _provide("FEAR_STT_MODEL", str(voice / "whisper-small"))
+        _provide("FEAR_PIPER_VOICE", str(voice / "piper" / PIPER_VOICE_FILE))
+        # Loaded in the background at start, so the first spoken command is quick.
+        _provide("FEAR_PRELOAD_VOICE", "1")
+
+
+def _provide(name: str, value: str) -> None:
+    """What the app ships, unless the person's .env sets it to something.
+
+    Blank counts as unset: a .env copied from .env.example is full of empty
+    placeholders (FEAR_SECRET_KEY=, …) that must not switch off what the app
+    brings — an empty secret, for one, would lose the saved key on every start.
+    """
+    if not os.environ.get(name, "").strip():
+        os.environ[name] = value
+
+
+def webview2_flags(existing: str) -> str:
+    """The browser flags for the app's WebView2 window, keeping any already set.
+
+    F.E.A.R. answers out loud even when you only spoke or gestured (no click
+    yet), which WebView2's autoplay policy would otherwise silence. The
+    environment variable is the documented way to pass flags and applies to
+    this app only, but it replaces the ones pywebview passes, so its one — no
+    rubber-band scrolling — is carried over.
+    """
+    flags = existing.split()
+    if not any(flag.startswith("--autoplay-policy") for flag in flags):
+        flags.append("--autoplay-policy=no-user-gesture-required")
+    if not any(flag.startswith("--disable-features") for flag in flags):
+        flags.append("--disable-features=ElasticOverscroll")
+    return " ".join(flags)
+
+
+def voice_dir(resources: Path) -> Path | None:
+    """The speech models: bundled as voice/ in the app, or fetched for a source run."""
+    for candidate in (resources / "voice", resources / "packaging" / "build" / "voice"):
+        if (candidate / "whisper-small").is_dir():
+            return candidate
+    return None
 
 
 def _start_backend(port: int):
@@ -278,6 +326,23 @@ def _tray_image(resources: Path):
     from PIL import Image
 
     return Image.open(resources / "packaging" / "fear.ico")
+
+
+def _voice_round_trip() -> bool:
+    """Piper says a sentence, Whisper must hear it: both engines, end to end."""
+    from fear.audio.speech import SpeechToText, TextToSpeech
+
+    voice_out = TextToSpeech(os.environ.get("FEAR_PIPER_VOICE", ""))
+    ears = SpeechToText(os.environ.get("FEAR_STT_MODEL", ""))
+    if not (voice_out.available and ears.available):
+        logger.error("smoke test: voice models are bundled but speech can't load them")
+        return False
+    heard = ears.transcribe(voice_out.synthesize("Isto é um teste de voz.", "fear"))
+    if "teste" not in heard.lower():
+        logger.error("smoke test: the voice round trip heard %r", heard)
+        return False
+    logger.info("smoke test: voice round trip heard %r", heard)
+    return True
 
 
 def smoke_test(home: Path, resources: Path) -> int:
@@ -320,6 +385,8 @@ def smoke_test(home: Path, resources: Path) -> int:
                 return 1
         if len(LocalEmbedding().embed("teste")) != 384:
             logger.error("smoke test: the embedding model is broken")
+            return 1
+        if voice_dir(resources) is not None and not _voice_round_trip():
             return 1
         logger.info("smoke test passed")
         return 0
@@ -402,7 +469,7 @@ def main(argv: list[str] | None = None) -> None:
         # WebView2 exists once the first page has loaded; hook it up only once.
         if not camera_ready.is_set():
             camera_ready.set()
-            allow_camera_for_own_page(window, f"http://127.0.0.1:{port}/")
+            allow_media_for_own_page(window, f"http://127.0.0.1:{port}/")
 
     window.events.loaded += on_loaded
 
@@ -447,6 +514,10 @@ def main(argv: list[str] | None = None) -> None:
         instance_file.write_text(json.dumps({"port": port, "key": key}), encoding="utf-8")
         window.load_url(f"http://127.0.0.1:{port}/#token={token}")
 
+    if sys.platform == "win32":
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = webview2_flags(
+            os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
+        )
     tray.run_detached()
     try:
         webview.start(boot, private_mode=False, storage_path=str(home / "webview"))

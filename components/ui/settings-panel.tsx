@@ -12,6 +12,7 @@ import {
   Plug,
   Plus,
   Sparkles,
+  Volume2,
   Trash2,
   X,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
   type StatusResponse,
 } from "@/lib/api";
 import { IS_DESKTOP } from "@/lib/desktop";
+import { loadVoiceStyle, saveVoiceStyle, startSpeaking, VOICE_STYLES, type VoiceStyle } from "@/lib/speech";
 import { fade, springSoft } from "@/lib/motion";
 import { AppSettingsTab } from "@/components/ui/app-settings-tab";
 import { MemoryTab } from "@/components/ui/memory-tab";
@@ -113,6 +115,10 @@ export function SettingsPanel({
   const [tab, setTab] = useState<Tab>("conhecimento");
   const [data, setData] = useState<KnowledgeListResponse | null>(null);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
+  const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("fear");
+  useEffect(() => {
+    if (open) setVoiceStyle(loadVoiceStyle());
+  }, [open]);
   const [modelInput, setModelInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -402,6 +408,59 @@ export function SettingsPanel({
                             );
                           })}
                         </div>
+                      </section>
+
+                      {/* Voice */}
+                      <section className="space-y-2">
+                        <SectionLabel icon={<Volume2 className="size-3.5" />}>Voz</SectionLabel>
+                        <div className="grid gap-1.5">
+                          {VOICE_STYLES.filter(
+                            (option) => option.value === "system" || status?.voice_output,
+                          ).map((option) => {
+                            const active = voiceStyle === option.value;
+                            return (
+                              <div
+                                key={option.value}
+                                className={`flex items-center gap-2 rounded-xl border p-1 ${
+                                  active
+                                    ? "border-brand/40 bg-brand/[0.08]"
+                                    : "border-overlay/10 bg-overlay/[0.025]"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    saveVoiceStyle(option.value);
+                                    setVoiceStyle(option.value);
+                                  }}
+                                  aria-pressed={active}
+                                  className="tap flex-1 rounded-lg px-2 py-1.5 text-left"
+                                >
+                                  <span
+                                    className={`text-sm font-medium ${active ? "text-brand" : "text-foreground/90"}`}
+                                  >
+                                    {option.label}
+                                  </span>
+                                  <span className="ml-2 text-xs text-muted-foreground">{option.hint}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    startSpeaking(option.value).say("Eu sou o F.E.A.R. É assim que eu falo.")
+                                  }
+                                  className="tap rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
+                                >
+                                  Ouvir
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[11px] leading-4 text-muted-foreground/60">
+                          {status?.voice_output
+                            ? "A voz do F.E.A.R. é gerada neste computador. Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."
+                            : "Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."}
+                        </p>
                       </section>
 
                       {/* Model */}

@@ -176,6 +176,79 @@ def test_prepare_environment_points_the_backend_at_the_install(monkeypatch, tmp_
         os.environ.update(saved)
 
 
+def test_a_copied_env_example_keeps_what_the_app_ships(monkeypatch, tmp_path: Path) -> None:
+    # The README points to .env.example for advanced options. Copied whole into
+    # the app's folder, its blanks (FEAR_SECRET_KEY=) and repo-relative paths
+    # must not cost anyone their saved key, the persona or the voice.
+    for name in (
+        "FEAR_DESKTOP",
+        "FEAR_ENV",
+        "FEAR_SECRET_KEY",
+        "FEAR_PERSONA_FILE",
+        "FEAR_ONNX_MODEL_DIR",
+        "FEAR_STT_MODEL",
+        "FEAR_PIPER_VOICE",
+        "FEAR_PRELOAD_VOICE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    resources = tmp_path / "bundle"
+    (resources / "prompts").mkdir(parents=True)
+    (resources / "prompts" / "fear_persona.md").write_text("F.E.A.R.", encoding="utf-8")
+    (resources / "voice" / "whisper-small").mkdir(parents=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    example = Path(__file__).resolve().parents[1] / ".env.example"
+    (home / ".env").write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    cwd = os.getcwd()
+    saved = dict(os.environ)
+    try:
+        desktop.prepare_environment(home, resources)
+        assert os.environ["FEAR_SECRET_KEY"] == (home / "secret.key").read_text(encoding="utf-8")
+        assert os.environ["FEAR_PERSONA_FILE"] == str(resources / "prompts" / "fear_persona.md")
+        assert os.environ["FEAR_STT_MODEL"] == str(resources / "voice" / "whisper-small")
+        assert os.environ["FEAR_PIPER_VOICE"] == str(
+            resources / "voice" / "piper" / desktop.PIPER_VOICE_FILE
+        )
+        assert os.environ["FEAR_PRELOAD_VOICE"] == "1"
+        assert Settings().desktop is True
+    finally:
+        os.chdir(cwd)
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def test_a_persona_of_their_own_is_kept(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "minha_persona.md").write_text("outra", encoding="utf-8")
+    (home / ".env").write_text("FEAR_PERSONA_FILE=minha_persona.md\n", encoding="utf-8")
+    monkeypatch.delenv("FEAR_PERSONA_FILE", raising=False)
+    cwd = os.getcwd()
+    saved = dict(os.environ)
+    try:
+        desktop.prepare_environment(home, tmp_path / "bundle")
+        assert os.environ["FEAR_PERSONA_FILE"] == "minha_persona.md"  # in the app's folder
+    finally:
+        os.chdir(cwd)
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def test_webview2_lets_speech_play_and_keeps_flags_already_set() -> None:
+    assert desktop.webview2_flags("").split() == [
+        "--autoplay-policy=no-user-gesture-required",
+        "--disable-features=ElasticOverscroll",  # pywebview's own, which the variable replaces
+    ]
+    # A test run's switches stay, and a policy or feature list set on purpose wins.
+    assert desktop.webview2_flags(
+        "--remote-debugging-port=9223 --autoplay-policy=document-user-activation-required"
+    ).split() == [
+        "--remote-debugging-port=9223",
+        "--autoplay-policy=document-user-activation-required",
+        "--disable-features=ElasticOverscroll",
+    ]
+
+
 def test_autostart_command_starts_minimized() -> None:
     from fear.desktop_prefs import autostart_command
 

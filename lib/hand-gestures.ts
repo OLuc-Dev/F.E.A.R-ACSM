@@ -13,7 +13,7 @@ export type HandPose =
   | "Victory"
   | "ILoveYou";
 
-export type GestureCommand = "wave" | "palm_hold" | "fist_hold" | "swipe_left" | "swipe_right";
+export type GestureCommand = "wave" | "palm_hold" | "fist_hold" | "point_hold" | "swipe_left" | "swipe_right";
 
 /** One frame's hand, in the person's own (mirrored) view: x 0 = their left. */
 export interface HandSample {
@@ -49,6 +49,7 @@ export const GESTURE_TUNING = {
   holds: [
     { pose: "Open_Palm", ms: 1000, command: "palm_hold" },
     { pose: "Closed_Fist", ms: 700, command: "fist_hold" },
+    { pose: "Pointing_Up", ms: 600, command: "point_hold" },
   ] as const,
   swipe: {
     /** A swipe starts from a hand at rest for this long: entering or reaching never counts. */

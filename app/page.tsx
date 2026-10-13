@@ -35,21 +35,23 @@ import {
 
 import { AuthPanel } from "@/components/ui/auth-panel";
 import { type GestureFeedback, GesturePanel } from "@/components/ui/gesture-panel";
+import { MicButton } from "@/components/ui/mic-button";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { getStatus, sendCommand, type StatusResponse } from "@/lib/api";
+import { fetchVoice, getStatus, sendCommand, type StatusResponse } from "@/lib/api";
 import { humanizeError } from "@/lib/chat-helpers";
 import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { APP_VERSION, IS_DESKTOP } from "@/lib/desktop";
-import { stopSpeaking } from "@/lib/speech";
+import { setServerVoice, stopSpeaking } from "@/lib/speech";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 import { type UpdateInfo, checkForUpdate } from "@/lib/updates";
 import { loadGesturePreference, saveGesturePreference } from "@/lib/use-hand-gestures";
+import { useVoiceInput } from "@/lib/use-voice-input";
 
 const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((module) => module.FearRobot), {
   ssr: false,
@@ -256,12 +258,60 @@ export default function HomePage() {
     send,
     retry,
     stop,
+    setListening,
     handleAppAction,
   } = useConversation();
 
   // F.E.A.R. addresses the person by their account (email local part) — no more
   // free-text "speaker". Only read in the deck, where a user always exists.
   const speaker = user ? accountName(user.email) : "user";
+
+  // Talking to F.E.A.R.: what you say goes in as a message, and the answer comes
+  // back out loud. Problems show briefly under the composer, never in the thread.
+  const [voiceNotice, setVoiceNotice] = useState<{ text: string; at: number } | null>(null);
+  const voice = useVoiceInput({
+    onTranscript: (spoken) => void send(spoken, speaker, { speak: true }),
+    onNotice: (message) => setVoiceNotice({ text: message, at: Date.now() }),
+  });
+  const canTalk = Boolean(systemStatus?.voice_input);
+
+  useEffect(() => setListening(voice.state === "listening"), [voice.state, setListening]);
+
+  useEffect(() => {
+    if (!voiceNotice) return;
+    const timer = setTimeout(() => setVoiceNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [voiceNotice]);
+
+  // F.E.A.R.'s own voice (Piper) when the backend has it; the browser's otherwise.
+  useEffect(() => {
+    setServerVoice(systemStatus?.voice_output ? fetchVoice : null);
+  }, [systemStatus?.voice_output]);
+
+  // Hold Ctrl+Space to talk; let go to send.
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
+  useEffect(() => {
+    if (!canTalk) return;
+    let holding = false;
+    function down(event: KeyboardEvent) {
+      if (!event.ctrlKey || event.code !== "Space" || event.repeat) return;
+      event.preventDefault();
+      holding = true;
+      void voiceRef.current.start("hold");
+    }
+    function up(event: KeyboardEvent) {
+      if (!holding || (event.code !== "Space" && event.key !== "Control")) return;
+      holding = false;
+      void voiceRef.current.stop();
+    }
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, [canTalk]);
 
   async function runGesture(command: GestureCommand) {
     const show = (title: string, detail?: string) => setGestureFeedback({ title, detail, at: Date.now() });
@@ -272,8 +322,17 @@ export default function HomePage() {
     }
     if (command === "fist_hold") {
       stop();
-      stopSpeaking();
+      voice.cancel();
       show("Silêncio");
+      return;
+    }
+    if (command === "point_hold") {
+      if (!canTalk) {
+        show("Falar", "o reconhecimento de voz não está disponível");
+        return;
+      }
+      void voice.start("auto");
+      show("Ouvindo", "pode falar");
       return;
     }
     const music = MUSIC_GESTURES[command];
@@ -681,6 +740,7 @@ export default function HomePage() {
                   className="max-h-36 min-h-[2.75rem] flex-1 resize-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/50"
                   placeholder="Comece com uma pergunta."
                 />
+                {canTalk && <MicButton voice={voice} disabled={isBusy} />}
                 {isBusy ? (
                   <button
                     type="button"
@@ -703,8 +763,20 @@ export default function HomePage() {
                 )}
               </div>
               <div className="mt-2 flex items-center justify-between px-1.5">
-                <span className="text-[10px] text-muted-foreground/45">
-                  Enter envia · Shift+Enter quebra linha
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className={`text-[10px] ${voiceNotice ? "text-energy" : "text-muted-foreground/45"}`}
+                >
+                  {voiceNotice
+                    ? voiceNotice.text
+                    : voice.state === "listening"
+                      ? "Ouvindo… fale e pare quando terminar"
+                      : voice.state === "transcribing"
+                        ? "Entendendo o que você disse…"
+                        : canTalk
+                          ? "Enter envia · Ctrl+Espaço (segure) fala"
+                          : "Enter envia · Shift+Enter quebra linha"}
                 </span>
                 <kbd className="rounded border border-overlay/10 bg-overlay/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/50">
                   {modKey === "⌘" ? "⌘K" : "Ctrl+K"}
@@ -750,6 +822,7 @@ export default function HomePage() {
                 onTurnOff={() => setGestures(false)}
                 feedback={gestureFeedback}
                 musicAvailable={Boolean(systemStatus?.music)}
+                voiceAvailable={canTalk}
                 onHand={(hand) => {
                   gazeRef.current = hand;
                 }}
@@ -810,9 +883,13 @@ export default function HomePage() {
         onAppClick={(appId) => {
           if (appId === "memory") openSettings("memoria");
           else if (appId === "gestures") setGestures(!gesturesOn);
-          else void handleAppAction(appId, speaker);
+          else if (appId === "voice" && canTalk) {
+            if (voice.state === "idle") void voice.start("auto");
+            else void voice.stop();
+          } else void handleAppAction(appId, speaker);
         }}
         openApps={[
+          ...(voice.state === "listening" ? ["voice"] : []),
           ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
           ...(gesturesOn ? ["gestures"] : []),
         ]}

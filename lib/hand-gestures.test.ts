@@ -107,6 +107,11 @@ describe("held poses", () => {
     expect(stream().hold("Closed_Fist", 0.5, 0.6, 500).commands()).toEqual([]);
   });
 
+  it("pointing up for 0.6s means 'listen to me'", () => {
+    expect(stream().hold("Pointing_Up", 0.5, 0.4, 800).commands()).toEqual(["point_hold"]);
+    expect(stream().hold("Pointing_Up", 0.5, 0.4, 400).commands()).toEqual([]);
+  });
+
   it("needs the hold to be continuous: a hand that leaves the frame starts over", () => {
     const commands = stream()
       .hold("Open_Palm", 0.5, 0.5, 600)

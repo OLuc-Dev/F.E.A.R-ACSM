@@ -6,17 +6,18 @@ import importlib.util
 import logging
 import os
 import secrets
+import threading
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from fear.auth import EmailTaken, Security, TokenError, User, UserStore
 from fear.brain.async_conversation import (
@@ -94,6 +95,9 @@ class StatusResponse(BaseModel):
     spotify: bool
     # Some way to control music: Spotify's API, or the system media keys.
     music: bool
+    # Talking to F.E.A.R. in the app: speech recognition, and its own voice.
+    voice_input: bool
+    voice_output: bool
     obsidian: bool
     calendar: bool
 
@@ -133,6 +137,13 @@ class ConfigUpdate(BaseModel):
 
     model: str | None = None
     persona_mode: str | None = None
+
+
+class SpeakRequest(BaseModel):
+    """One sentence for F.E.A.R. to say (the UI sends a reply sentence by sentence)."""
+
+    text: str = Field(max_length=2000)
+    style: Literal["fear", "natural"] = "fear"
 
 
 class DesktopSettingsResponse(BaseModel):
@@ -514,6 +525,13 @@ async def process_voice_event(application: FastAPI, event: TranscriptEvent) -> N
         await speak_and_cleanup(application.state.tts, result.reply)
 
 
+def _preload(engine: Any) -> None:
+    try:
+        engine.preload()
+    except Exception:
+        logger.exception("Could not preload %s", type(engine).__name__)
+
+
 def start_obsidian_watcher(application: FastAPI, vault_path: str) -> None:
     """Watch `vault_path` (replacing any earlier watch); its notes become the owner's."""
     from fear.memory.obsidian_watcher import ObsidianWatcher
@@ -656,6 +674,18 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     )
 
     application.state.loop = asyncio.get_running_loop()
+
+    # Local speech (optional): unavailable without its packages or models.
+    from fear.audio.speech import SpeechToText, TextToSpeech
+
+    stt = SpeechToText(settings.stt_model, language=settings.voice_language)
+    voice_out = TextToSpeech(settings.piper_voice)
+    application.state.stt = stt if stt.available else None
+    application.state.voice_out = voice_out if voice_out.available else None
+    if settings.preload_voice:
+        for engine in (application.state.stt, application.state.voice_out):
+            if engine is not None:
+                threading.Thread(target=_preload, args=(engine,), daemon=True).start()
     application.state.voice_listener = None
     application.state.obsidian_watcher = None
     application.state.clap_detector = None
@@ -671,7 +701,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         # Imported here so the heavy audio stack (whisper, pyaudio) is only
         # needed when voice input is explicitly enabled — install it with
         # `pip install -e ".[audio]"`. Missing it turns voice off, not the app
-        # (the Windows app ships without Whisper).
+        # (the Windows app ships without it: there you talk through its window).
         try:
             from fear.audio.voice_listener import VoiceListener as voice_listener_class
         except ImportError:
@@ -851,6 +881,8 @@ async def status(
         voice=owner and getattr(state, "voice_listener", None) is not None,
         spotify=owner and bool(spotify is not None and spotify.is_configured),
         music=owner and bool(music is not None and music.is_configured),
+        voice_input=getattr(state, "stt", None) is not None,
+        voice_output=getattr(state, "voice_out", None) is not None,
         obsidian=owner and getattr(state, "obsidian_watcher", None) is not None,
         calendar=owner and bool(calendar is not None and calendar.is_configured),
     )
@@ -1011,7 +1043,8 @@ async def wearable_tap(
         if listener is None:
             reply = "A captura de voz está desligada. Ative FEAR_ENABLE_VOICE_LISTENER=1."
         else:
-            _spawn(request.app, asyncio.to_thread(listener.capture_once))
+            # Recording blocks for seconds and nothing waits on it: its own thread.
+            threading.Thread(target=listener.capture_once, daemon=True).start()
             reply = "Estou ouvindo."
         return CommandResponse(reply=reply, speaker=payload.speaker, audio_file=None)
 
@@ -1069,6 +1102,46 @@ async def config_set(
         )
     refreshed = await asyncio.to_thread(store.get_by_id, user.id)
     return _user_config(refreshed or user)
+
+
+# Ten minutes of opus is ~5 MB; nothing spoken to F.E.A.R. needs more than that.
+_MAX_VOICE_UPLOAD = 10 * 1024 * 1024
+
+
+@app.post("/voice/transcribe")
+async def voice_transcribe(
+    request: Request, user: User = Depends(get_current_user)
+) -> dict[str, str]:
+    """Turn a recording from the UI's microphone into text (locally, with Whisper)."""
+    stt = getattr(request.app.state, "stt", None)
+    if stt is None:
+        raise HTTPException(status_code=503, detail="O reconhecimento de voz não está instalado.")
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(status_code=422, detail="Nenhum áudio recebido.")
+    if len(audio) > _MAX_VOICE_UPLOAD:
+        raise HTTPException(status_code=413, detail="Áudio longo demais.")
+    try:
+        text = await asyncio.to_thread(stt.transcribe, audio)
+    except Exception as exc:
+        logger.exception("Transcription failed")
+        raise HTTPException(status_code=422, detail="Não consegui entender esse áudio.") from exc
+    return {"text": text}
+
+
+@app.post("/voice/speak")
+async def voice_speak(
+    payload: SpeakRequest, request: Request, user: User = Depends(get_current_user)
+) -> Response:
+    """One sentence in F.E.A.R.'s voice, as WAV (locally, with Piper)."""
+    voice_out = getattr(request.app.state, "voice_out", None)
+    if voice_out is None:
+        raise HTTPException(status_code=503, detail="A voz do F.E.A.R. não está instalada.")
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Nada para falar.")
+    wav = await asyncio.to_thread(voice_out.synthesize, text, payload.style)
+    return Response(content=wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
 @app.post("/voice/start")

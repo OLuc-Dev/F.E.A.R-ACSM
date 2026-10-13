@@ -184,6 +184,8 @@ def test_status(client: TestClient) -> None:
         "voice",
         "spotify",
         "music",
+        "voice_input",
+        "voice_output",
         "obsidian",
         "calendar",
     }
@@ -742,3 +744,75 @@ def test_status_reports_music_control_to_the_owner(client: TestClient) -> None:
         assert client.get("/status", headers=guest).json()["music"] is False
     finally:
         delattr(app.state, "music")
+
+
+# --- talking to F.E.A.R. through the app (local speech) ---
+
+
+class FakeEars:
+    def __init__(self) -> None:
+        self.heard: list[bytes] = []
+
+    def transcribe(self, audio: bytes) -> str:
+        self.heard.append(audio)
+        return "qual é a próxima reunião?"
+
+
+class FakeVoice:
+    def synthesize(self, text: str, style: str = "fear") -> bytes:
+        return b"RIFF" + f"{style}:{text}".encode()
+
+
+def test_voice_routes_need_a_signed_in_user(client: TestClient) -> None:
+    assert client.post("/voice/transcribe", content=b"audio").status_code == 401
+    assert client.post("/voice/speak", json={"text": "oi"}).status_code == 401
+
+
+def test_voice_routes_say_when_speech_is_not_installed(client: TestClient) -> None:
+    _, headers = _register(client)
+    assert client.post("/voice/transcribe", content=b"audio", headers=headers).status_code == 503
+    assert client.post("/voice/speak", json={"text": "oi"}, headers=headers).status_code == 503
+
+
+def test_transcribe_turns_a_recording_into_text(client: TestClient) -> None:
+    ears = FakeEars()
+    app.state.stt = ears
+    try:
+        _, headers = _register(client)
+        response = client.post(
+            "/voice/transcribe",
+            content=b"opus-bytes",
+            headers={**headers, "content-type": "audio/webm"},
+        )
+        assert response.json() == {"text": "qual é a próxima reunião?"}
+        assert ears.heard == [b"opus-bytes"]
+        assert client.post("/voice/transcribe", content=b"", headers=headers).status_code == 422
+    finally:
+        delattr(app.state, "stt")
+
+
+def test_speak_returns_a_sentence_as_wav(client: TestClient) -> None:
+    app.state.voice_out = FakeVoice()
+    try:
+        _, headers = _register(client)
+        response = client.post(
+            "/voice/speak", json={"text": " Olá. ", "style": "natural"}, headers=headers
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.content == "RIFFnatural:Olá.".encode()
+        assert client.post("/voice/speak", json={"text": "  "}, headers=headers).status_code == 422
+        bad_style = client.post("/voice/speak", json={"text": "oi", "style": "x"}, headers=headers)
+        assert bad_style.status_code == 422
+    finally:
+        delattr(app.state, "voice_out")
+
+
+def test_status_reports_voice_in_and_out(client: TestClient) -> None:
+    app.state.stt, app.state.voice_out = FakeEars(), FakeVoice()
+    try:
+        body = client.get("/status").json()
+        assert body["voice_input"] is True and body["voice_output"] is True
+    finally:
+        delattr(app.state, "stt")
+        delattr(app.state, "voice_out")

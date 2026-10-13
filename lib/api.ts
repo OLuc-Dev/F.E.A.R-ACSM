@@ -57,6 +57,9 @@ export interface StatusResponse {
   spotify: boolean;
   /** Some way to control music here: Spotify's API or the system media keys. */
   music: boolean;
+  /** Talking to F.E.A.R.: local speech recognition, and its own (Piper) voice. */
+  voice_input: boolean;
+  voice_output: boolean;
   obsidian: boolean;
   calendar: boolean;
 }
@@ -241,6 +244,35 @@ export async function resetConversation(): Promise<void> {
 }
 
 // "queued" once the clip is recorded; "disabled" when the backend has no mic.
+/** What was said in a recording from the microphone (transcribed on this machine). */
+export async function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<string> {
+  const response = await apiFetch("/voice/transcribe", {
+    method: "POST",
+    headers: { "content-type": audio.type || "application/octet-stream" },
+    body: audio,
+    signal,
+  });
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
+  const data = (await response.json()) as { text?: string };
+  return (data.text ?? "").trim();
+}
+
+/** One sentence in F.E.A.R.'s own voice, as audio (synthesized on this machine). */
+export async function fetchVoice(
+  text: string,
+  style: "fear" | "natural" | "system",
+  signal: AbortSignal,
+): Promise<Blob> {
+  const response = await apiFetch("/voice/speak", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text, style: style === "natural" ? "natural" : "fear" }),
+    signal,
+  });
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
+  return response.blob();
+}
+
 export async function captureVoiceOnce(): Promise<"queued" | "disabled"> {
   const response = await postJson("/voice/capture-once", {});
   const data = (await response.json()) as { status?: string };

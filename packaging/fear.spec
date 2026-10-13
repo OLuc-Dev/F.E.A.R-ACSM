@@ -17,12 +17,31 @@ datas = [
 model = PACKAGING / "build" / "onnx_models"
 if model.exists():
     datas.append((str(model), "onnx_models"))
+# Speech: Whisper (recognition) + Piper (F.E.A.R.'s voice), from fetch_voice_models.py.
+voice = PACKAGING / "build" / "voice"
+if voice.exists():
+    datas.append((str(voice), "voice"))
+datas.append((str(PACKAGING / "THIRD_PARTY_NOTICES.md"), "."))
 
 binaries = []
 hiddenimports = collect_submodules("fear")
 # These load parts of themselves dynamically (drivers, providers, platform
 # backends), which static analysis alone misses.
-for package in ("chromadb", "onnxruntime", "tokenizers", "uvicorn", "pyttsx3", "webview", "pystray"):
+for package in (
+    "chromadb",
+    "onnxruntime",
+    "tokenizers",
+    "uvicorn",
+    "pyttsx3",
+    "webview",
+    "pystray",
+    # Speech: faster-whisper loads its VAD model from package data, CTranslate2
+    # and PyAV ship native libraries, and Piper carries espeak-ng's data.
+    "faster_whisper",
+    "ctranslate2",
+    "av",
+    "piper",
+):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas
     binaries += package_binaries

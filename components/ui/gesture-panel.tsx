@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Camera, CameraOff, Grab, Hand, Loader2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, CameraOff, Grab, Hand, Loader2, Pointer, X } from "lucide-react";
 
 import type { GestureCommand, HandPose, HandSample } from "@/lib/hand-gestures";
 import { type GestureStatus, useHandGestures } from "@/lib/use-hand-gestures";
@@ -31,7 +31,7 @@ const STATUS_LABEL: Record<GestureStatus, string> = {
   error: "câmera indisponível",
 };
 
-const LEGEND: { icon: ReactNode; gesture: string; action: string; music?: boolean }[] = [
+const LEGEND: { icon: ReactNode; gesture: string; action: string; music?: boolean; voice?: boolean }[] = [
   { icon: <Hand className="size-3.5" />, gesture: "Acenar", action: "o F.E.A.R. acena de volta" },
   { icon: <Hand className="size-3.5" />, gesture: "Palma parada (1 s)", action: "play/pause", music: true },
   {
@@ -47,6 +47,12 @@ const LEGEND: { icon: ReactNode; gesture: string; action: string; music?: boolea
     music: true,
   },
   { icon: <Grab className="size-3.5" />, gesture: "Punho fechado (0,7 s)", action: "silencia o F.E.A.R." },
+  {
+    icon: <Pointer className="size-3.5" />,
+    gesture: "Apontar para cima (0,6 s)",
+    action: "fala com o F.E.A.R.",
+    voice: true,
+  },
 ];
 
 const FEEDBACK_VISIBLE_MS = 4000;
@@ -56,12 +62,14 @@ export function GesturePanel({
   onTurnOff,
   feedback,
   musicAvailable,
+  voiceAvailable = false,
   onHand,
 }: {
   onCommand: (command: GestureCommand) => void;
   onTurnOff: () => void;
   feedback: GestureFeedback | null;
   musicAvailable: boolean;
+  voiceAvailable?: boolean;
   onHand?: (hand: HandSample | null) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -156,7 +164,7 @@ export function GesturePanel({
 
       <ul className="mt-2 space-y-1">
         {LEGEND.map((item) => {
-          const unavailable = item.music && !musicAvailable;
+          const unavailable = (item.music && !musicAvailable) || (item.voice && !voiceAvailable);
           return (
             <li
               key={item.gesture}

@@ -41,10 +41,26 @@ jobs:
       - name: Install the app and its desktop stack
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ".[desktop]" "pyaudio>=0.2.14,<0.3" "pyinstaller>=6.10,<7"
+          python -m pip install ".[desktop,voice]" "pyaudio>=0.2.14,<0.3" "pyinstaller>=6.10,<7"
 
       - name: Bundle the embedding model
         run: python packaging/fetch_model.py
+
+      - name: Bundle the speech models
+        # Whisper "small" (recognition) and Piper "cadu" (F.E.A.R.'s voice), pinned
+        # and checksum-verified; the smoke test below makes them talk to each other.
+        run: python packaging/fetch_voice_models.py
+
+      - name: Check the voice on Windows
+        # The speech tests with these models and the Windows builds of their
+        # engines: Piper and Whisper understand each other, and a recording made
+        # by the browser engine (what the app's window uploads) comes out right.
+        env:
+          FEAR_TEST_PIPER_VOICE: packaging/build/voice/piper/pt_BR-cadu-medium.onnx
+          FEAR_TEST_WHISPER_MODEL: packaging/build/voice/whisper-small
+        run: |
+          python -m pip install "pytest>=8.3,<9" "pytest-asyncio>=0.23,<1"
+          python -m pytest tests/test_speech.py -v
 
       - name: Build FEAR.exe
         run: pyinstaller --noconfirm packaging/fear.spec
@@ -57,6 +73,22 @@ jobs:
           $p = Start-Process dist\FEAR\FEAR.exe -ArgumentList "--smoke-test" -Wait -PassThru
           Get-Content "$env:LOCALAPPDATA\FEAR\fear.log" -ErrorAction SilentlyContinue | Select-Object -Last 40
           if ($p.ExitCode -ne 0) { throw "smoke test failed ($($p.ExitCode))" }
+
+      - name: Talk to the built app
+        # The real FEAR.exe and its WebView2 window, with a fake microphone that
+        # plays a recorded question: the app must let its page use the
+        # microphone, hear the question, and answer out loud without a click.
+        run: |
+          python -m pip install "playwright>=1.48,<2"
+          python packaging/webview2_voice_e2e.py dist\FEAR\FEAR.exe
+
+      - name: Keep what the window showed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-e2e
+          path: dist/voice-e2e.png
+          if-no-files-found: ignore
 
       - name: Build the installer
         shell: pwsh
