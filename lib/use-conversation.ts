@@ -147,12 +147,13 @@ export function useConversation() {
 
   const send = useCallback(
     // `speak` voices this reply even with the voice toggle off — for a question
-    // asked out loud, the answer comes back out loud.
-    async (text: string, speaker: string, options: { speak?: boolean } = {}) => {
+    // asked out loud, the answer comes back out loud. Resolves false when the
+    // message was refused (blank, or another reply still being written).
+    async (text: string, speaker: string, options: { speak?: boolean } = {}): Promise<boolean> => {
       const trimmed = text.trim();
       // Guard on a ref, not `isBusy`: state updates a render late, so two fast
       // Enters would both see false and double-send. A ref flips synchronously.
-      if (isBlankMessage(trimmed) || busyRef.current) return;
+      if (isBlankMessage(trimmed) || busyRef.current) return false;
       busyRef.current = true;
       stopRef.current = false;
 
@@ -206,7 +207,7 @@ export function useConversation() {
         if (!full.trim()) {
           setLastFear(EMPTY_REPLY_NOTICE);
           setStatus("online");
-          return;
+          return true;
         }
         setStatus("online");
         // A fresh exchange just landed in memory — flare the presence.
@@ -219,7 +220,7 @@ export function useConversation() {
         if (timedOut) {
           setLastFear(full ? `${full}\n\n${TIMEOUT_NOTICE}` : TIMEOUT_NOTICE);
           setStatus("error");
-          return;
+          return true;
         }
         // An abort that isn't a timeout is either a manual stop or an unmount.
         if (controller.signal.aborted) {
@@ -232,7 +233,7 @@ export function useConversation() {
             setStatus("online");
           }
           // else: unmount / navigation — leave the thread untouched, stay silent.
-          return;
+          return true;
         }
         // A real network/API failure → human error text (never a raw HTTP code).
         const notice = humanizeError(error);
@@ -243,6 +244,7 @@ export function useConversation() {
         busyRef.current = false;
         setIsBusy(false);
       }
+      return true;
     },
     [pushMessage, appendToLastFear, setLastFear, tagLastFearConsulted],
   );

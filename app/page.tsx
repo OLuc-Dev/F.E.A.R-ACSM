@@ -79,6 +79,9 @@ const MUSIC_GESTURES: Partial<Record<GestureCommand, { title: string; text: stri
   swipe_left: { title: "Faixa anterior", text: "previous Spotify song" },
 };
 
+// What you said arrived while something else still ran (say, a dock action).
+const STILL_ANSWERING = "Ainda estou terminando a resposta anterior. Fale de novo em seguida.";
+
 const STATUS_LABEL: Record<Status, string> = {
   online: "pronto",
   listening: "ouvindo",
@@ -270,8 +273,14 @@ export default function HomePage() {
   // back out loud. Problems show briefly under the composer, never in the thread.
   const [voiceNotice, setVoiceNotice] = useState<{ text: string; at: number } | null>(null);
   const voice = useVoiceInput({
-    onTranscript: (spoken) => void send(spoken, speaker, { speak: true }),
+    onTranscript: (spoken) => {
+      void send(spoken, speaker, { speak: true }).then((sent) => {
+        if (!sent) setVoiceNotice({ text: STILL_ANSWERING, at: Date.now() });
+      });
+    },
     onNotice: (message) => setVoiceNotice({ text: message, at: Date.now() }),
+    // Talking cuts F.E.A.R. off: a reply still being written stops, and it listens.
+    onStart: stop,
   });
   const canTalk = Boolean(systemStatus?.voice_input);
 
@@ -300,16 +309,27 @@ export default function HomePage() {
       holding = true;
       void voiceRef.current.start("hold");
     }
-    function up(event: KeyboardEvent) {
-      if (!holding || (event.code !== "Space" && event.key !== "Control")) return;
+    function release() {
+      if (!holding) return;
       holding = false;
       void voiceRef.current.stop();
     }
+    function up(event: KeyboardEvent) {
+      if (event.code === "Space" || event.key === "Control") release();
+    }
+    // Keys let go in another window never reach this one: leaving it counts as letting go.
+    function hidden() {
+      if (document.visibilityState === "hidden") release();
+    }
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
+    window.addEventListener("blur", release);
+    document.addEventListener("visibilitychange", hidden);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", release);
+      document.removeEventListener("visibilitychange", hidden);
     };
   }, [canTalk]);
 
@@ -740,7 +760,7 @@ export default function HomePage() {
                   className="max-h-36 min-h-[2.75rem] flex-1 resize-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/50"
                   placeholder="Comece com uma pergunta."
                 />
-                {canTalk && <MicButton voice={voice} disabled={isBusy} />}
+                {canTalk && <MicButton voice={voice} />}
                 {isBusy ? (
                   <button
                     type="button"

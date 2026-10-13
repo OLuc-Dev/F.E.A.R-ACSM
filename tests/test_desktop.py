@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -247,6 +248,88 @@ def test_webview2_lets_speech_play_and_keeps_flags_already_set() -> None:
         "--autoplay-policy=document-user-activation-required",
         "--disable-features=ElasticOverscroll",
     ]
+
+
+def _fake_webview2(monkeypatch, storage: str):
+    """Just enough of pywebview's WebView2 module and the .NET types it uses."""
+    import types
+
+    calls: dict = {}
+
+    class Options:
+        AdditionalBrowserArguments = None
+
+    class Environment:
+        @staticmethod
+        def CreateAsync(folder, user_data, options):  # noqa: N802 — .NET name
+            calls["create"] = (folder, user_data, options.AdditionalBrowserArguments)
+            return types.SimpleNamespace(ContinueWith=lambda action, scheduler: action("task"))
+
+    class EdgeChrome:
+        def __init__(self) -> None:
+            self.syncContextTaskScheduler = "ui"
+            self.webview = types.SimpleNamespace(
+                EnsureCoreWebView2Async=lambda env: calls.setdefault("ensure", env)
+            )
+
+        def setup_webview2_environment(self) -> None:
+            calls["original"] = True
+
+    class Generic:
+        def __getitem__(self, _type):
+            return lambda fn: lambda task: fn(types.SimpleNamespace(Result=f"env from {task}"))
+
+    edgechromium = types.ModuleType("webview.platforms.edgechromium")
+    edgechromium.EdgeChrome = EdgeChrome  # type: ignore[attr-defined]
+    edgechromium._state = {"storage_path": storage}  # type: ignore[attr-defined]
+    platforms = types.ModuleType("webview.platforms")
+    platforms.edgechromium = edgechromium  # type: ignore[attr-defined]
+    core = types.ModuleType("Microsoft.Web.WebView2.Core")
+    core.CoreWebView2Environment = Environment  # type: ignore[attr-defined]
+    core.CoreWebView2EnvironmentOptions = Options  # type: ignore[attr-defined]
+    system = types.ModuleType("System")
+    system.Action = Generic()  # type: ignore[attr-defined]
+    tasks = types.ModuleType("System.Threading.Tasks")
+    tasks.Task = Generic()  # type: ignore[attr-defined]
+    for name, module in {
+        "webview.platforms": platforms,
+        "webview.platforms.edgechromium": edgechromium,
+        "Microsoft.Web.WebView2.Core": core,
+        "System": system,
+        "System.Threading.Tasks": tasks,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(sys, "platform", "win32")
+    return EdgeChrome, Environment, calls
+
+
+def test_webview2_gets_the_flags_in_its_environment_options(monkeypatch) -> None:
+    edge_chrome, _, calls = _fake_webview2(monkeypatch, "C:/FEAR/webview")
+    desktop.give_webview2_flags("--autoplay-policy=no-user-gesture-required")
+
+    edge_chrome().setup_webview2_environment()
+
+    assert calls["create"] == (
+        None,
+        "C:/FEAR/webview",  # the same storage folder pywebview would use
+        "--autoplay-policy=no-user-gesture-required",
+    )
+    assert calls["ensure"] == "env from task"  # the window starts on that environment
+    assert "original" not in calls
+
+
+def test_webview2_still_opens_when_the_flags_cannot_be_given(monkeypatch) -> None:
+    edge_chrome, environment, calls = _fake_webview2(monkeypatch, "C:/FEAR/webview")
+
+    def refuse(*_args):
+        raise RuntimeError("no such overload")
+
+    monkeypatch.setattr(environment, "CreateAsync", staticmethod(refuse))
+    desktop.give_webview2_flags("--autoplay-policy=no-user-gesture-required")
+
+    edge_chrome().setup_webview2_environment()
+
+    assert calls == {"original": True}  # pywebview's own setup, without the flags
 
 
 def test_autostart_command_starts_minimized() -> None:

@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { pickVoice, SentenceSplitter, ServerSpeaker, type Speaker, speechText } from "@/lib/speech";
+import {
+  BrowserSpeaker,
+  type Fallback,
+  pickVoice,
+  SentenceSplitter,
+  ServerSpeaker,
+  speechText,
+} from "@/lib/speech";
 
 function split(chunks: string[]): string[] {
   const splitter = new SentenceSplitter();
@@ -42,6 +49,18 @@ describe("SentenceSplitter", () => {
 
   it("keeps question and exclamation marks with their sentence", () => {
     expect(split(["Sério?! Sim… talvez. Ok"])).toEqual(["Sério?!", "Sim…", "talvez.", "Ok"]);
+  });
+
+  it("never reads code aloud, however the reply arrives", () => {
+    const reply = "Rode isto:\n```python\nimport os\nprint(os.getcwd())\n```\nPronto. Viu?";
+    const expected = ["Rode isto:", "Pronto.", "Viu?"];
+    expect(split([reply])).toEqual(expected);
+    expect(split([...reply])).toEqual(expected); // one character at a time
+    expect(split(["Veja:\n```\nsem fim"])).toEqual(["Veja:"]); // a block the reply never closed
+  });
+
+  it("skips lines with nothing to say", () => {
+    expect(split(["Um.\n---\n| a | b |\n|---|---|\nDois."])).toEqual(["Um.", "| a | b |", "Dois."]);
   });
 });
 
@@ -144,12 +163,77 @@ describe("ServerSpeaker", () => {
     expect(FakeAudio.played).toEqual(["blob:Um."]);
   });
 
-  it("says a sentence in the browser's voice if the backend can't", async () => {
-    const said: string[] = [];
-    const fallback: Speaker = { say: (s) => said.push(s), stop: () => {} };
-    const speaker = new ServerSpeaker(async () => Promise.reject(new Error("503")), "fear", fallback);
-    speaker.say("**Olá.**");
+  it("says a sentence in the browser's voice if the backend can't — in its turn", async () => {
+    const order: string[] = [];
+    let finishSaying: () => void = () => {};
+    const fallback: Fallback = {
+      speak: (text) => {
+        order.push(`browser:${text}`);
+        return new Promise<void>((resolve) => (finishSaying = resolve));
+      },
+      stop: () => {},
+    };
+    const fetchVoice = vi.fn(async (text: string) => {
+      if (text === "Dois.") throw new Error("503");
+      return blob(text);
+    });
+    const speaker = new ServerSpeaker(fetchVoice, "fear", fallback);
+    speaker.say("Um.");
+    speaker.say("**Dois.**");
+    speaker.say("Três.");
     await flush();
-    expect(said).toEqual(["Olá."]);
+    expect(order).toEqual([]); // "Dois." waits for "Um." to finish
+    FakeAudio.current?.end();
+    await flush();
+    expect(order).toEqual(["browser:Dois."]);
+    expect(FakeAudio.played).toEqual(["blob:Um."]); // "Três." waits for the browser
+    finishSaying();
+    await flush();
+    expect(FakeAudio.played).toEqual(["blob:Um.", "blob:Três."]);
+  });
+
+  it("asks the backend for only a couple of sentences ahead", async () => {
+    const fetchVoice = vi.fn(async (text: string) => blob(text));
+    const speaker = new ServerSpeaker(fetchVoice, "fear");
+    for (const sentence of ["Um.", "Dois.", "Três.", "Quatro.", "Cinco."]) speaker.say(sentence);
+    await flush();
+    expect(FakeAudio.played).toEqual(["blob:Um."]);
+    expect(fetchVoice).toHaveBeenCalledTimes(3); // the one playing and two more
+    FakeAudio.current?.end();
+    await flush();
+    expect(fetchVoice).toHaveBeenCalledTimes(4);
+    speaker.stop(); // cut short: the rest is never asked for
+    await flush();
+    expect(fetchVoice).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("BrowserSpeaker", () => {
+  const spoken: string[] = [];
+  beforeEach(() => {
+    spoken.length = 0;
+    vi.stubGlobal(
+      "SpeechSynthesisUtterance",
+      class {
+        onend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor(readonly text: string) {}
+      },
+    );
+    vi.stubGlobal("speechSynthesis", {
+      getVoices: () => [],
+      cancel: vi.fn(),
+      speak: (utterance: { text: string }) => spoken.push(utterance.text),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("stays quiet once stopped, for the rest of that reply", () => {
+    const speaker = new BrowserSpeaker();
+    speaker.say("Um.");
+    speaker.stop();
+    speaker.say("Dois."); // still streaming in after the stop
+    expect(spoken).toEqual(["Um."]);
+    expect(window.speechSynthesis.cancel).toHaveBeenCalled();
   });
 });

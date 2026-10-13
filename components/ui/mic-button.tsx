@@ -75,11 +75,15 @@ export function MicButton({ voice, disabled = false }: { voice: VoiceInput; disa
       }}
       onPointerUp={release}
       onPointerLeave={release}
+      // The keyboard works like the pointer: tap to talk, or hold the key while
+      // talking. A held key repeats, but that's still one press.
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          press();
-        }
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        if (!event.repeat) press();
+      }}
+      onKeyUp={(event) => {
+        if (event.key === "Enter" || event.key === " ") release();
       }}
       disabled={disabled}
       aria-label={label}

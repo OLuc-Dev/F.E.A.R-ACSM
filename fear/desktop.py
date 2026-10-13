@@ -283,10 +283,9 @@ def webview2_flags(existing: str) -> str:
     """The browser flags for the app's WebView2 window, keeping any already set.
 
     F.E.A.R. answers out loud even when you only spoke or gestured (no click
-    yet), which WebView2's autoplay policy would otherwise silence. The
-    environment variable is the documented way to pass flags and applies to
-    this app only, but it replaces the ones pywebview passes, so its one — no
-    rubber-band scrolling — is carried over.
+    yet), which WebView2's autoplay policy would otherwise silence. pywebview's
+    own flag (no rubber-band scrolling) comes along, since its way of passing
+    it doesn't apply when it creates the environment itself.
     """
     flags = existing.split()
     if not any(flag.startswith("--autoplay-policy") for flag in flags):
@@ -294,6 +293,51 @@ def webview2_flags(existing: str) -> str:
     if not any(flag.startswith("--disable-features") for flag in flags):
         flags.append("--disable-features=ElasticOverscroll")
     return " ".join(flags)
+
+
+def give_webview2_flags(flags: str) -> None:
+    """Start WebView2 with these browser flags, in its environment's options.
+
+    With a storage folder, pywebview creates WebView2's environment itself and
+    passes no options; WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS didn't reach the
+    browser then (in the Windows workflow, its DevTools port never opened). So
+    the same call is made with the flags where WebView2 documents them. If that
+    fails for any reason, pywebview's own call runs instead: the window opens
+    either way.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        from Microsoft.Web.WebView2.Core import (  # type: ignore[import-not-found]
+            CoreWebView2Environment,
+            CoreWebView2EnvironmentOptions,
+        )
+        from System import Action  # type: ignore[import-not-found]
+        from System.Threading.Tasks import Task  # type: ignore[import-not-found]
+        from webview.platforms import edgechromium  # type: ignore[attr-defined]
+    except Exception:
+        logger.warning("WebView2 is not reachable; F.E.A.R. may need a click before it speaks")
+        return
+    original = edgechromium.EdgeChrome.setup_webview2_environment
+
+    def setup_webview2_environment(self) -> None:
+        def ready(task) -> None:
+            self.webview.EnsureCoreWebView2Async(task.Result)
+
+        try:
+            options = CoreWebView2EnvironmentOptions()
+            options.AdditionalBrowserArguments = flags
+            environment = CoreWebView2Environment.CreateAsync(
+                None, edgechromium._state["storage_path"], options
+            )
+            environment.ContinueWith(
+                Action[Task[CoreWebView2Environment]](ready), self.syncContextTaskScheduler
+            )
+        except Exception:
+            logger.exception("WebView2 didn't take the browser flags; starting without them")
+            original(self)
+
+    edgechromium.EdgeChrome.setup_webview2_environment = setup_webview2_environment
 
 
 def voice_dir(resources: Path) -> Path | None:
@@ -515,9 +559,9 @@ def main(argv: list[str] | None = None) -> None:
         window.load_url(f"http://127.0.0.1:{port}/#token={token}")
 
     if sys.platform == "win32":
-        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = webview2_flags(
-            os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "")
-        )
+        flags = webview2_flags(os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", ""))
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = flags
+        give_webview2_flags(flags)
     tray.run_detached()
     try:
         webview.start(boot, private_mode=False, storage_path=str(home / "webview"))

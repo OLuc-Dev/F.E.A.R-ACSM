@@ -19,60 +19,77 @@ export type CaptureFactory = () => Promise<Capture>;
 // Opus in WebM is what Chromium (and so WebView2) records; the rest are fallbacks.
 const MIME_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
 
+// How long to wait for the level meter to start before recording without it.
+const METER_START_MS = 400;
+
 export const startMicrophoneCapture: CaptureFactory = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
   });
-  const mimeType = MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-  const chunks: Blob[] = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
-
-  const context = new AudioContext();
-  const source = context.createMediaStreamSource(stream);
-  const analyser = context.createAnalyser();
-  analyser.fftSize = 1024;
-  source.connect(analyser);
-  const samples = new Float32Array(analyser.fftSize);
-  // Started without a click, a browser may keep the audio graph paused; then
-  // there is nothing to measure, but recording itself still works.
-  await context.resume().catch(() => undefined);
-  const measurable = context.state === "running";
-
-  let released = false;
+  let context: AudioContext | null = null;
   const release = () => {
-    if (released) return;
-    released = true;
     stream.getTracks().forEach((track) => track.stop());
-    source.disconnect();
-    void context.close().catch(() => undefined);
+    void context?.close().catch(() => undefined);
+    context = null;
   };
+  try {
+    const mimeType = MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
 
-  recorder.start(250);
-  return {
-    measurable,
-    level() {
-      analyser.getFloatTimeDomainData(samples);
-      let sum = 0;
-      for (const value of samples) sum += value * value;
-      return Math.sqrt(sum / samples.length);
-    },
-    finish() {
-      return new Promise<Blob>((resolve) => {
-        recorder.onstop = () => {
-          release();
-          resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
-        };
-        if (recorder.state === "inactive") recorder.onstop(new Event("stop"));
-        else recorder.stop();
-      });
-    },
-    cancel() {
-      recorder.onstop = null;
-      if (recorder.state !== "inactive") recorder.stop();
+    context = new AudioContext();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    // Started without a click, a browser may keep the audio graph paused, and
+    // resume() then waits for one indefinitely. Recording works regardless:
+    // without the meter, listening runs for a fixed time.
+    await Promise.race([
+      context.resume().catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, METER_START_MS)),
+    ]);
+    const measurable = context.state === "running";
+
+    let released = false;
+    const finishWith = () => {
+      if (released) return;
+      released = true;
+      source.disconnect();
       release();
-    },
-  };
+    };
+
+    recorder.start(250);
+    return {
+      measurable,
+      level() {
+        analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const value of samples) sum += value * value;
+        return Math.sqrt(sum / samples.length);
+      },
+      finish() {
+        return new Promise<Blob>((resolve) => {
+          recorder.onstop = () => {
+            finishWith();
+            resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
+          };
+          if (recorder.state === "inactive") recorder.onstop(new Event("stop"));
+          else recorder.stop();
+        });
+      },
+      cancel() {
+        recorder.onstop = null;
+        if (recorder.state !== "inactive") recorder.stop();
+        finishWith();
+      },
+    };
+  } catch (error) {
+    release(); // never leave the microphone on after a failed start
+    throw error;
+  }
 };

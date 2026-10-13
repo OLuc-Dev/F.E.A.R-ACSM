@@ -1116,11 +1116,9 @@ async def voice_transcribe(
     stt = getattr(request.app.state, "stt", None)
     if stt is None:
         raise HTTPException(status_code=503, detail="O reconhecimento de voz não está instalado.")
-    audio = await request.body()
+    audio = await _read_capped(request, _MAX_VOICE_UPLOAD)
     if not audio:
         raise HTTPException(status_code=422, detail="Nenhum áudio recebido.")
-    if len(audio) > _MAX_VOICE_UPLOAD:
-        raise HTTPException(status_code=413, detail="Áudio longo demais.")
     try:
         text = await asyncio.to_thread(stt.transcribe, audio)
     except Exception as exc:
@@ -1140,8 +1138,30 @@ async def voice_speak(
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=422, detail="Nada para falar.")
-    wav = await asyncio.to_thread(voice_out.synthesize, text, payload.style)
+    # One sentence at a time, waiting here rather than in a worker thread; and
+    # a sentence whose reply was interrupted in the meantime (the page gave up
+    # on it) is skipped, so a long answer cut short leaves no backlog behind.
+    state = request.app.state
+    if getattr(state, "speech_turn", None) is None:
+        state.speech_turn = asyncio.Lock()
+    async with state.speech_turn:
+        if await request.is_disconnected():
+            return Response(status_code=204)
+        wav = await asyncio.to_thread(voice_out.synthesize, text, payload.style)
     return Response(content=wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+async def _read_capped(request: Request, limit: int) -> bytes:
+    """The request body, refused (413) as soon as it passes `limit` bytes."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        raise HTTPException(status_code=413, detail="Áudio longo demais.")
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise HTTPException(status_code=413, detail="Áudio longo demais.")
+    return bytes(body)
 
 
 @app.post("/voice/start")

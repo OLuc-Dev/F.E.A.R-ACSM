@@ -66,28 +66,63 @@ const ABBREVIATIONS = new Set([
 // Long enough without a full stop: start speaking at a comma rather than wait.
 const SOFT_LIMIT = 220;
 
+/** Whether there's anything to say: letters or digits, not just marks like "---". */
+export function hasWords(text: string): boolean {
+  return /[\p{L}\p{N}]/u.test(text);
+}
+
+const FENCE = /^\s*(?:```|~~~)/;
+// What could still grow into a fence once the rest of the line arrives.
+const MAYBE_FENCE = /^\s*(?:`{1,2}|~{1,2})$/;
+
 /** Cuts a reply arriving in pieces into complete sentences, as soon as each ends. */
 export class SentenceSplitter {
   private buffer = "";
+  private lineStart = true;
+  private inCode = false;
 
   push(chunk: string): string[] {
     this.buffer += chunk;
     const out: string[] = [];
     for (;;) {
+      if (this.lineStart && this.skipCodeLine()) continue;
+      if (this.lineStart && this.lineUndecided()) break;
       const end = this.nextBoundary();
       if (end === -1) break;
-      const sentence = this.buffer.slice(0, end).trim();
+      const piece = this.buffer.slice(0, end);
       this.buffer = this.buffer.slice(end);
-      if (sentence) out.push(sentence);
+      this.lineStart = piece.endsWith("\n");
+      const sentence = piece.trim();
+      if (hasWords(sentence)) out.push(sentence);
     }
     return out;
   }
 
   /** Whatever is left once the reply has finished. */
   flush(): string[] {
-    const rest = this.buffer.trim();
+    const rest = this.inCode || FENCE.test(this.buffer) ? "" : this.buffer.trim();
     this.buffer = "";
-    return rest ? [rest] : [];
+    this.lineStart = true;
+    this.inCode = false;
+    return hasWords(rest) ? [rest] : [];
+  }
+
+  // Code is never read aloud: a fence line opens or closes a block, and the
+  // lines in between are dropped whole.
+  private skipCodeLine(): boolean {
+    const newline = this.buffer.indexOf("\n");
+    if (newline === -1) return false;
+    const fence = FENCE.test(this.buffer.slice(0, newline));
+    if (!fence && !this.inCode) return false;
+    if (fence) this.inCode = !this.inCode;
+    this.buffer = this.buffer.slice(newline + 1);
+    return true;
+  }
+
+  // A line still arriving that is code, or may yet become a fence, waits.
+  private lineUndecided(): boolean {
+    if (this.buffer.includes("\n")) return false;
+    return this.inCode || FENCE.test(this.buffer) || MAYBE_FENCE.test(this.buffer);
   }
 
   private nextBoundary(): number {
@@ -146,34 +181,59 @@ export function pickVoice(
   return cachedVoice;
 }
 
-class BrowserSpeaker implements Speaker {
+export class BrowserSpeaker implements Speaker {
+  private stopped = false;
+
   say(sentence: string): void {
-    if (!speechSupported()) return;
-    const text = speechText(sentence);
-    if (!text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = pickVoice();
-    if (voice) {
-      utterance.voice = voice;
-      utterance.lang = voice.lang;
-    } else {
-      utterance.lang = "pt-BR";
-    }
-    utterance.pitch = 0.85; // a shade lower — cold and even, in character
     // The browser queues utterances itself, so sentences play in order.
-    window.speechSynthesis.speak(utterance);
+    void this.speak(sentence);
   }
 
+  /** Says one sentence; resolves once it has been said (or won't be). */
+  speak(sentence: string): Promise<void> {
+    const text = speechText(sentence);
+    if (this.stopped || !speechSupported() || !hasWords(text)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const utterance = new SpeechSynthesisUtterance(text);
+      const voice = pickVoice();
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      } else {
+        utterance.lang = "pt-BR";
+      }
+      utterance.pitch = 0.85; // a shade lower — cold and even, in character
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+      // Some browsers skip the end event; never wait past what the words could take.
+      setTimeout(resolve, 2000 + text.length * 120);
+      window.speechSynthesis.speak(utterance);
+    });
+  }
+
+  /** Silences it for good: later sentences of the same reply are dropped too. */
   stop(): void {
+    this.stopped = true;
     if (speechSupported()) window.speechSynthesis.cancel();
   }
 }
 
 export type VoiceFetcher = (text: string, style: VoiceStyle, signal: AbortSignal) => Promise<Blob>;
 
-/** Plays the backend's Piper audio, sentence by sentence; each is fetched ahead. */
+/** Who speaks a sentence when the backend can't: waits until it has been said. */
+export type Fallback = Pick<BrowserSpeaker, "speak" | "stop">;
+
+// One sentence playing, the next two synthesizing.
+const LOOKAHEAD = 2;
+
+type Spoken = { audio: Blob } | { text: string };
+
+/** Plays the backend's Piper audio, sentence by sentence, each fetched just ahead. */
 export class ServerSpeaker implements Speaker {
-  private pending: Promise<Blob | null>[] = [];
+  // Sentences not asked for yet, then those being synthesized, in order — at
+  // most LOOKAHEAD ahead of playback, so an answer cut short leaves no backlog.
+  private waiting: string[] = [];
+  private requested: Promise<Spoken | null>[] = [];
   private draining = false;
   private stopped = false;
   private readonly controller = new AbortController();
@@ -183,36 +243,49 @@ export class ServerSpeaker implements Speaker {
   constructor(
     private readonly fetchVoice: VoiceFetcher,
     private readonly style: VoiceStyle,
-    private readonly fallback: Speaker = new BrowserSpeaker(),
+    private readonly fallback: Fallback = new BrowserSpeaker(),
   ) {}
 
   say(sentence: string): void {
     const text = speechText(sentence);
-    if (!text || this.stopped) return;
-    // Synthesis starts now, while the previous sentence is still playing.
-    const audio = this.fetchVoice(text, this.style, this.controller.signal).catch(() => {
-      // The backend voice failed for this sentence: say it anyway, in the browser's.
-      if (!this.stopped) this.fallback.say(text);
-      return null;
-    });
-    this.pending.push(audio);
+    if (!hasWords(text) || this.stopped) return;
+    this.waiting.push(text);
+    this.request();
     if (!this.draining) void this.drain();
   }
 
   stop(): void {
     this.stopped = true;
     this.controller.abort();
-    this.pending = [];
+    this.waiting = [];
+    this.requested = [];
     this.audio?.pause();
     this.finishCurrent?.();
     this.fallback.stop();
   }
 
+  private request(): void {
+    while (this.requested.length < LOOKAHEAD && this.waiting.length) {
+      const text = this.waiting.shift() as string;
+      this.requested.push(
+        this.fetchVoice(text, this.style, this.controller.signal).then(
+          (audio): Spoken => ({ audio }),
+          // The backend voice failed for this one: the browser's says it, in its turn.
+          (): Spoken | null => (this.stopped ? null : { text }),
+        ),
+      );
+    }
+  }
+
   private async drain(): Promise<void> {
     this.draining = true;
-    while (this.pending.length && !this.stopped) {
-      const blob = await this.pending.shift();
-      if (blob && !this.stopped) await this.play(blob);
+    while (this.requested.length && !this.stopped) {
+      const next = this.requested.shift() as Promise<Spoken | null>;
+      this.request(); // the one after starts synthesizing while this one plays
+      const spoken = await next;
+      if (!spoken || this.stopped) continue;
+      if ("audio" in spoken) await this.play(spoken.audio);
+      else await this.fallback.speak(spoken.text);
     }
     this.draining = false;
   }

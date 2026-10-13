@@ -12,12 +12,16 @@ const TICK_MS = 50;
 // When loudness can't be measured, listen for this long and let Whisper (which
 // drops silence itself) find the words.
 const UNMEASURED_MS = 6000;
-// Less than this is a click, not a sentence.
+// Shorter than this is a tap, not a sentence.
+const MIN_LISTEN_MS = 500;
 const MIN_RECORDING_BYTES = 1000;
+// Even a 30 s recording takes far less on a slow PC; past this, something hung.
+const TRANSCRIBE_TIMEOUT_MS = 60_000;
 
 export const VOICE_NOTICES = {
   nothing: "Não ouvi nada. Fale logo depois de ativar o microfone.",
   unclear: "Não entendi. Tenta de novo?",
+  slow: "Demorou demais para entender. Tenta de novo?",
 } as const;
 
 /** Plain-language reason the microphone didn't open. */
@@ -37,8 +41,10 @@ interface Options {
   onTranscript: (text: string) => void;
   /** A short, human message when nothing usable came of it. */
   onNotice?: (message: string) => void;
+  /** The microphone is about to open (e.g. to cut off a reply being written). */
+  onStart?: () => void;
   /** Injected in tests. */
-  transcribe?: (audio: Blob) => Promise<string>;
+  transcribe?: (audio: Blob, signal: AbortSignal) => Promise<string>;
   startCapture?: CaptureFactory;
 }
 
@@ -50,6 +56,7 @@ interface Options {
 export function useVoiceInput({
   onTranscript,
   onNotice,
+  onStart,
   transcribe = transcribeAudio,
   startCapture = startMicrophoneCapture,
 }: Options) {
@@ -59,12 +66,15 @@ export function useVoiceInput({
   const captureRef = useRef<Capture | null>(null);
   const activityRef = useRef<SpeechActivity | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
-  // Bumped by cancel(): an opening microphone that finds it changed backs out.
+  const listeningSinceRef = useRef(0);
+  // Bumped by cancel() and by each start: whatever was opening the microphone
+  // or transcribing for an older run backs out when it finds it changed.
   const runRef = useRef(0);
+  const transcriptionRef = useRef<AbortController | null>(null);
   // stop()/hold() that arrive while the microphone is still opening.
   const pendingRef = useRef({ hold: false, stop: false });
-  const callbacks = useRef({ onTranscript, onNotice, transcribe });
-  callbacks.current = { onTranscript, onNotice, transcribe };
+  const callbacks = useRef({ onTranscript, onNotice, onStart, transcribe });
+  callbacks.current = { onTranscript, onNotice, onStart, transcribe };
 
   const set = useCallback((next: VoiceInputState) => {
     stateRef.current = next;
@@ -83,28 +93,40 @@ export function useVoiceInput({
       return;
     }
     if (stateRef.current !== "listening") return;
+    const run = runRef.current;
     quiet();
     const capture = captureRef.current;
-    const activity = activityRef.current;
+    const listenedMs = Date.now() - listeningSinceRef.current;
     captureRef.current = null;
     activityRef.current = null;
     if (!capture) return set("idle");
     set("transcribing");
     const audio = await capture.finish();
-    const heard = !capture.measurable || Boolean(activity?.heardSpeech);
-    if (!heard || audio.size < MIN_RECORDING_BYTES) {
+    if (run !== runRef.current) return; // cancelled meanwhile
+    // Whoever ends a recording means it, heard or not by the meter (which can
+    // miss a soft voice): only a tap is too short to hold a sentence. Whisper
+    // drops silence itself, and an empty result says so.
+    if (listenedMs < MIN_LISTEN_MS || audio.size < MIN_RECORDING_BYTES) {
       set("idle");
       callbacks.current.onNotice?.(VOICE_NOTICES.nothing);
       return;
     }
+    const transcription = new AbortController();
+    transcriptionRef.current = transcription;
+    const timer = setTimeout(() => transcription.abort(), TRANSCRIBE_TIMEOUT_MS);
     try {
-      const text = await callbacks.current.transcribe(audio);
+      const text = await callbacks.current.transcribe(audio, transcription.signal);
+      if (run !== runRef.current) return; // cancelled (a fist, say) while transcribing
       set("idle");
       if (text) callbacks.current.onTranscript(text);
       else callbacks.current.onNotice?.(VOICE_NOTICES.unclear);
     } catch (error) {
+      if (run !== runRef.current) return;
       set("idle");
-      callbacks.current.onNotice?.(humanizeError(error));
+      callbacks.current.onNotice?.(transcription.signal.aborted ? VOICE_NOTICES.slow : humanizeError(error));
+    } finally {
+      clearTimeout(timer);
+      if (transcriptionRef.current === transcription) transcriptionRef.current = null;
     }
   }, [quiet, set]);
 
@@ -114,7 +136,9 @@ export function useVoiceInput({
     captureRef.current?.cancel();
     captureRef.current = null;
     activityRef.current = null;
-    if (stateRef.current === "listening" || stateRef.current === "starting") set("idle");
+    transcriptionRef.current?.abort();
+    transcriptionRef.current = null;
+    if (stateRef.current !== "idle") set("idle");
   }, [quiet, set]);
 
   const start = useCallback(
@@ -124,6 +148,7 @@ export function useVoiceInput({
       pendingRef.current = { hold: mode === "hold", stop: false };
       set("starting");
       stopSpeaking(); // never transcribe F.E.A.R. talking over you
+      callbacks.current.onStart?.();
       let capture: Capture;
       try {
         capture = await startCapture();
@@ -142,11 +167,12 @@ export function useVoiceInput({
       captureRef.current = capture;
       activityRef.current = activity;
       set("listening");
+      listeningSinceRef.current = Date.now();
       if (pendingRef.current.stop) {
         void stop();
         return;
       }
-      const began = Date.now();
+      const began = listeningSinceRef.current;
       timerRef.current = setInterval(() => {
         const elapsed = Date.now() - began;
         if (!capture.measurable) {

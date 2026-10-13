@@ -88,6 +88,24 @@ def app_page(browser, deadline: float):
     raise TimeoutError("the app's page never opened")
 
 
+def webview2_command_lines() -> list[str]:
+    """How WebView2's browser processes were started: which flags reached them."""
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" "
+        "| ForEach-Object { $_.CommandLine }"
+    )
+    try:
+        shown = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+    except Exception as error:
+        return [repr(error)]
+    return [line for line in shown.splitlines() if line.strip() and "--type=" not in line]
+
+
 def connect(playwright, app: subprocess.Popen, deadline: float):
     """DevTools of the app's window, once WebView2 is up."""
     while True:
@@ -160,6 +178,7 @@ def main(exe: str) -> int:
                     page.screenshot(path=str(ROOT / "dist" / "voice-e2e.png"))
     except Exception as error:
         report["failure"] = repr(error)
+        report["webview2_browser"] = webview2_command_lines()
     finally:
         subprocess.run(["taskkill", "/PID", str(app.pid), "/T", "/F"], capture_output=True)
     log = work / "appdata" / "FEAR" / "fear.log"

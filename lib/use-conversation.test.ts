@@ -80,14 +80,17 @@ describe("useConversation", () => {
         }),
     );
     const { result } = renderHook(() => useConversation());
+    const outcomes: boolean[] = [];
     await act(async () => {
       const first = result.current.send("primeira pergunta", "user");
-      await result.current.send("segunda pergunta", "user"); // must be ignored
+      outcomes.push(await result.current.send("segunda pergunta", "user")); // must be ignored
       release();
-      await first;
+      outcomes.push(await first);
     });
     expect(userTexts(result.current.messages)).toEqual(["primeira pergunta"]);
     expect(stream.mock.calls.length - n0).toBe(1);
+    // …and says so, so a spoken question is never dropped without a word.
+    expect(outcomes).toEqual([false, true]);
   });
 
   it("shows a friendly notice when the reply comes back empty", async () => {

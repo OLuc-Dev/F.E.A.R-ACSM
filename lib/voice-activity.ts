@@ -5,7 +5,7 @@
 export type ListenMode = "auto" | "hold";
 
 export const VOICE_TUNING = {
-  /** The first moments set the room's noise floor. */
+  /** The quietest of the first moments sets the room's noise floor. */
   calibrateMs: 300,
   /** Speech must be this many times louder than the room… */
   floorFactor: 3,
@@ -26,7 +26,7 @@ export type ActivityOutcome = "end" | "timeout" | null;
 export class SpeechActivity {
   private start: number | null = null;
   private calibration: number[] = [];
-  private threshold = Number.POSITIVE_INFINITY;
+  private floor: number | null = null;
   private loudFor = 0;
   private quietFor = 0;
   private last = 0;
@@ -54,25 +54,26 @@ export class SpeechActivity {
     const dt = Math.max(0, t - this.last);
     this.last = t;
 
+    // A microphone still waking up reads exactly 0; that's not the room.
     if (elapsed < VOICE_TUNING.calibrateMs) {
-      this.calibration.push(rms);
+      if (rms > 0) this.calibration.push(rms);
       return null;
     }
-    if (this.threshold === Number.POSITIVE_INFINITY) {
-      const floor = this.calibration.length
-        ? this.calibration.reduce((sum, value) => sum + value, 0) / this.calibration.length
-        : 0;
-      this.threshold = Math.max(VOICE_TUNING.minThreshold, floor * VOICE_TUNING.floorFactor);
-    }
+    // The room is as loud as its quietest moment, not its average: someone
+    // already talking when the microphone opened isn't "the room", and the
+    // pauses between their words keep bringing the floor down to it.
+    if (this.floor === null && this.calibration.length) this.floor = Math.min(...this.calibration);
+    if (rms > 0 && (this.floor === null || rms < this.floor)) this.floor = rms;
+    const threshold = Math.max(VOICE_TUNING.minThreshold, (this.floor ?? 0) * VOICE_TUNING.floorFactor);
 
-    if (rms >= this.threshold) {
+    if (rms >= threshold) {
       this.loudFor += dt;
       this.quietFor = 0;
       if (this.loudFor >= VOICE_TUNING.speechMs) this.heard = true;
     } else {
       this.loudFor = 0;
       // A little below the threshold still counts as the tail of a word.
-      if (rms < this.threshold * 0.7) this.quietFor += dt;
+      if (rms < threshold * 0.7) this.quietFor += dt;
     }
 
     if (elapsed >= VOICE_TUNING.maxMs) return "end";

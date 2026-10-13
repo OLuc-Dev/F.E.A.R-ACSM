@@ -77,6 +77,29 @@ describe("SpeechActivity", () => {
     ).toMatchObject({ outcome: "end", heard: true });
   });
 
+  it("hears someone who starts talking the moment it opens", () => {
+    // tests/fixtures/browser-recording.webm as the app's meter reads it (RMS of
+    // 1024 samples at 48 kHz, every 50 ms), cut at the first word.
+    const spokenAtOnce = [
+      0.08, 0.411, 0.33, 0.327, 0.281, 0.296, 0.341, 0.194, 0.016, 0.017, 0.261, 0.024, 0.011, 0.175, 0.166,
+      0.009, 0.051, 0.331, 0.248, 0.073, 0.319, 0.029, 0.031, 0.023, 0.275, 0.276, 0.269, 0.183, 0.034, 0.045,
+      0.039, 0.006, 0.013, 0.003, 0.001,
+    ].map((rms): [number, number] => [TICK, rms]);
+    // Its first moments are speech, not the room; the pauses between words show the room.
+    expect(run([...spokenAtOnce, [3000, 0]])).toMatchObject({ outcome: "end", heard: true });
+    expect(run(spokenAtOnce, "hold").heard).toBe(true);
+  });
+
+  it("isn't thrown off by a microphone still waking up", () => {
+    const result = run([
+      [100, 0], // no samples yet
+      [300, ROOM],
+      [1000, VOICE],
+      [2000, ROOM],
+    ]);
+    expect(result).toMatchObject({ outcome: "end", heard: true });
+  });
+
   it("in hold-to-talk, only letting go (or the time limit) ends it", () => {
     const held = run(
       [

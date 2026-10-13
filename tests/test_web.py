@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -806,6 +808,72 @@ def test_speak_returns_a_sentence_as_wav(client: TestClient) -> None:
         assert bad_style.status_code == 422
     finally:
         delattr(app.state, "voice_out")
+
+
+def test_transcribe_refuses_a_recording_too_long_before_reading_it_all(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(app_module, "_MAX_VOICE_UPLOAD", 1000)
+    ears = FakeEars()
+    app.state.stt = ears
+    try:
+        _, headers = _register(client)
+        declared = client.post("/voice/transcribe", content=b"x" * 2000, headers=headers)
+        # Sent in pieces with no size up front: cut off once past the limit.
+        streamed = client.post(
+            "/voice/transcribe", content=iter([b"x" * 600, b"x" * 600]), headers=headers
+        )
+        assert (declared.status_code, streamed.status_code) == (413, 413)
+        assert ears.heard == []
+    finally:
+        delattr(app.state, "stt")
+
+
+class _SlowVoice:
+    """Counts how many sentences are being synthesized at once."""
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.most = 0
+        self.said: list[str] = []
+
+    def synthesize(self, text: str, style: str = "fear") -> bytes:
+        self.active += 1
+        self.most = max(self.most, self.active)
+        time.sleep(0.05)
+        self.said.append(text)
+        self.active -= 1
+        return b"RIFF"
+
+
+class _Request:
+    def __init__(self, voice: _SlowVoice, gone: bool = False) -> None:
+        self.app = SimpleNamespace(state=SimpleNamespace(voice_out=voice))
+        self.gone = gone
+
+    async def is_disconnected(self) -> bool:
+        return self.gone
+
+
+async def _speak(request: _Request, text: str):
+    payload = app_module.SpeakRequest(text=text)
+    return await app_module.voice_speak(payload, request, object())  # type: ignore[arg-type]
+
+
+async def test_speak_synthesizes_one_sentence_at_a_time() -> None:
+    voice = _SlowVoice()
+    request = _Request(voice)
+    await asyncio.gather(*(_speak(request, f"Frase {n}.") for n in range(3)))
+    assert voice.most == 1  # the rest wait their turn without holding a worker thread
+    assert sorted(voice.said) == ["Frase 0.", "Frase 1.", "Frase 2."]
+
+
+async def test_speak_skips_a_sentence_nobody_waits_for_anymore() -> None:
+    voice = _SlowVoice()
+    # The reply was interrupted: the page gave up on this sentence while it queued.
+    response = await _speak(_Request(voice, gone=True), "Olá.")
+    assert response.status_code == 204
+    assert voice.said == []
 
 
 def test_status_reports_voice_in_and_out(client: TestClient) -> None:

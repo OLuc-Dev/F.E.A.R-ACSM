@@ -30,20 +30,25 @@ class FakeCapture implements Capture {
   }
 }
 
-function setup(capture: FakeCapture | (() => Promise<Capture>), text = "qual é a próxima reunião?") {
+function setup(
+  capture: FakeCapture | (() => Promise<Capture>),
+  text: string | ((audio: Blob, signal: AbortSignal) => Promise<string>) = "qual é a próxima reunião?",
+) {
   const heard: string[] = [];
   const notices: string[] = [];
-  const transcribe = vi.fn(async () => text);
+  const onStart = vi.fn();
+  const transcribe = vi.fn(typeof text === "function" ? text : async () => text);
   const startCapture = typeof capture === "function" ? capture : async () => capture;
   const hook = renderHook(() =>
     useVoiceInput({
       onTranscript: (t) => heard.push(t),
       onNotice: (n) => notices.push(n),
+      onStart,
       transcribe,
       startCapture,
     }),
   );
-  return { hook, heard, notices, transcribe };
+  return { hook, heard, notices, transcribe, onStart };
 }
 
 async function advance(ms: number) {
@@ -72,7 +77,7 @@ describe("useVoiceInput", () => {
 
     await advance(400 + 1500 + 1300);
     expect(mic.finished).toBe(true);
-    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
+    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob), expect.any(AbortSignal));
     expect(heard).toEqual(["qual é a próxima reunião?"]);
     expect(hook.result.current.state).toBe("idle");
   });
@@ -175,5 +180,81 @@ describe("useVoiceInput", () => {
     await advance(1500);
     expect(mic.finished).toBe(true);
     expect(heard).toEqual(["qual é a próxima reunião?"]);
+  });
+
+  it("cuts off F.E.A.R. when the microphone opens", async () => {
+    const mic = new FakeCapture([ROOM]);
+    const { hook, onStart } = setup(mic);
+    await act(async () => {
+      await hook.result.current.start("auto");
+    });
+    expect(onStart).toHaveBeenCalledTimes(1); // the page stops a reply still being written
+  });
+
+  it("sends what was said when let go, even if the meter heard nothing", async () => {
+    const mic = new FakeCapture([ROOM]); // a soft voice the meter can't tell from the room
+    const { hook, heard } = setup(mic);
+    await act(async () => {
+      await hook.result.current.start("hold");
+    });
+    await advance(2000);
+    await act(async () => {
+      await hook.result.current.stop();
+    });
+    expect(heard).toEqual(["qual é a próxima reunião?"]); // Whisper decides
+  });
+
+  it("treats a quick tap as nothing said", async () => {
+    const mic = new FakeCapture([ROOM]);
+    const { hook, notices, transcribe } = setup(mic);
+    await act(async () => {
+      await hook.result.current.start("hold");
+    });
+    await advance(200);
+    await act(async () => {
+      await hook.result.current.stop();
+    });
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(notices).toEqual([VOICE_NOTICES.nothing]);
+  });
+
+  it("drops what was said when cancelled while transcribing", async () => {
+    const mic = new FakeCapture([...ticks(8, ROOM), ...ticks(30, VOICE), ROOM]);
+    let finish: (text: string) => void = () => {};
+    let aborted = false;
+    const { hook, heard, notices } = setup(mic, (_audio, signal) => {
+      signal.addEventListener("abort", () => (aborted = true));
+      return new Promise<string>((resolve) => (finish = resolve));
+    });
+    await act(async () => {
+      await hook.result.current.start("auto");
+    });
+    await advance(400 + 1500 + 1300);
+    expect(hook.result.current.state).toBe("transcribing");
+    act(() => hook.result.current.cancel()); // a fist: "silêncio"
+    expect(hook.result.current.state).toBe("idle");
+    expect(aborted).toBe(true);
+    await act(async () => finish("qual é a próxima reunião?"));
+    expect(heard).toEqual([]);
+    expect(notices).toEqual([]);
+  });
+
+  it("gives up on a transcription that never comes back", async () => {
+    const mic = new FakeCapture([...ticks(8, ROOM), ...ticks(30, VOICE), ROOM]);
+    const { hook, notices } = setup(
+      mic,
+      (_audio, signal) =>
+        new Promise<string>((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))),
+        ),
+    );
+    await act(async () => {
+      await hook.result.current.start("auto");
+    });
+    await advance(400 + 1500 + 1300);
+    expect(hook.result.current.state).toBe("transcribing");
+    await advance(60_000);
+    expect(hook.result.current.state).toBe("idle");
+    expect(notices).toEqual([VOICE_NOTICES.slow]);
   });
 });
