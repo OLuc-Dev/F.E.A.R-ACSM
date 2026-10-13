@@ -170,3 +170,17 @@ def test_set_openrouter_key_is_stored_encrypted(client: TestClient, store: UserS
     assert response.json()["has_openrouter_key"] is True
     # The store round-trips the real key, but never returns it over the wire.
     assert store.get_openrouter_key(user_id) == "sk-or-v1-abc"
+
+
+def test_owner_is_the_first_account_unless_an_email_is_configured(tmp_path) -> None:
+    store = UserStore(path=str(tmp_path / "owner.db"), security=Security("s"))
+    try:
+        assert store.owner() is None
+        first = store.create_user("first@example.com", "longenough")
+        second = store.create_user("second@example.com", "longenough")
+
+        assert store.owner().id == first.id  # type: ignore[union-attr]
+        assert store.owner("Second@Example.com ").id == second.id  # type: ignore[union-attr]
+        assert store.owner("missing@example.com") is None
+    finally:
+        store.close()

@@ -24,9 +24,14 @@ ChromaDB, sem PyTorch) e pode consultar uma biblioteca de notas em markdown.
 Cada pessoa tem **login** (e-mail + senha), com **memória, chave do OpenRouter e
 configuração isoladas** — ninguém enxerga os dados do outro. As chaves ficam
 criptografadas no servidor (derivado de `FEAR_SECRET_KEY`) e cada usuário traz a
-própria chave do OpenRouter. Rodando local, o login é opcional; publicado, é
-exigido. Para colocar no ar como site (API no Fly.io + tela no Vercel), veja
+própria chave do OpenRouter. O login é sempre exigido, inclusive rodando local.
+Para colocar no ar como site (API no Fly.io + tela no Vercel), veja
 **[DEPLOY.md](DEPLOY.md)**.
+
+O que é da máquina tem **dono**: microfone, palmas, alto-falante, Spotify, Google
+Agenda e o vault do Obsidian pertencem a uma conta só — a de `FEAR_OWNER_EMAIL`,
+ou, se vazio, a primeira conta criada. As outras contas conversam normalmente, mas
+nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
 
 ## Funcionalidades
 

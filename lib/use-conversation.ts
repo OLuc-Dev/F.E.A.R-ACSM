@@ -270,9 +270,14 @@ export function useConversation() {
           pushMessage("fear", data.reply || "Spotify acionado.");
           setStatus("online");
         } else if (appId === "voice") {
+          // The backend records for several seconds before answering, so say
+          // "listening" now — not after the clip is already over.
           setStatus("listening");
-          await captureVoiceOnce();
           pushMessage("system", "Escutando um trecho de voz…");
+          const result = await captureVoiceOnce();
+          if (result === "disabled") {
+            pushMessage("system", "A captura de voz está desligada neste F.E.A.R.");
+          }
           setStatus("online");
         } else if (appId === "reset") {
           await resetConversation();
@@ -283,9 +288,9 @@ export function useConversation() {
         } else if (appId === "obsidian") {
           pushMessage("system", "Observo seu vault do Obsidian quando OBSIDIAN_VAULT_PATH está configurado.");
         }
-      } catch {
+      } catch (error) {
         setStatus("error");
-        pushMessage("system", "Não consegui falar com o backend local.");
+        pushMessage("system", humanizeError(error));
       } finally {
         busyRef.current = false;
       }

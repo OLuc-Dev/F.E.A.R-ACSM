@@ -11,6 +11,9 @@ from typing import Any
 
 import pyaudio
 
+# Consecutive failed reads before giving up on the device (~1 minute of backoff).
+_MAX_READ_FAILURES = 15
+
 
 class ClapDetector:
     """
@@ -177,14 +180,22 @@ class ClapDetector:
                 input_device_index=self.input_device_index,
             )
 
+            read_failures = 0
             while not self._stop_event.is_set():
                 try:
                     raw_audio = self._stream.read(
                         self.chunk_size,
                         exception_on_overflow=False,
                     )
+                    read_failures = 0
                 except OSError as exc:
+                    read_failures += 1
+                    if read_failures >= _MAX_READ_FAILURES:
+                        self._logger.error("Microphone keeps failing; clap detection is off")
+                        return
                     self._logger.warning("Failed to read audio chunk: %s", exc)
+                    # An unplugged device fails instantly; back off instead of spinning.
+                    self._stop_event.wait(min(5.0, 0.1 * 2**read_failures))
                     continue
 
                 rms = self._calculate_rms(raw_audio)

@@ -27,7 +27,7 @@ LLM_ERROR_REPLY = "Tive um problema para processar isso agora. Tenta de novo em 
 # Only route to Spotify when the message clearly refers to music. This keeps the
 # assistant from hijacking ordinary conversation that happens to contain a verb
 # like "play" or "stop".
-SPOTIFY_HINTS = ("spotify", "music", "song", "track", "playback")
+SPOTIFY_HINTS = ("spotify", "music", "música", "song", "track", "faixa", "playback")
 
 # Route to the calendar only on a clear agenda question (read-only), so ordinary
 # chat that happens to mention a meeting isn't hijacked.
@@ -107,6 +107,8 @@ class UserContext:
     api_key: str = ""
     chat_model: str = ""
     persona_mode: str = ""
+    # Only the machine's owner may drive its Spotify or read its calendar.
+    is_owner: bool = False
 
 
 @dataclass(slots=True)
@@ -230,13 +232,14 @@ class AsyncConversationalBrain:
         scope = user.user_id if user else ""
         history_key = user.user_id if user else clean_speaker
 
-        spotify_reply = await self._try_spotify(clean_text)
+        owns_machine = user is None or user.is_owner
+        spotify_reply = await self._try_spotify(clean_text) if owns_machine else ""
         if spotify_reply:
             await self._remember(clean_text, clean_speaker, "spotify", scope)
             self._record_turn(history_key, clean_text, spotify_reply)
             return CommandResponse(reply=spotify_reply, speaker=clean_speaker, remembered=True)
 
-        calendar_summary = await self._try_calendar(clean_text)
+        calendar_summary = await self._try_calendar(clean_text) if owns_machine else ""
         # Without a model, hand back the raw agenda; with one, F.E.A.R. phrases it below.
         if calendar_summary and client is None:
             await self._remember(clean_text, clean_speaker, "calendar", scope)
@@ -336,13 +339,14 @@ class AsyncConversationalBrain:
         scope = user.user_id if user else ""
         history_key = user.user_id if user else clean_speaker
 
-        spotify_reply = await self._try_spotify(clean_text)
+        owns_machine = user is None or user.is_owner
+        spotify_reply = await self._try_spotify(clean_text) if owns_machine else ""
         if spotify_reply:
             await self._remember(clean_text, clean_speaker, "spotify", scope)
             self._record_turn(history_key, clean_text, spotify_reply)
             return StreamSession([], _single_chunk(spotify_reply))
 
-        calendar_summary = await self._try_calendar(clean_text)
+        calendar_summary = await self._try_calendar(clean_text) if owns_machine else ""
         if calendar_summary and client is None:
             await self._remember(clean_text, clean_speaker, "calendar", scope)
             self._record_turn(history_key, clean_text, calendar_summary)
@@ -398,6 +402,10 @@ class AsyncConversationalBrain:
                     stream=True,
                 )
                 async for chunk in stream:
+                    # OpenRouter interleaves chunks with no choices (keep-alives,
+                    # the final usage report); indexing them would cut the reply.
+                    if not chunk.choices:
+                        continue
                     delta = chunk.choices[0].delta.content
                     if delta:
                         parts.append(delta)
@@ -415,15 +423,6 @@ class AsyncConversationalBrain:
             self._record_turn(history_key, clean_text, reply)
 
         return StreamSession(consulted, tokens())
-
-    async def stream_command(
-        self, user_text: str, speaker_name: str = "user", user: UserContext | None = None
-    ) -> AsyncIterator[str]:
-        """Stream a reply chunk-by-chunk. Thin wrapper over ``open_stream`` that
-        drops the consulted-memory metadata — the tokens are byte-for-byte the same."""
-        session = await self.open_stream(user_text, speaker_name, user)
-        async for chunk in session.stream:
-            yield chunk
 
     async def _remember(self, text: str, speaker: str, source: str, user_id: str = "") -> None:
         """Persist a memory; a storage failure must not break the conversation."""
@@ -579,27 +578,6 @@ class AsyncConversationalBrain:
     def reset_conversation(self, speaker: str) -> None:
         """Forget the in-memory dialogue window for a speaker (persistent memory is kept)."""
         self._history.pop(speaker, None)
-
-    def set_chat_model(self, model: str) -> None:
-        """Switch the OpenRouter chat model for this session (ignores blank input)."""
-        cleaned = model.strip()
-        if cleaned:
-            self.settings.openrouter_chat_model = cleaned
-
-    def set_persona_mode(self, mode: str) -> None:
-        """Switch the persona mode; raises ValueError for an unknown mode."""
-        cleaned = mode.strip().lower()
-        if cleaned not in PERSONA_MODES:
-            raise ValueError(f"unknown persona mode: {mode}")
-        self._persona_mode = cleaned
-
-    def get_config(self) -> dict[str, Any]:
-        """Return the live, non-secret runtime config (drives the settings panel)."""
-        return {
-            "model": self.settings.openrouter_chat_model,
-            "persona_mode": self._persona_mode,
-            "persona_modes": list(PERSONA_MODES.keys()),
-        }
 
     def _build_context(
         self,

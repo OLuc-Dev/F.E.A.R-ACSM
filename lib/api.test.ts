@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   CONSULTED_MEMORY_IDS_HEADER,
+  UNAUTHORIZED_EVENT,
+  captureVoiceOnce,
   getStatus,
   parseConsultedMemoryIdsHeader,
   sendCommand,
@@ -125,5 +127,45 @@ describe("parseConsultedMemoryIdsHeader", () => {
 
   it("dedups while keeping first-seen order", () => {
     expect(parseConsultedMemoryIdsHeader("b,a,b,c,a")).toEqual(["b", "a", "c"]);
+  });
+
+  it("streamCommand keeps a character split across the last two chunks", async () => {
+    const bytes = new TextEncoder().encode("até");
+    mockFetch(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              // "é" is two bytes; end the stream after its first one is held back.
+              controller.enqueue(bytes.slice(0, bytes.length - 1));
+              controller.enqueue(bytes.slice(bytes.length - 1));
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    const chunks: string[] = [];
+    await streamCommand({ text: "x", speaker: "Lucas" }, (chunk) => chunks.push(chunk));
+    expect(chunks.join("")).toBe("até");
+  });
+
+  it("announces a rejected session so the app can sign out", async () => {
+    mockFetch(async () => new Response(JSON.stringify({ detail: "Sessão inválida." }), { status: 401 }));
+    const target = new EventTarget();
+    vi.stubGlobal("window", target);
+    const listener = vi.fn();
+    target.addEventListener(UNAUTHORIZED_EVENT, listener);
+
+    await expect(getStatus()).rejects.toBeInstanceOf(ApiError);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("captureVoiceOnce tells a disabled mic apart from a queued clip", async () => {
+    mockFetch(async () => new Response(JSON.stringify({ status: "disabled", hint: "x" })));
+    expect(await captureVoiceOnce()).toBe("disabled");
+    mockFetch(async () => new Response(JSON.stringify({ status: "queued" })));
+    expect(await captureVoiceOnce()).toBe("queued");
   });
 });

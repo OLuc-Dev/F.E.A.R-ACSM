@@ -120,6 +120,23 @@ export function parseConsultedMemoryIdsHeader(value: string | null): string[] {
   return ids;
 }
 
+// Fired when the backend rejects the session token, so the app can sign out
+// instead of failing every call with "session expired" while looking logged in.
+export const UNAUTHORIZED_EVENT = "fear:unauthorized";
+
+// Every backend call goes through here: attaches the session and reports a
+// rejected one.
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: { ...(init.headers as Record<string, string> | undefined), ...authHeaders() },
+  });
+  if (response.status === 401 && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
+  return response;
+}
+
 // Pull FastAPI's `{ detail }` out of an error body so the UI can show why.
 async function errorDetail(response: Response): Promise<string> {
   try {
@@ -132,9 +149,9 @@ async function errorDetail(response: Response): Promise<string> {
 }
 
 async function postJson(path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await apiFetch(path, {
     method: "POST",
-    headers: { "content-type": "application/json", ...authHeaders() },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
     signal,
   });
@@ -144,7 +161,7 @@ async function postJson(path: string, body: unknown, signal?: AbortSignal): Prom
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/health`, { headers: authHeaders() });
+    const response = await apiFetch("/health");
     return response.ok;
   } catch {
     return false;
@@ -152,7 +169,7 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 export async function getStatus(): Promise<StatusResponse> {
-  const response = await fetch(`${API_BASE}/status`, { headers: authHeaders() });
+  const response = await apiFetch("/status");
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as StatusResponse;
 }
@@ -174,9 +191,9 @@ export async function streamCommand(
   signal?: AbortSignal,
   onConsultedMemoryIds?: (ids: string[]) => void,
 ): Promise<void> {
-  const response = await fetch(`${API_BASE}/command/stream`, {
+  const response = await apiFetch("/command/stream", {
     method: "POST",
-    headers: { "content-type": "application/json", ...authHeaders() },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ speak: false, ...request }),
     signal,
   });
@@ -195,10 +212,13 @@ export async function streamCommand(
     const chunk = decoder.decode(value, { stream: true });
     if (chunk) onChunk(chunk);
   }
+  // Flush bytes held back mid-character, or a split final accent is lost.
+  const tail = decoder.decode();
+  if (tail) onChunk(tail);
 }
 
 export async function getMemory(): Promise<MemoryResponse> {
-  const response = await fetch(`${API_BASE}/memory`, { headers: authHeaders() });
+  const response = await apiFetch("/memory");
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as MemoryResponse;
 }
@@ -215,14 +235,17 @@ export async function resetConversation(): Promise<void> {
   await postJson("/conversation/reset", {});
 }
 
-export async function captureVoiceOnce(): Promise<void> {
-  await postJson("/voice/capture-once", {});
+// "queued" once the clip is recorded; "disabled" when the backend has no mic.
+export async function captureVoiceOnce(): Promise<"queued" | "disabled"> {
+  const response = await postJson("/voice/capture-once", {});
+  const data = (await response.json()) as { status?: string };
+  return data.status === "disabled" ? "disabled" : "queued";
 }
 
 // --- Knowledge sources (the settings panel) ---
 
 export async function listKnowledge(): Promise<KnowledgeListResponse> {
-  const response = await fetch(`${API_BASE}/knowledge`, { headers: authHeaders() });
+  const response = await apiFetch("/knowledge");
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as KnowledgeListResponse;
 }
@@ -233,17 +256,14 @@ export async function addKnowledgeText(name: string, content: string): Promise<K
 }
 
 export async function deleteKnowledge(source: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/knowledge/${encodeURIComponent(source)}`, {
-    method: "DELETE",
-    headers: authHeaders(),
-  });
+  const response = await apiFetch(`/knowledge/${encodeURIComponent(source)}`, { method: "DELETE" });
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
 }
 
 // --- Runtime behaviour config (model + persona mode; never secrets) ---
 
 export async function getConfig(): Promise<ConfigResponse> {
-  const response = await fetch(`${API_BASE}/config`, { headers: authHeaders() });
+  const response = await apiFetch("/config");
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as ConfigResponse;
 }
@@ -283,7 +303,7 @@ export async function login(email: string, password: string): Promise<AuthRespon
 }
 
 export async function fetchMe(): Promise<AuthUser> {
-  const response = await fetch(`${API_BASE}/auth/me`, { headers: authHeaders() });
+  const response = await apiFetch("/auth/me");
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as AuthUser;
 }

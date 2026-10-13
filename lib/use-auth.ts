@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   type AuthUser,
+  UNAUTHORIZED_EVENT,
   fetchMe,
   login as loginRequest,
   register as registerRequest,
@@ -36,6 +37,17 @@ export function useAuth() {
     return () => {
       active = false;
     };
+  }, []);
+
+  // A token the backend rejects mid-session (expired, or revoked by "sair de
+  // todos os dispositivos") signs the app out instead of leaving it half-alive.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      clearToken();
+      setUser(null);
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {

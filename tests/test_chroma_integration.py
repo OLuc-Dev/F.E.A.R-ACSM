@@ -283,3 +283,46 @@ def test_local_embedding_onnx_smoke() -> None:
 
     assert len(vector) == EMBED_DIM
     assert all(isinstance(value, float) for value in vector)
+
+
+def test_folder_indexed_books_are_shared_with_every_account(
+    library: ReferenceLibrary, tmp_path
+) -> None:
+    # The book library is indexed once by a script, with no owner; signed-in
+    # users used to never see it because retrieval only read their own notes.
+    book = "Sobre a brevidade da vida: o tempo é o único bem que de fato possuímos. " * 2
+    (tmp_path / "seneca.md").write_text(book, encoding="utf-8")
+    library.index_folder(tmp_path, source="livros")
+    library.index_text("nota privada do usuário A sobre o tempo", source="NotaA", user_id="A")
+
+    as_b = library.retrieve(book.strip(), n_results=5, user_id="B")
+
+    assert {hit.source for hit in as_b} == {"livros"}  # shared yes, A's note never
+    assert library.list_sources("B") == []  # listing stays per-user
+
+
+def test_same_named_files_in_different_folders_do_not_overwrite(
+    library: ReferenceLibrary, tmp_path
+) -> None:
+    for folder, topic in (("a", "estoicismo"), ("b", "existencialismo")):
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / "notes.md").write_text(f"Resumo sobre {topic}. " * 6, "utf-8")
+
+    library.index_folder(tmp_path, source="livros")
+
+    texts = {hit.text for hit in library.retrieve("Resumo", n_results=5)}
+    assert any("estoicismo" in text for text in texts)
+    assert any("existencialismo" in text for text in texts)
+
+
+def test_reindexing_a_shorter_file_drops_its_old_chunks(
+    library: ReferenceLibrary, tmp_path
+) -> None:
+    note = tmp_path / "longo.md"
+    note.write_text("\n\n".join(f"Parágrafo {i}. " + "x" * 880 for i in range(3)), "utf-8")
+    assert library.index_file(note, source="livros") == 3
+
+    note.write_text("Só um parágrafo agora, " + "y" * 100, "utf-8")
+    assert library.index_file(note, source="livros") == 1
+
+    assert len(library.retrieve("Parágrafo", n_results=10)) == 1

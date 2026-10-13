@@ -93,7 +93,7 @@ class VoiceListener:
             self._transcriber_thread.start()
 
     def stop(self, timeout: float = 2.0) -> None:
-        """Stop the listener and wait briefly for background threads."""
+        """Stop the listener, wait briefly for its threads, and delete unheard audio."""
         with self._lock:
             self._stop_event.set()
             self._capture_event.clear()
@@ -106,6 +106,17 @@ class VoiceListener:
 
             self._recorder_thread = None
             self._transcriber_thread = None
+            self._discard_queued_audio()
+
+    def _discard_queued_audio(self) -> None:
+        """Delete recordings nobody will transcribe, instead of leaving them in /tmp."""
+        while True:
+            try:
+                audio_path = self._audio_queue.get_nowait()
+            except queue.Empty:
+                return
+            audio_path.unlink(missing_ok=True)
+            self._audio_queue.task_done()
 
     def begin_capture(self) -> None:
         """Enable audio capture."""
@@ -117,28 +128,41 @@ class VoiceListener:
 
     def capture_once(self) -> None:
         """Record one chunk and queue it for transcription."""
+        if self._stop_event.is_set():
+            return  # stopped (or Whisper never loaded): nothing would transcribe it
         try:
             self._audio_queue.put(self._record_wav_file(self.record_seconds))
         except Exception:
             self._logger.exception("Failed to capture one voice chunk")
 
     def _recording_loop(self) -> None:
-        """Record chunks while capture is enabled."""
+        """Record chunks while capture is enabled, backing off while the mic fails."""
+        failures = 0
         while not self._stop_event.is_set():
             if not self._capture_event.wait(timeout=0.1):
                 continue
 
             try:
                 self._audio_queue.put(self._record_wav_file(self.record_seconds))
+                failures = 0
             except Exception:
-                self._logger.exception("Voice recording chunk failed")
+                failures += 1
+                self._logger.exception("Voice recording chunk failed (attempt %d)", failures)
+                # A missing or busy device fails instantly; retrying at full speed
+                # would spin a core and flood the log. Wait 1s, 2s, 4s… up to 30s.
+                self._stop_event.wait(min(30.0, 2.0 ** (failures - 1)))
 
     def _transcription_loop(self) -> None:
         """Transcribe queued audio files with local Whisper."""
         try:
             self._model = whisper.load_model(self.model_name)
         except Exception:
-            self._logger.exception("Failed to load Whisper model")
+            self._logger.exception("Failed to load Whisper model; voice input is off")
+            # Without a model nothing drains the queue, so recording on would
+            # only pile audio up on disk. Stop the recorder too.
+            self._stop_event.set()
+            self._capture_event.clear()
+            self._discard_queued_audio()
             return
 
         while not self._stop_event.is_set():

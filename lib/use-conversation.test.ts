@@ -24,7 +24,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-import { ApiError, streamCommand } from "@/lib/api";
+import { ApiError, captureVoiceOnce, streamCommand } from "@/lib/api";
 import { EMPTY_REPLY_NOTICE, INTERRUPTED_EMPTY_NOTICE, INTERRUPTED_NOTICE } from "@/lib/chat-helpers";
 import { useConversation } from "@/lib/use-conversation";
 
@@ -243,5 +243,45 @@ describe("useConversation", () => {
     expect(reply?.content).toContain("parcial");
     expect(reply?.consultedMemoryIds).toEqual(["mem-1"]);
     expect(result.current.status).toBe("online"); // stop stays neutral, never an error
+  });
+
+  it("says it is listening before the clip is recorded, not after", async () => {
+    let finishRecording: (status: "queued") => void = () => {};
+    vi.mocked(captureVoiceOnce).mockImplementation(
+      () => new Promise<"queued" | "disabled">((resolve) => (finishRecording = resolve)),
+    );
+    const { result } = renderHook(() => useConversation());
+    let action: Promise<void> = Promise.resolve();
+    await act(async () => {
+      action = result.current.handleAppAction("voice", "user");
+    });
+    // Still recording: the notice must already be on screen.
+    expect(result.current.messages.at(-1)?.content).toBe("Escutando um trecho de voz…");
+    expect(result.current.status).toBe("listening");
+    await act(async () => {
+      finishRecording("queued");
+      await action;
+    });
+    expect(result.current.status).toBe("online");
+  });
+
+  it("reports a disabled microphone instead of pretending to listen", async () => {
+    vi.mocked(captureVoiceOnce).mockImplementation(async () => "disabled");
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      await result.current.handleAppAction("voice", "user");
+    });
+    expect(result.current.messages.at(-1)?.content).toMatch(/desligada/);
+  });
+
+  it("shows why a dock action failed instead of blaming the network", async () => {
+    vi.mocked(captureVoiceOnce).mockImplementation(async () => {
+      throw new ApiError("Só o dono deste F.E.A.R. controla o microfone.", 403);
+    });
+    const { result } = renderHook(() => useConversation());
+    await act(async () => {
+      await result.current.handleAppAction("voice", "user");
+    });
+    expect(result.current.messages.at(-1)?.content).toBe("Só o dono deste F.E.A.R. controla o microfone.");
   });
 });

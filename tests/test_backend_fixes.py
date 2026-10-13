@@ -91,6 +91,12 @@ def _intent(text: str) -> str:
         ("next track", "next"),
         ("skip this song", "next"),
         ("play music", "resume"),
+        # Portuguese commands used to fall through to the model, which could
+        # claim it paused the music without touching Spotify.
+        ("pausa a música", "pause"),
+        ("próxima música", "next"),
+        ("volta a música anterior", "previous"),
+        ("toca uma música", "resume"),
     ],
 )
 def test_spotify_intents_match_whole_words(phrase: str, expected: str) -> None:
@@ -297,3 +303,158 @@ def test_remote_tts_closes_the_descriptor_it_opens(monkeypatch, tmp_path: Path) 
     for path in produced:
         assert path is not None
         path.unlink(missing_ok=True)
+
+
+# --- Obsidian notes belong to the machine's owner -----------------------------
+
+
+class _RecordingMemory:
+    def __init__(self) -> None:
+        self.added: list[tuple[str, str]] = []
+
+    def add_memory(self, text: str, speaker: str, source: str, user_id: str = "") -> str:
+        self.added.append((text, user_id))
+        return "id"
+
+
+def _obsidian_handler(memory: _RecordingMemory, vault: Path, owner: str = "owner-id"):
+    pytest.importorskip("watchdog")
+    from fear.memory.obsidian_watcher import ObsidianMarkdownHandler
+
+    return ObsidianMarkdownHandler(
+        memory=memory,  # type: ignore[arg-type]
+        user_id=lambda: owner,
+        vault_root=vault.resolve(),
+        debounce_seconds=0,
+    )
+
+
+def _file_event(path: Path):
+    return types.SimpleNamespace(is_directory=False, src_path=str(path))
+
+
+def test_obsidian_notes_are_stored_under_the_owner(tmp_path: Path) -> None:
+    # Unowned notes were invisible to every signed-in user.
+    memory = _RecordingMemory()
+    note = tmp_path / "note.md"
+    note.write_text("Uma ideia longa o suficiente para virar memória.", encoding="utf-8")
+
+    _obsidian_handler(memory, tmp_path).on_modified(_file_event(note))
+
+    assert memory.added == [("Uma ideia longa o suficiente para virar memória.", "owner-id")]
+
+
+def test_live_obsidian_events_skip_hidden_folders(tmp_path: Path) -> None:
+    # The initial walk skipped .trash/.obsidian, but live edits there were indexed.
+    memory = _RecordingMemory()
+    trashed = tmp_path / ".trash" / "old.md"
+    trashed.parent.mkdir()
+    trashed.write_text("Uma nota apagada que não deve voltar à memória.", encoding="utf-8")
+
+    _obsidian_handler(memory, tmp_path).on_created(_file_event(trashed))
+
+    assert memory.added == []
+
+
+# --- microphone loops back off instead of spinning ---------------------------
+
+
+def _audio_stubs(monkeypatch, *, whisper_loads: bool = True) -> None:
+    """Fake pyaudio + whisper so the listeners import without the audio stack."""
+    fake_pyaudio = types.ModuleType("pyaudio")
+    fake_pyaudio.paInt16 = 8  # type: ignore[attr-defined]
+    fake_pyaudio.PyAudio = object  # type: ignore[attr-defined]
+    fake_whisper = types.ModuleType("whisper")
+
+    def load_model(name: str):
+        if not whisper_loads:
+            raise RuntimeError("no model")
+        return object()
+
+    fake_whisper.load_model = load_model  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pyaudio", fake_pyaudio)
+    monkeypatch.setitem(sys.modules, "whisper", fake_whisper)
+    monkeypatch.delitem(sys.modules, "fear.audio.voice_listener", raising=False)
+    monkeypatch.delitem(sys.modules, "fear.input.clap_detector", raising=False)
+
+
+def test_voice_recorder_backs_off_while_the_mic_fails(monkeypatch) -> None:
+    _audio_stubs(monkeypatch)
+    from fear.audio.voice_listener import VoiceListener
+
+    listener = VoiceListener()
+    attempts: list[float] = []
+
+    def broken_mic(seconds: float) -> Path:
+        attempts.append(seconds)
+        raise OSError("no input device")
+
+    listener._record_wav_file = broken_mic  # type: ignore[method-assign]
+    waits: list[float] = []
+
+    def fake_wait(timeout: float | None = None) -> bool:
+        waits.append(timeout or 0.0)
+        if len(waits) >= 4:
+            listener._stop_event.set()
+        return listener._stop_event.is_set()
+
+    listener._stop_event.wait = fake_wait  # type: ignore[method-assign]
+    listener.begin_capture()
+    listener._recording_loop()
+
+    assert waits == [1.0, 2.0, 4.0, 8.0]  # 1s, 2s, 4s… instead of retrying at once
+
+
+def test_voice_listener_stops_recording_when_whisper_fails(monkeypatch, tmp_path: Path) -> None:
+    # Without a model nothing drains the queue: recordings used to pile up in /tmp.
+    _audio_stubs(monkeypatch, whisper_loads=False)
+    from fear.audio.voice_listener import VoiceListener
+
+    listener = VoiceListener()
+    stale = tmp_path / "queued.wav"
+    stale.write_bytes(b"RIFF")
+    listener._audio_queue.put(stale)
+    listener.begin_capture()
+
+    listener._transcription_loop()
+
+    assert listener._stop_event.is_set()
+    assert not listener._capture_event.is_set()
+    assert not stale.exists()
+    recorded: list[float] = []
+    listener._record_wav_file = lambda seconds: recorded.append(seconds)  # type: ignore[method-assign]
+    listener.capture_once()
+    assert recorded == []
+
+
+def test_clap_detector_gives_up_on_a_dead_microphone(monkeypatch) -> None:
+    _audio_stubs(monkeypatch)
+    from fear.input import clap_detector as module
+
+    class DeadStream:
+        reads = 0
+
+        def read(self, size: int, exception_on_overflow: bool = False) -> bytes:
+            DeadStream.reads += 1
+            raise OSError("device unplugged")
+
+        def is_active(self) -> bool:
+            return False
+
+        def close(self) -> None:
+            pass
+
+    class FakePyAudio:
+        def open(self, **kwargs):
+            return DeadStream()
+
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setattr(module.pyaudio, "PyAudio", FakePyAudio)
+    detector = module.ClapDetector(on_double_clap=lambda: None)
+    detector._stop_event.wait = lambda timeout=None: False  # type: ignore[method-assign]
+
+    detector._audio_loop()  # used to loop forever on the same OSError
+
+    assert DeadStream.reads == module._MAX_READ_FAILURES
