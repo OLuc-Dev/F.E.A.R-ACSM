@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     # The account that owns this machine's integrations (microphone, claps,
     # Spotify, Google Calendar, Obsidian vault). Empty: the first account created.
     owner_email: str = Field("", validation_alias="FEAR_OWNER_EMAIL")
+    # Set by the Windows app launcher: one built-in account, no sign-up or login.
+    desktop: bool = Field(False, validation_alias="FEAR_DESKTOP")
 
     # OpenRouter is used through an OpenAI-compatible client interface.
     openrouter_api_key: str = Field("", validation_alias="OPENROUTER_API_KEY")

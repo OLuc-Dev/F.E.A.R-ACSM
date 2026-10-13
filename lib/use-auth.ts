@@ -9,6 +9,7 @@ import {
   setOpenRouterKey as setOpenRouterKeyRequest,
 } from "@/lib/api";
 import { clearToken, getToken, setToken } from "@/lib/auth";
+import { adoptLaunchToken } from "@/lib/desktop";
 
 // Owns the signed-in user: restores the session on load, and exposes sign
 // in/up/out plus the BYO OpenRouter key update. `ready` flips true once the
@@ -18,6 +19,7 @@ export function useAuth() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    adoptLaunchToken();
     if (!getToken()) {
       setReady(true);
       return;

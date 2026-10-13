@@ -15,8 +15,9 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Bake the ONNX embedding model into the image so the first request doesn't
-# have to download it (fast, offline cold starts).
-RUN python -c "from chromadb.utils import embedding_functions as e; e.ONNXMiniLM_L6_V2()"
+# have to download it (fast, offline cold starts). The constructor alone is
+# lazy; only embedding something triggers the download.
+RUN python -c "from chromadb.utils import embedding_functions as e; e.ONNXMiniLM_L6_V2()(['warm-up'])"
 
 COPY fear ./fear
 COPY prompts ./prompts

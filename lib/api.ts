@@ -1,12 +1,15 @@
 // Typed client for the F.E.A.R. backend: one place for endpoints, shapes and errors.
 
 import { authHeaders } from "@/lib/auth";
+import { IS_DESKTOP } from "@/lib/desktop";
 
 // Resolve the backend base URL. An explicit NEXT_PUBLIC_FEAR_API_BASE always
 // wins; otherwise, in the browser, talk to the same host that served the page —
 // so opening the app from a phone at http://<pc-ip>:3000 just reaches the
 // backend at http://<pc-ip>:8765 with no config. Falls back to localhost (SSR).
 function resolveApiBase(): string {
+  // The desktop app's backend serves this page, so the API is same-origin.
+  if (IS_DESKTOP) return "";
   const explicit = process.env.NEXT_PUBLIC_FEAR_API_BASE;
   if (explicit) return explicit;
   if (typeof window !== "undefined" && window.location?.hostname) {

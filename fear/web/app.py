@@ -32,7 +32,8 @@ from fear.memory.personal_memory import PersonalMemory
 from fear.web.ratelimit import RateLimiter
 
 if TYPE_CHECKING:
-    from fear.audio.voice_listener import TranscriptEvent
+    from fear.audio.voice_listener import TranscriptEvent, VoiceListener
+    from fear.input.clap_detector import ClapDetector
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +421,16 @@ def _rate_limit(request: Request, limiter: RateLimiter, bucket: str) -> None:
         )
 
 
+def _refuse_in_desktop(settings: Settings) -> None:
+    """The desktop app's only account is created by its launcher.
+
+    Leaving sign-up open would let any program on the PC mint an account on
+    the local API.
+    """
+    if settings.desktop:
+        raise HTTPException(status_code=403, detail="O app do F.E.A.R. não usa cadastro nem login.")
+
+
 def require_reference_library(library: ReferenceLibrary | None) -> ReferenceLibrary:
     """Guard endpoints that need the knowledge store, returning a clean 503 if absent."""
     if library is None:
@@ -558,18 +569,25 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         watcher.start()
         application.state.obsidian_watcher = watcher
 
+    voice_listener_class: type[VoiceListener] | None = None
     if env_bool("FEAR_ENABLE_VOICE_LISTENER", default=False):
         # Imported here so the heavy audio stack (whisper, pyaudio) is only
         # needed when voice input is explicitly enabled — install it with
-        # `pip install -e ".[audio]"`.
-        from fear.audio.voice_listener import VoiceListener
+        # `pip install -e ".[audio]"`. Missing it turns voice off, not the app
+        # (the Windows app ships without Whisper).
+        try:
+            from fear.audio.voice_listener import VoiceListener as voice_listener_class
+        except ImportError:
+            logger.warning("Voice input is enabled but whisper/pyaudio is not installed")
+
+    if voice_listener_class is not None:
 
         def on_transcript(event: TranscriptEvent) -> None:
             application.state.loop.call_soon_threadsafe(
                 _spawn, application, process_voice_event(application, event)
             )
 
-        listener = VoiceListener(
+        listener = voice_listener_class(
             on_transcript=on_transcript,
             model_name=settings.whisper_model_name,
             sample_rate=settings.sample_rate,
@@ -578,8 +596,14 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         listener.start()
         application.state.voice_listener = listener
 
+    clap_detector_class: type[ClapDetector] | None = None
     if env_bool("FEAR_ENABLE_CLAP_DETECTOR", default=False):
-        from fear.input.clap_detector import ClapDetector
+        try:
+            from fear.input.clap_detector import ClapDetector as clap_detector_class
+        except ImportError:
+            logger.warning("Clap detection is enabled but pyaudio is not installed")
+
+    if clap_detector_class is not None:
 
         async def toggle_from_clap() -> None:
             await process_machine_command(application, "toggle Spotify playback", "clap")
@@ -587,7 +611,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         def on_double_clap() -> None:
             application.state.loop.call_soon_threadsafe(_spawn, application, toggle_from_clap())
 
-        clap_detector = ClapDetector(
+        clap_detector = clap_detector_class(
             on_double_clap=on_double_clap,
             threshold=settings.clap_threshold,
             sample_rate=settings.sample_rate,
@@ -661,6 +685,7 @@ async def auth_register(
     limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> AuthResponse:
     """Create an account and return a session token."""
+    _refuse_in_desktop(settings)
     _rate_limit(request, limiter, "register")
     # Optional closed registration: when FEAR_INVITE_CODE is set, require it.
     if settings.invite_code and not _matches_invite(payload.invite_code, settings.invite_code):
@@ -681,9 +706,11 @@ async def auth_login(
     request: Request,
     store: UserStore = Depends(get_user_store),
     security: Security = Depends(get_security),
+    settings: Settings = Depends(get_settings),
     limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> AuthResponse:
     """Exchange email + password for a session token."""
+    _refuse_in_desktop(settings)
     _rate_limit(request, limiter, "login")
     user = await asyncio.to_thread(
         store.verify_credentials, payload.email.strip().lower(), payload.password

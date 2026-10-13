@@ -1,0 +1,71 @@
+name: Windows app
+
+# Builds the F.E.A.R. installer. A tag like v0.2.0 publishes it as a GitHub
+# Release anyone can download; a manual run just keeps it as a build artifact.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build the UI as static files
+        shell: bash
+        run: |
+          npm ci
+          NEXT_PUBLIC_FEAR_DESKTOP=1 npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the app and its desktop stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[desktop]" "pyaudio>=0.2.14,<0.3" "pyinstaller>=6.10,<7"
+
+      - name: Bundle the embedding model
+        run: python packaging/fetch_model.py
+
+      - name: Build FEAR.exe
+        run: pyinstaller --noconfirm packaging/fear.spec
+
+      - name: Smoke-test the built app
+        # Boots the frozen backend headless and checks the UI, the API and the
+        # bundled model; a broken bundle stops here instead of being released.
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\FEAR\FEAR.exe -ArgumentList "--smoke-test" -Wait -PassThru
+          Get-Content "$env:LOCALAPPDATA\FEAR\fear.log" -ErrorAction SilentlyContinue | Select-Object -Last 40
+          if ($p.ExitCode -ne 0) { throw "smoke test failed ($($p.ExitCode))" }
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.0-dev" }
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$version" packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "installer build failed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FEAR-windows
+          path: dist/FEAR-Setup-*.exe
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/FEAR-Setup-*.exe
+          generate_release_notes: true

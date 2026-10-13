@@ -38,7 +38,11 @@ class ReferenceLibrary:
         self.collection_name = collection_name
         # Share one embedder across stores when provided; otherwise make our own.
         self._embedding = embedding or LocalEmbedding()
-        self._client = chromadb.PersistentClient(path=self.path)
+        self._client = chromadb.PersistentClient(
+            path=self.path,
+            # Chroma phones home with usage events by default; memory stays local.
+            settings=chromadb.config.Settings(anonymized_telemetry=False),
+        )
         self._collection = self._client.get_or_create_collection(name=self.collection_name)
 
     def index_folder(self, folder: str | Path, *, source: str) -> int:

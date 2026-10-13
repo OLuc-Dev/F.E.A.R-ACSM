@@ -38,6 +38,7 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { getStatus, type StatusResponse } from "@/lib/api";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
+import { IS_DESKTOP } from "@/lib/desktop";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 
@@ -306,6 +307,20 @@ export default function HomePage() {
         <span className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="size-4 animate-spin" /> carregando…
         </span>
+      </main>
+    );
+  }
+
+  // The app window always arrives with a session; losing it means the launcher
+  // restarted underneath, and a login form here would lead nowhere.
+  if (!user && IS_DESKTOP) {
+    return (
+      <main className="relative grid min-h-screen place-items-center text-foreground">
+        <Backdrop />
+        <p className="max-w-xs text-center text-sm text-muted-foreground">
+          A sessão do F.E.A.R. foi encerrada. Feche esta janela e abra o F.E.A.R. de novo pelo ícone perto do
+          relógio.
+        </p>
       </main>
     );
   }
