@@ -31,8 +31,8 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
   0,6 s também abre o microfone. A fala vira texto no próprio PC (Whisper): o
   áudio nunca sai dele. A resposta vem em voz alta, frase a frase, enquanto é
   escrita — na voz do F.E.A.R. (grave e levemente metálica) ou numa voz natural,
-  à escolha em **Configurações → Voz**. Abrir o microfone enquanto ele fala faz
-  ele se calar e ouvir você.
+  à escolha em **Configurações → Voz**. Abrir o microfone enquanto ele responde
+  interrompe a resposta: ele se cala e ouve você.
   O Windows precisa liberar o microfone em *Configurações → Privacidade →
   Microfone* para aplicativos da área de trabalho.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
