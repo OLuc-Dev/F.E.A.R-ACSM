@@ -45,8 +45,8 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
   mostra um aviso com o link quando há versão nova.
 - Opções avançadas continuam valendo num `.env` nessa pasta (veja
   `.env.example`).
-- O instalador é grande porque já traz a voz (reconhecimento e fala), que
-  funciona sem internet. A voz usa o Piper, que é GPL-3.0; a lista de
+- O instalador tem cerca de 720 MB porque já traz a voz (reconhecimento e
+  fala), que funciona sem internet. A voz usa o Piper, que é GPL-3.0; a lista de
   componentes e licenças vai junto, em `_internal\THIRD_PARTY_NOTICES.md` na
   pasta do app.
 

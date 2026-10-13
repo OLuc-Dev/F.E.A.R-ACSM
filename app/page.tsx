@@ -145,7 +145,9 @@ function flag(on: boolean | undefined, onLabel: string): { value: string; tone: 
 
 function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; busy: boolean }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4 py-10 text-center">
+    // "safe" centering: in a short window it scrolls from the top instead of
+    // cutting the top off, and the message box below stays in view.
+    <div className="flex flex-1 flex-col items-center px-4 py-10 text-center [justify-content:safe_center]">
       {/* A calm mark — one soft ring, one quiet point. No rotating neon. */}
       <div className="relative grid size-14 place-items-center">
         <div className="absolute inset-0 rounded-full border border-overlay/10" />
@@ -517,7 +519,8 @@ export default function HomePage() {
     {
       icon: <Mic className="size-3.5" />,
       label: "Voz",
-      ...flag(systemStatus?.voice, "ativa"),
+      // Talking through this window (local Whisper), or the machine's own microphone.
+      ...flag(systemStatus?.voice_input || systemStatus?.voice, "ativa"),
     },
     {
       icon: <Music className="size-3.5" />,
@@ -649,14 +652,14 @@ export default function HomePage() {
         {/* Deck */}
         <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.62fr)] lg:gap-6">
           {/* Conversation */}
-          <div className="panel flex h-[72vh] min-h-[460px] min-w-0 flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[78vh]">
+          <div className="panel flex h-[72vh] min-h-[460px] min-w-0 flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[min(78vh,calc(100dvh-18rem))]">
             {/* No exit-wait here: the thread must mount immediately so a fast first
                 reply is pinned to the bottom (it would otherwise stream into a
                 not-yet-mounted element). */}
             {showWelcome ? (
               <motion.div
                 key="welcome"
-                className="flex flex-1 flex-col"
+                className="flex min-h-0 flex-1 flex-col overflow-y-auto"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={fade}
