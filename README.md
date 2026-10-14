@@ -28,7 +28,8 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
 - **Fale com ele**: abriu a janela, é só falar — ele fica ouvindo e responde em
   voz alta, sem clicar em nada.
   - Enquanto ele fala, não ouve (para não responder a si mesmo) e volta a
-    ouvir assim que termina. Com a janela minimizada, o microfone desliga.
+    ouvir assim que termina. Com a janela minimizada ou fechada na bandeja, o
+    microfone desliga (e a câmera dos gestos também).
   - Um clique no microfone pausa ou retoma. **Ctrl+Espaço** (segure enquanto
     fala) ou, com os gestos ligados, apontar o indicador para cima por 0,6 s
     cortam a resposta para você falar na hora.

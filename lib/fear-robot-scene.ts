@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { isPageShown } from "./page-visibility";
 import { createRobotMotion, type RobotPointer, type RobotStatus } from "./fear-robot-motion";
 
 // Renderer, camera, lighting and teardown for the full-body presence. The
@@ -175,7 +176,8 @@ export function createRobotScene(container: HTMLDivElement, options: SceneOption
     const now = performance.now();
     const delta = Math.min((now - last) / 1000, 0.05);
     last = now;
-    if (disposed || !visible || document.hidden || !motion) return;
+    // Not drawn when nobody can see it: off screen, a hidden tab, or the app in the tray.
+    if (disposed || !visible || !isPageShown() || !motion) return;
     const frozen = !options.animate || reduced.matches;
     if (!frozen) time += delta;
     // A tracked hand wins over the cursor: F.E.A.R. looks at whoever it sees.
