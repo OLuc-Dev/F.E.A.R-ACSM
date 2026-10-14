@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import {
@@ -35,6 +35,7 @@ import {
 
 import { AuthPanel } from "@/components/ui/auth-panel";
 import { type GestureFeedback, GesturePanel } from "@/components/ui/gesture-panel";
+import { ListeningButton } from "@/components/ui/listening-button";
 import { MicButton } from "@/components/ui/mic-button";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
@@ -46,11 +47,18 @@ import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { APP_VERSION, IS_DESKTOP } from "@/lib/desktop";
-import { setServerVoice, stopSpeaking } from "@/lib/speech";
+import { isSpeaking, setServerVoice, stopSpeaking, subscribeSpeaking } from "@/lib/speech";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 import { type UpdateInfo, checkForUpdate } from "@/lib/updates";
 import { loadGesturePreference, saveGesturePreference } from "@/lib/use-hand-gestures";
+import {
+  type ListeningState,
+  loadAlwaysListen,
+  saveAlwaysListen,
+  useContinuousListening,
+  usePageVisible,
+} from "@/lib/use-continuous-listening";
 import { useVoiceInput } from "@/lib/use-voice-input";
 
 const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((module) => module.FearRobot), {
@@ -81,6 +89,18 @@ const MUSIC_GESTURES: Partial<Record<GestureCommand, { title: string; text: stri
 
 // What you said arrived while something else still ran (say, a dock action).
 const STILL_ANSWERING = "Ainda estou terminando a resposta anterior. Fale de novo em seguida.";
+
+// Under the message box while F.E.A.R. is always listening.
+const LISTEN_HINTS: Record<ListeningState | "paused", string> = {
+  paused: "Microfone pausado · clique no microfone para voltar",
+  off: "Microfone desligado",
+  starting: "Ligando o microfone…",
+  listening: "Ouvindo — é só falar · Ctrl+Espaço interrompe",
+  hearing: "Ouvindo você…",
+  transcribing: "Entendendo o que você disse…",
+  waiting: "Respondendo · volto a ouvir em seguida",
+  blocked: "Clique em qualquer lugar para eu começar a ouvir",
+};
 
 const STATUS_LABEL: Record<Status, string> = {
   online: "pronto",
@@ -274,19 +294,44 @@ export default function HomePage() {
   // Talking to F.E.A.R.: what you say goes in as a message, and the answer comes
   // back out loud. Problems show briefly under the composer, never in the thread.
   const [voiceNotice, setVoiceNotice] = useState<{ text: string; at: number } | null>(null);
+  const notify = (message: string) => setVoiceNotice({ text: message, at: Date.now() });
+  const sendSpoken = (spoken: string) => {
+    void send(spoken, speaker, { speak: true }).then((sent) => {
+      if (!sent) notify(STILL_ANSWERING);
+    });
+  };
   const voice = useVoiceInput({
-    onTranscript: (spoken) => {
-      void send(spoken, speaker, { speak: true }).then((sent) => {
-        if (!sent) setVoiceNotice({ text: STILL_ANSWERING, at: Date.now() });
-      });
-    },
-    onNotice: (message) => setVoiceNotice({ text: message, at: Date.now() }),
+    onTranscript: sendSpoken,
+    onNotice: notify,
     // Talking cuts F.E.A.R. off: a reply still being written stops, and it listens.
     onStart: stop,
   });
   const canTalk = Boolean(systemStatus?.voice_input);
 
-  useEffect(() => setListening(voice.state === "listening"), [voice.state, setListening]);
+  // Always listening: with the window open, what you say is heard without a
+  // click. It waits while F.E.A.R. answers or talks (so it never hears itself)
+  // and turns the microphone off whenever the window is hidden.
+  const [alwaysListen, setAlwaysListen] = useState(true);
+  useEffect(() => setAlwaysListen(loadAlwaysListen()), []);
+  const [listenPaused, setListenPaused] = useState(false);
+  const pageVisible = usePageVisible();
+  const speaking = useSyncExternalStore(subscribeSpeaking, isSpeaking, () => false);
+  const listensAlways = canTalk && alwaysListen;
+  const continuous = useContinuousListening({
+    active: listensAlways && !listenPaused && pageVisible,
+    hold: isBusy || speaking || voice.state !== "idle",
+    onTranscript: sendSpoken,
+    onNotice: notify,
+  });
+  const toggleListening = () => {
+    // Blocked, the click itself starts it (any click does).
+    if (continuous.state !== "blocked") setListenPaused((paused) => !paused);
+  };
+
+  useEffect(
+    () => setListening(voice.state === "listening" || continuous.state === "hearing"),
+    [voice.state, continuous.state, setListening],
+  );
 
   useEffect(() => {
     if (!voiceNotice) return;
@@ -345,6 +390,7 @@ export default function HomePage() {
     if (command === "fist_hold") {
       stop();
       voice.cancel();
+      continuous.cancel();
       show("Silêncio");
       return;
     }
@@ -763,7 +809,16 @@ export default function HomePage() {
                   className="max-h-36 min-h-[2.75rem] flex-1 resize-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/50"
                   placeholder="Comece com uma pergunta."
                 />
-                {canTalk && <MicButton voice={voice} />}
+                {canTalk &&
+                  (listensAlways ? (
+                    <ListeningButton
+                      listening={continuous}
+                      paused={listenPaused}
+                      onToggle={toggleListening}
+                    />
+                  ) : (
+                    <MicButton voice={voice} />
+                  ))}
                 {isBusy ? (
                   <button
                     type="button"
@@ -797,9 +852,11 @@ export default function HomePage() {
                       ? "Ouvindo… fale e pare quando terminar"
                       : voice.state === "transcribing"
                         ? "Entendendo o que você disse…"
-                        : canTalk
-                          ? "Enter envia · Ctrl+Espaço (segure) fala"
-                          : "Enter envia · Shift+Enter quebra linha"}
+                        : listensAlways
+                          ? LISTEN_HINTS[listenPaused ? "paused" : continuous.state]
+                          : canTalk
+                            ? "Enter envia · Ctrl+Espaço (segure) fala"
+                            : "Enter envia · Shift+Enter quebra linha"}
                 </span>
                 <kbd className="rounded border border-overlay/10 bg-overlay/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/50">
                   {modKey === "⌘" ? "⌘K" : "Ctrl+K"}
@@ -907,12 +964,15 @@ export default function HomePage() {
           if (appId === "memory") openSettings("memoria");
           else if (appId === "gestures") setGestures(!gesturesOn);
           else if (appId === "voice" && canTalk) {
-            if (voice.state === "idle") void voice.start("auto");
+            if (listensAlways) toggleListening();
+            else if (voice.state === "idle") void voice.start("auto");
             else void voice.stop();
           } else void handleAppAction(appId, speaker);
         }}
         openApps={[
-          ...(voice.state === "listening" ? ["voice"] : []),
+          ...(voice.state === "listening" || (listensAlways && !listenPaused && continuous.state !== "off")
+            ? ["voice"]
+            : []),
           ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
           ...(gesturesOn ? ["gestures"] : []),
         ]}
@@ -931,6 +991,12 @@ export default function HomePage() {
         initialTab={settingsTab}
         highlightMemoryIds={consultedFocus}
         hasOpenRouterKey={user.has_openrouter_key}
+        alwaysListen={alwaysListen}
+        onAlwaysListenChange={(on) => {
+          saveAlwaysListen(on);
+          setAlwaysListen(on);
+          setListenPaused(false);
+        }}
       />
 
       <AuthPanel

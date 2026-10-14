@@ -25,16 +25,23 @@ sem login.
 Cada instalação é um F.E.A.R. particular: memória, chave e configurações ficam
 em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
 
-- **Fale com ele**: clique no microfone ao lado do campo de texto e fale — ele
-  escuta até você parar. Ou segure o botão (ou **Ctrl+Espaço**) enquanto fala e
-  solte para enviar; com os gestos ligados, apontar o indicador para cima por
-  0,6 s também abre o microfone. A fala vira texto no próprio PC (Whisper): o
-  áudio nunca sai dele. A resposta vem em voz alta, frase a frase, enquanto é
-  escrita — na voz do F.E.A.R. (grave e levemente metálica) ou numa voz natural,
-  à escolha em **Configurações → Voz**. Abrir o microfone enquanto ele responde
-  interrompe a resposta: ele se cala e ouve você.
-  O Windows precisa liberar o microfone em *Configurações → Privacidade →
-  Microfone* para aplicativos da área de trabalho.
+- **Fale com ele**: abriu a janela, é só falar — ele fica ouvindo e responde em
+  voz alta, sem clicar em nada.
+  - Enquanto ele fala, não ouve (para não responder a si mesmo) e volta a
+    ouvir assim que termina. Com a janela minimizada, o microfone desliga.
+  - Um clique no microfone pausa ou retoma. **Ctrl+Espaço** (segure enquanto
+    fala) ou, com os gestos ligados, apontar o indicador para cima por 0,6 s
+    cortam a resposta para você falar na hora.
+  - Prefere que ele só ouça quando você pedir? Desligue *Ouvir assim que abrir*
+    em **Configurações → Voz**: aí você clica no microfone (ele escuta até você
+    parar) ou segura o botão/Ctrl+Espaço.
+  - Ele ouve tudo perto do microfone: com música alta nas caixas de som ou
+    outras pessoas conversando, pause o microfone ou use fone.
+  - A fala vira texto no próprio PC (Whisper): o áudio nunca sai dele. A
+    resposta vem frase a frase, enquanto é escrita — na voz do F.E.A.R. (grave
+    e levemente metálica) ou numa voz natural, também em **Configurações → Voz**.
+  - O Windows precisa liberar o microfone em *Configurações → Privacidade →
+    Microfone* para aplicativos da área de trabalho.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
   pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
 - **Música sem configuração**: comandos como "pausa a música", as palmas e os
@@ -109,12 +116,13 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   wearable: pela API do Spotify quando configurada, ou pelas teclas de mídia do
   Windows no app, que controlam qualquer player.
 - **Percepção de palmas** (`ClapDetector`) e **toques de wearable** (`/wearable/tap`).
-- **Conversa por voz** na janela: o microfone do campo de texto (clique, segure,
-  Ctrl+Espaço ou o gesto de apontar) grava no navegador, o backend transcreve
-  localmente com faster-whisper (`/voice/transcribe`) e a resposta é falada
-  frase a frase pelo Piper (`/voice/speak`), na voz do F.E.A.R. ou natural — com
-  a voz do sistema como reserva. Sem os modelos, tudo continua por texto e pela
-  voz do navegador.
+- **Conversa por voz** na janela: com a janela aberta ele fica ouvindo (cada
+  frase é separada no navegador e enviada como WAV) — ou, se preferir, pelo
+  microfone do campo de texto (clique, segure, Ctrl+Espaço ou o gesto de
+  apontar). O backend transcreve localmente com faster-whisper
+  (`/voice/transcribe`) e a resposta é falada frase a frase pelo Piper
+  (`/voice/speak`), na voz do F.E.A.R. ou natural — com a voz do sistema como
+  reserva. Sem os modelos, tudo continua por texto e pela voz do navegador.
 - **Voz da máquina** (opcional, rodando do código): push-to-talk no microfone do
   servidor (Whisper) e **TTS** natural (ElevenLabs) com fallback offline
   (`pyttsx3`).

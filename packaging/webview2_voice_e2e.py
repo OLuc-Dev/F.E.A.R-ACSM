@@ -2,12 +2,11 @@
 
 Run by the Windows workflow after the build. It starts the built app with
 WebView2's test switches — a fake microphone playing a recorded question, and
-DevTools on a local port — then uses the window like a person would: opens the
-microphone, waits for the question to show up in the conversation, and for
-F.E.A.R.'s spoken answer to play to the end. Nothing is granted from outside:
-the app itself must allow the microphone, and it is opened without a real
-click (as the pointing gesture does), so the answer plays only if the app lets
-speech play on its own.
+DevTools on a local port — and then does what a person would: nothing but talk.
+The app must hear the question on its own as soon as its window opens (it's
+always listening), put it in the conversation, and speak the answer to the end.
+Nothing is granted from outside: the app itself must allow the microphone and
+let speech play without a click.
 
     python packaging/webview2_voice_e2e.py dist/FEAR/FEAR.exe
 """
@@ -17,7 +16,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -46,13 +44,6 @@ WATCH_PLAYBACK = """() => {
 }"""
 QUESTIONS_SHOWN = """() => [...document.querySelectorAll("*")].filter(
   (el) => el.childElementCount === 0 && /capital/i.test(el.textContent || "")).length"""
-# A script-made press: unlike a real click it gives the page no user activation.
-PRESS_MIC = """() => {
-  const mic = [...document.querySelectorAll("button")].find((button) =>
-    /Falar com o F\\.E\\.A\\.R\\./.test(button.getAttribute("aria-label") || ""));
-  mic.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-  mic.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-}"""
 
 
 def microphone_file(folder: Path) -> Path:
@@ -118,21 +109,20 @@ def connect(playwright, app: subprocess.Popen, deadline: float):
 
 
 def talk_to_it(page, report: dict) -> None:
-    """Opens the microphone like the pointing gesture does, and listens to the answer."""
+    """Says the question — and only that: no click, no key — and listens to the answer."""
     page.wait_for_load_state("domcontentloaded")
     page.wait_for_timeout(1500)
     # The first run asks for an OpenRouter key. (Escape is the one key that
     # gives a page no user activation, so speech still has to play on its own.)
     page.keyboard.press("Escape")
-    mic = page.get_by_role("button", name=re.compile(r"Falar com o F\.E\.A\.R\."))
-    mic.wait_for(timeout=120_000)  # shows once the backend reports the voice
     page.evaluate(WATCH_PLAYBACK)
     shown = page.evaluate(QUESTIONS_SHOWN)
     started = time.monotonic()
+    # The fake microphone keeps repeating the question: the app hears it by itself.
     with page.expect_response(
         lambda response: response.url.endswith("/voice/transcribe"), timeout=120_000
     ) as transcription:
-        page.evaluate(PRESS_MIC)
+        pass
     report["heard"] = transcription.value.json().get("text", "")
     report["heard_after_s"] = round(time.monotonic() - started, 1)
     if "capital" not in report["heard"].lower():
@@ -140,6 +130,49 @@ def talk_to_it(page, report: dict) -> None:
     # It went into the conversation, and the answer was spoken to the end.
     page.wait_for_function(f"() => ({QUESTIONS_SHOWN})() > {shown}", timeout=30_000)
     page.wait_for_function("() => (window.__played || []).some((p) => p.ended)", timeout=120_000)
+
+
+MIC_LABEL = """() => [...document.querySelectorAll("button[aria-pressed]")]
+  .map((button) => button.getAttribute("aria-label") || "")
+  .find((label) => /microfone|ouvindo|ouvir/i.test(label)) || ''"""
+
+
+def app_window(pid: int) -> int:
+    """The app's own window (WinForms), not the tray icon's hidden one."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    found: list[int] = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        name = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, name, 256)
+        if owner.value == pid and user32.IsWindowVisible(hwnd):
+            if name.value.startswith("WindowsForms10.Window"):
+                found.append(hwnd)
+        return True
+
+    user32.EnumWindows(each, 0)
+    return found[0] if found else 0
+
+
+def close_to_tray(page, app: subprocess.Popen, report: dict) -> None:
+    """The window's X, as a person clicks it: hidden in the tray, it must stop listening."""
+    import ctypes
+
+    window = app_window(app.pid)
+    if not window:
+        raise AssertionError("the app's window wasn't found")
+    ctypes.windll.user32.PostMessageW(window, 0x0010, 0, 0)  # type: ignore[attr-defined]  # WM_CLOSE
+    page.wait_for_timeout(2500)
+    report["closed_visibility"] = page.evaluate("document.visibilityState")
+    report["closed_microphone"] = page.evaluate(MIC_LABEL)
+    if report["closed_visibility"] != "hidden" or "pausado" not in report["closed_microphone"]:
+        raise AssertionError("closed to the tray, it kept listening")
 
 
 def main(exe: str) -> int:
@@ -169,6 +202,8 @@ def main(exe: str) -> int:
             )
             try:
                 talk_to_it(page, report)
+                if sys.platform == "win32":
+                    close_to_tray(page, app, report)
                 report["ok"] = True
             finally:
                 # What the window played and showed, whatever happened.

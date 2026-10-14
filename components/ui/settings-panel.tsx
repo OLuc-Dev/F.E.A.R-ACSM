@@ -31,7 +31,7 @@ import {
 import { IS_DESKTOP } from "@/lib/desktop";
 import { loadVoiceStyle, saveVoiceStyle, startSpeaking, VOICE_STYLES, type VoiceStyle } from "@/lib/speech";
 import { fade, springSoft } from "@/lib/motion";
-import { AppSettingsTab } from "@/components/ui/app-settings-tab";
+import { AppSettingsTab, Switch } from "@/components/ui/app-settings-tab";
 import { MemoryTab } from "@/components/ui/memory-tab";
 
 export type Tab = "conhecimento" | "comportamento" | "memoria" | "app";
@@ -63,7 +63,7 @@ const INTEGRATIONS: { key: StatusFlag; label: string; hint: string }[] = IS_DESK
       { key: "music", label: "Música", hint: "teclas de mídia do Windows" },
       { key: "obsidian", label: "Obsidian", hint: "escolha a pasta na aba App" },
       { key: "calendar", label: "Agenda", hint: "ainda não disponível no app" },
-      { key: "voice", label: "Voz", hint: "ainda não disponível no app" },
+      { key: "voice", label: "Voz", hint: "reinstale o app para trazer a voz" },
     ]
   : [
       { key: "openrouter", label: "OpenRouter", hint: "OPENROUTER_API_KEY no .env" },
@@ -71,7 +71,7 @@ const INTEGRATIONS: { key: StatusFlag; label: string; hint: string }[] = IS_DESK
       { key: "spotify", label: "Spotify", hint: "python scripts/spotify_login.py" },
       { key: "obsidian", label: "Obsidian", hint: "OBSIDIAN_VAULT_PATH no .env" },
       { key: "calendar", label: "Agenda", hint: "python scripts/google_login.py" },
-      { key: "voice", label: "Voz", hint: "FEAR_ENABLE_VOICE_LISTENER=1" },
+      { key: "voice", label: "Voz", hint: 'pip install -e ".[voice]"' },
     ];
 
 function Field(props: React.InputHTMLAttributes<HTMLInputElement>) {
@@ -100,6 +100,8 @@ export function SettingsPanel({
   initialTab = "conhecimento",
   highlightMemoryIds,
   hasOpenRouterKey = false,
+  alwaysListen = false,
+  onAlwaysListenChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -111,6 +113,9 @@ export function SettingsPanel({
   highlightMemoryIds?: string[];
   // The signed-in user's own key counts as "OpenRouter on", not just the server's.
   hasOpenRouterKey?: boolean;
+  // Listening as soon as the window opens (the switch shows when there's a voice).
+  alwaysListen?: boolean;
+  onAlwaysListenChange?: (on: boolean) => void;
 }) {
   const [tab, setTab] = useState<Tab>("conhecimento");
   const [data, setData] = useState<KnowledgeListResponse | null>(null);
@@ -461,6 +466,20 @@ export function SettingsPanel({
                             ? "A voz do F.E.A.R. é gerada neste computador. Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."
                             : "Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."}
                         </p>
+                        {status?.voice_input && onAlwaysListenChange && (
+                          <>
+                            <Switch
+                              checked={alwaysListen}
+                              onChange={onAlwaysListenChange}
+                              label="Ouvir assim que abrir"
+                            />
+                            <p className="text-[11px] leading-4 text-muted-foreground/60">
+                              Com a janela aberta ele fica ouvindo e responde ao que você falar — sem clicar.
+                              Não ouve enquanto ele mesmo fala, nem com a janela minimizada. Desligado, você
+                              fala pelo botão do microfone ou segurando Ctrl+Espaço.
+                            </p>
+                          </>
+                        )}
                       </section>
 
                       {/* Model */}
@@ -507,7 +526,9 @@ export function SettingsPanel({
                           {INTEGRATIONS.map((item) => {
                             const on =
                               (status?.[item.key] ?? false) ||
-                              (item.key === "openrouter" && hasOpenRouterKey);
+                              (item.key === "openrouter" && hasOpenRouterKey) ||
+                              // Talking through the window counts, not only the machine's microphone.
+                              (item.key === "voice" && Boolean(status?.voice_input));
                             return (
                               <li
                                 key={item.key}

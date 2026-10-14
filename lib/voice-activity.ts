@@ -83,3 +83,91 @@ export class SpeechActivity {
     return null;
   }
 }
+
+// --- always listening ----------------------------------------------------------
+
+export const LISTEN_TUNING = {
+  /** Loud for this long and someone is talking (a little stricter: it hears the whole day). */
+  speechMs: 200,
+  /** This much quiet and they've finished. Pauses within a sentence are shorter. */
+  silenceMs: 1100,
+  /** Less speech than this was a click, a cough or a cup set down. */
+  minSpeechMs: 300,
+  /** Kept from just before speech was noticed, so the first syllable isn't cut. */
+  prerollMs: 400,
+  /** How slowly the room's floor follows it up (a fan switched on), in ms. */
+  floorRiseMs: 8000,
+  maxMs: VOICE_TUNING.maxMs,
+} as const;
+
+export type SegmentEvent = "start" | "end" | null;
+
+/**
+ * Finds sentences in a microphone that never closes: "start" when someone
+ * begins talking, "end" once they stop. The room's floor follows the quietest
+ * moments down at once and creeps up only slowly, so a long session adapts to
+ * a fan or the street without mistaking a voice for the room.
+ */
+export class SpeechSegmenter {
+  private floor: number | null = null;
+  private last: number | null = null;
+  private loudFor = 0;
+  private quietFor = 0;
+  private speakingSince: number | null = null;
+  private spokeFor = 0;
+
+  /** Whether someone is talking right now (between "start" and "end"). */
+  get speaking(): boolean {
+    return this.speakingSince !== null;
+  }
+
+  /** How much of the last sentence was actually loud (ms). */
+  get speechMs(): number {
+    return this.spokeFor;
+  }
+
+  /** Forget any sentence in progress (the room's floor is kept). */
+  reset(): void {
+    this.last = null;
+    this.loudFor = 0;
+    this.quietFor = 0;
+    this.speakingSince = null;
+    this.spokeFor = 0;
+  }
+
+  update(t: number, rms: number): SegmentEvent {
+    const dt = this.last === null ? 0 : Math.max(0, t - this.last);
+    this.last = t;
+    if (rms > 0) {
+      if (this.floor === null || rms < this.floor) this.floor = rms;
+      // Up slowly even mid-sentence: speech keeps dipping between words (which
+      // pulls the floor back down), a fan never does — so a noise that starts
+      // and stays ends as a "sentence" within seconds instead of for good.
+      else this.floor += (rms - this.floor) * Math.min(1, dt / LISTEN_TUNING.floorRiseMs);
+    }
+    const threshold = Math.max(VOICE_TUNING.minThreshold, (this.floor ?? 0) * VOICE_TUNING.floorFactor);
+
+    if (rms >= threshold) {
+      this.loudFor += dt;
+      this.quietFor = 0;
+      if (this.speaking) this.spokeFor += dt;
+    } else {
+      this.loudFor = 0;
+      if (rms < threshold * 0.7) this.quietFor += dt;
+    }
+
+    if (!this.speaking) {
+      if (this.loudFor < LISTEN_TUNING.speechMs) return null;
+      this.speakingSince = t - this.loudFor;
+      this.spokeFor = this.loudFor;
+      this.quietFor = 0;
+      return "start";
+    }
+    const long = t - (this.speakingSince ?? t) >= LISTEN_TUNING.maxMs;
+    if (this.quietFor < LISTEN_TUNING.silenceMs && !long) return null;
+    this.speakingSince = null;
+    this.loudFor = 0;
+    this.quietFor = 0;
+    return "end";
+  }
+}

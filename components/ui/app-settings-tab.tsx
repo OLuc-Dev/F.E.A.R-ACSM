@@ -24,7 +24,7 @@ function Section({ icon, title, children }: { icon: ReactNode; title: string; ch
   );
 }
 
-function Switch({
+export function Switch({
   checked,
   disabled,
   onChange,

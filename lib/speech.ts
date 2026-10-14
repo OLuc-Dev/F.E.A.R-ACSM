@@ -181,8 +181,32 @@ export function pickVoice(
   return cachedVoice;
 }
 
+// --- whether F.E.A.R. is talking (the always-on microphone must not hear it) ---
+
+const talking = new Set<object>();
+const talkingListeners = new Set<() => void>();
+
+function markTalking(speaker: object, on: boolean): void {
+  const before = talking.size > 0;
+  if (on) talking.add(speaker);
+  else talking.delete(speaker);
+  if (before !== talking.size > 0) talkingListeners.forEach((listener) => listener());
+}
+
+/** Whether F.E.A.R. is saying something right now. */
+export function isSpeaking(): boolean {
+  return talking.size > 0;
+}
+
+/** Called whenever F.E.A.R. starts or stops talking (fits useSyncExternalStore). */
+export function subscribeSpeaking(listener: () => void): () => void {
+  talkingListeners.add(listener);
+  return () => talkingListeners.delete(listener);
+}
+
 export class BrowserSpeaker implements Speaker {
   private stopped = false;
+  private pending = 0;
 
   say(sentence: string): void {
     // The browser queues utterances itself, so sentences play in order.
@@ -193,7 +217,17 @@ export class BrowserSpeaker implements Speaker {
   speak(sentence: string): Promise<void> {
     const text = speechText(sentence);
     if (this.stopped || !speechSupported() || !hasWords(text)) return Promise.resolve();
-    return new Promise((resolve) => {
+    this.pending++;
+    markTalking(this, true);
+    return new Promise<void>((done) => {
+      let finished = false;
+      const resolve = () => {
+        if (finished) return;
+        finished = true;
+        this.pending = Math.max(0, this.pending - 1);
+        if (!this.pending) markTalking(this, false);
+        done();
+      };
       const utterance = new SpeechSynthesisUtterance(text);
       const voice = pickVoice();
       if (voice) {
@@ -214,6 +248,8 @@ export class BrowserSpeaker implements Speaker {
   /** Silences it for good: later sentences of the same reply are dropped too. */
   stop(): void {
     this.stopped = true;
+    this.pending = 0;
+    markTalking(this, false);
     if (speechSupported()) window.speechSynthesis.cancel();
   }
 }
@@ -225,6 +261,10 @@ export type Fallback = Pick<BrowserSpeaker, "speak" | "stop">;
 
 // One sentence playing, the next two synthesizing.
 const LOOKAHEAD = 2;
+// A sentence that takes longer than this to synthesize, or to play, is given
+// up on: a stuck request must never leave F.E.A.R. "talking" (and deaf) for good.
+const SYNTHESIS_TIMEOUT_MS = 20_000;
+const PLAYBACK_LIMIT_MS = 90_000;
 
 type Spoken = { audio: Blob } | { text: string };
 
@@ -262,23 +302,41 @@ export class ServerSpeaker implements Speaker {
     this.audio?.pause();
     this.finishCurrent?.();
     this.fallback.stop();
+    markTalking(this, false);
   }
 
   private request(): void {
     while (this.requested.length < LOOKAHEAD && this.waiting.length) {
       const text = this.waiting.shift() as string;
+      const request = new AbortController();
+      const abort = () => request.abort();
+      this.controller.signal.addEventListener("abort", abort, { once: true });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // Settles even if the request ignores being aborted.
+      const late = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          abort();
+          reject(new Error("the voice took too long"));
+        }, SYNTHESIS_TIMEOUT_MS);
+      });
       this.requested.push(
-        this.fetchVoice(text, this.style, this.controller.signal).then(
-          (audio): Spoken => ({ audio }),
-          // The backend voice failed for this one: the browser's says it, in its turn.
-          (): Spoken | null => (this.stopped ? null : { text }),
-        ),
+        Promise.race([this.fetchVoice(text, this.style, request.signal), late])
+          .then(
+            (audio): Spoken => ({ audio }),
+            // The backend voice failed for this one: the browser's says it, in its turn.
+            (): Spoken | null => (this.stopped ? null : { text }),
+          )
+          .finally(() => {
+            clearTimeout(timer);
+            this.controller.signal.removeEventListener("abort", abort);
+          }),
       );
     }
   }
 
   private async drain(): Promise<void> {
     this.draining = true;
+    markTalking(this, true);
     while (this.requested.length && !this.stopped) {
       const next = this.requested.shift() as Promise<Spoken | null>;
       this.request(); // the one after starts synthesizing while this one plays
@@ -288,6 +346,7 @@ export class ServerSpeaker implements Speaker {
       else await this.fallback.speak(spoken.text);
     }
     this.draining = false;
+    markTalking(this, false);
   }
 
   private play(blob: Blob): Promise<void> {
@@ -295,7 +354,9 @@ export class ServerSpeaker implements Speaker {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       this.audio = audio;
+      let limit: ReturnType<typeof setTimeout> | undefined;
       const done = () => {
+        clearTimeout(limit);
         audio.onended = null;
         audio.onerror = null;
         URL.revokeObjectURL(url);
@@ -306,6 +367,7 @@ export class ServerSpeaker implements Speaker {
       this.finishCurrent = done;
       audio.onended = done;
       audio.onerror = done;
+      limit = setTimeout(done, PLAYBACK_LIMIT_MS);
       audio.play().catch(done);
     });
   }
