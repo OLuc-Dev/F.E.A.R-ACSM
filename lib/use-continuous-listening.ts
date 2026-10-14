@@ -27,6 +27,9 @@ const RESUME_AFTER_MS = 500;
 const ANSWER_GRACE_MS = 8000;
 const TRANSCRIBE_TIMEOUT_MS = 60_000;
 
+export const MICROPHONE_LOST =
+  "O microfone foi desligado ou desconectado. Clique no microfone para tentar de novo.";
+
 const ALWAYS_KEY = "fear.voice.always";
 
 /** Whether F.E.A.R. listens as soon as the window opens (yes, unless turned off). */
@@ -44,18 +47,6 @@ export function saveAlwaysListen(on: boolean): void {
   } catch {
     // Storage unavailable: the choice lasts for this session.
   }
-}
-
-/** Whether the page is on screen (not minimized to the tray, not a hidden tab). */
-export function usePageVisible(): boolean {
-  const [visible, setVisible] = useState(true);
-  useEffect(() => {
-    const update = () => setVisible(document.visibilityState === "visible");
-    update();
-    document.addEventListener("visibilitychange", update);
-    return () => document.removeEventListener("visibilitychange", update);
-  }, []);
-  return visible;
 }
 
 // Sounds, not words: never worth an answer.
@@ -115,6 +106,8 @@ export function useContinuousListening({
   callbacks.current = { onTranscript, onNotice, transcribe };
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const graceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // When a click or key woke a microphone that was waiting for one.
+  const wokenAtRef = useRef(0);
 
   const set = useCallback((next: ListeningState) => {
     stateRef.current = next;
@@ -212,6 +205,15 @@ export function useContinuousListening({
           if (gen === micGenRef.current && stateRef.current === "listening") set("hearing");
         },
         onSentence: (audio) => void handleSentence(audio, gen),
+        onQuiet: () => {
+          if (gen === micGenRef.current && stateRef.current === "hearing") set("listening");
+        },
+        onLost: () => {
+          if (gen !== micGenRef.current) return;
+          close();
+          set("off");
+          callbacks.current.onNotice?.(MICROPHONE_LOST);
+        },
       });
     } catch (error) {
       if (gen !== micGenRef.current) return;
@@ -231,7 +233,7 @@ export function useContinuousListening({
     mic.pause();
     set("waiting");
     listenAgain();
-  }, [handleSentence, listenAgain, openMicrophone, set]);
+  }, [close, handleSentence, listenAgain, openMicrophone, set]);
 
   // Open while wanted, closed otherwise (the window hidden, the setting off).
   useEffect(() => {
@@ -257,7 +259,10 @@ export function useContinuousListening({
   // Blocked until a click: the first click or key anywhere starts it.
   useEffect(() => {
     if (state !== "blocked") return;
-    const retry = () => void open();
+    const retry = () => {
+      wokenAtRef.current = Date.now();
+      void open();
+    };
     window.addEventListener("pointerdown", retry, { once: true });
     window.addEventListener("keydown", retry, { once: true });
     return () => {
@@ -278,7 +283,15 @@ export function useContinuousListening({
     };
   }, [state]);
 
-  return { state, levelRef, cancel };
+  /** Open the microphone again (it failed, or went away). */
+  const retry = useCallback(() => {
+    if (!micRef.current) void open();
+  }, [open]);
+
+  /** Whether a click just now is the one that woke the microphone up. */
+  const justWoken = useCallback(() => Date.now() - wokenAtRef.current < 1500, []);
+
+  return { state, levelRef, cancel, retry, justWoken };
 }
 
 export type ContinuousListening = ReturnType<typeof useContinuousListening>;

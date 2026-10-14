@@ -57,8 +57,8 @@ import {
   loadAlwaysListen,
   saveAlwaysListen,
   useContinuousListening,
-  usePageVisible,
 } from "@/lib/use-continuous-listening";
+import { onPageShownChange, isPageShown, usePageShown } from "@/lib/page-visibility";
 import { useVoiceInput } from "@/lib/use-voice-input";
 
 const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((module) => module.FearRobot), {
@@ -93,7 +93,7 @@ const STILL_ANSWERING = "Ainda estou terminando a resposta anterior. Fale de nov
 // Under the message box while F.E.A.R. is always listening.
 const LISTEN_HINTS: Record<ListeningState | "paused", string> = {
   paused: "Microfone pausado · clique no microfone para voltar",
-  off: "Microfone desligado",
+  off: "Microfone desligado · clique no microfone para ligar",
   starting: "Ligando o microfone…",
   listening: "Ouvindo — é só falar · Ctrl+Espaço interrompe",
   hearing: "Ouvindo você…",
@@ -314,7 +314,7 @@ export default function HomePage() {
   const [alwaysListen, setAlwaysListen] = useState(true);
   useEffect(() => setAlwaysListen(loadAlwaysListen()), []);
   const [listenPaused, setListenPaused] = useState(false);
-  const pageVisible = usePageVisible();
+  const pageVisible = usePageShown();
   const speaking = useSyncExternalStore(subscribeSpeaking, isSpeaking, () => false);
   const listensAlways = canTalk && alwaysListen;
   const continuous = useContinuousListening({
@@ -324,8 +324,11 @@ export default function HomePage() {
     onNotice: notify,
   });
   const toggleListening = () => {
-    // Blocked, the click itself starts it (any click does).
-    if (continuous.state !== "blocked") setListenPaused((paused) => !paused);
+    // The click that woke a microphone waiting for one isn't also a pause.
+    if (continuous.state === "blocked" || continuous.justWoken()) return;
+    // Off though not paused: the microphone failed or went away — try again.
+    if (continuous.state === "off" && !listenPaused) return continuous.retry();
+    setListenPaused((paused) => !paused);
   };
 
   useEffect(
@@ -366,17 +369,17 @@ export default function HomePage() {
     }
     // Keys let go in another window never reach this one: leaving it counts as letting go.
     function hidden() {
-      if (document.visibilityState === "hidden") release();
+      if (!isPageShown()) release();
     }
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", release);
-    document.addEventListener("visibilitychange", hidden);
+    const stopWatching = onPageShownChange(hidden);
     return () => {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", release);
-      document.removeEventListener("visibilitychange", hidden);
+      stopWatching();
     };
   }, [canTalk]);
 

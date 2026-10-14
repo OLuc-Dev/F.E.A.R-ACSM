@@ -294,6 +294,54 @@ describe("BrowserSpeaker", () => {
     expect(isSpeaking()).toBe(false);
   });
 
+  it("keeps counting as talking through a long answer the browser reads in turn", async () => {
+    vi.useFakeTimers();
+    try {
+      type Utterance = { onstart: (() => void) | null; onend: (() => void) | null };
+      const queue: Utterance[] = [];
+      const synth = { speaking: false, pending: false, getVoices: () => [], cancel: vi.fn() };
+      vi.stubGlobal("speechSynthesis", { ...synth, speak: (utterance: Utterance) => queue.push(utterance) });
+      const speaker = new BrowserSpeaker();
+      const sentence = "Esta é uma frase longa o bastante para levar uns bons segundos para ser dita em voz.";
+      for (let i = 0; i < 5; i++) speaker.say(sentence); // the whole answer, queued at once
+      // The browser says them one after the other, ~5 s each.
+      for (const utterance of queue) {
+        utterance.onstart?.();
+        await vi.advanceTimersByTimeAsync(4800);
+        expect(isSpeaking()).toBe(true); // never "done" while a sentence is still to come
+        utterance.onend?.();
+      }
+      expect(isSpeaking()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits for the browser to really go quiet before counting as done", async () => {
+    vi.useFakeTimers();
+    try {
+      const utterances: { onend: (() => void) | null }[] = [];
+      const synth = {
+        speaking: true,
+        pending: false,
+        getVoices: () => [],
+        cancel: vi.fn(),
+        speak: (u: { onend: (() => void) | null }) => utterances.push(u),
+      };
+      vi.stubGlobal("speechSynthesis", synth);
+      const speaker = new BrowserSpeaker();
+      speaker.say("Um.");
+      utterances[0].onend?.(); // an end event that came early
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(isSpeaking()).toBe(true); // the browser is still talking
+      synth.speaking = false;
+      await vi.advanceTimersByTimeAsync(300);
+      expect(isSpeaking()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stays quiet once stopped, for the rest of that reply", () => {
     const speaker = new BrowserSpeaker();
     speaker.say("Um.");

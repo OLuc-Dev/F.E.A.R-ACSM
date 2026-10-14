@@ -2,6 +2,7 @@ import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
 
 import { type GestureCommand, GestureInterpreter, type HandPose, type HandSample } from "@/lib/hand-gestures";
 import type { HandTracker, HandTrackerFactory } from "@/lib/hand-tracker";
+import { isPageShown, onPageShownChange } from "@/lib/page-visibility";
 
 export type GestureStatus = "off" | "starting" | "watching" | "paused" | "error";
 
@@ -142,16 +143,16 @@ export function useHandGestures({
       return;
     }
     const sync = () => {
-      if (document.visibilityState === "visible") void resume();
+      if (isPageShown()) void resume();
       else {
         pause();
         setStatus("paused");
       }
     };
     sync();
-    document.addEventListener("visibilitychange", sync);
+    const stopWatching = onPageShownChange(sync);
     return () => {
-      document.removeEventListener("visibilitychange", sync);
+      stopWatching();
       pause();
     };
   }, [enabled, pause, resume]);

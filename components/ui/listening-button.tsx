@@ -5,8 +5,10 @@ import { Loader2, Mic, MicOff } from "lucide-react";
 
 import type { ContinuousListening, ListeningState } from "@/lib/use-continuous-listening";
 
+const PAUSED = "Microfone pausado — clique para voltar a ouvir";
+
 const LABELS: Record<ListeningState, string> = {
-  off: "Microfone pausado — clique para voltar a ouvir",
+  off: "Microfone desligado — clique para ligar",
   starting: "Ligando o microfone…",
   listening: "Ouvindo — é só falar (clique para pausar)",
   hearing: "Ouvindo você…",
@@ -50,7 +52,7 @@ export function ListeningButton({
     return () => cancelAnimationFrame(frame);
   }, [live, levelRef]);
 
-  const label = paused ? LABELS.off : LABELS[state];
+  const label = paused ? PAUSED : LABELS[state];
   const quiet = paused || state === "off" || state === "blocked";
   return (
     <button

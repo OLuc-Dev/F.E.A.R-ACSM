@@ -24,7 +24,7 @@ describe("encodeWav", () => {
 
 // --- the microphone, over fake browser audio --------------------------------
 
-const track = { stop: vi.fn() };
+const track: { stop: ReturnType<typeof vi.fn>; onended?: () => void } = { stop: vi.fn() };
 let audioState = "running";
 
 class FakeContext {
@@ -64,7 +64,9 @@ beforeEach(() => {
   track.stop.mockClear();
   audioState = "running";
   taps.length = 0;
-  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track] }) } });
+  vi.stubGlobal("navigator", {
+    mediaDevices: { getUserMedia: async () => ({ getTracks: () => [track], getAudioTracks: () => [track] }) },
+  });
   vi.stubGlobal("AudioContext", FakeContext);
   vi.stubGlobal("AudioWorkletNode", FakeTap);
   URL.createObjectURL = vi.fn(() => "blob:tap");
@@ -75,11 +77,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const quietly = { onSpeech: () => {}, onSentence: () => {}, onQuiet: () => {}, onLost: () => {} };
+
 describe("openContinuousMicrophone", () => {
   it("hands over each sentence with the moment just before it", async () => {
     const sentences: Blob[] = [];
     const onSpeech = vi.fn();
-    const mic = await openContinuousMicrophone({ onSpeech, onSentence: (audio) => sentences.push(audio) });
+    const mic = await openContinuousMicrophone({
+      ...quietly,
+      onSpeech,
+      onSentence: (audio) => sentences.push(audio),
+    });
     feed(1000, 0.004); // the room
     feed(1000, 0.08); // a sentence
     feed(1500, 0.004);
@@ -96,10 +104,7 @@ describe("openContinuousMicrophone", () => {
 
   it("hears nothing while paused, and listens again on resume", async () => {
     const sentences: Blob[] = [];
-    const mic = await openContinuousMicrophone({
-      onSpeech: () => {},
-      onSentence: (audio) => sentences.push(audio),
-    });
+    const mic = await openContinuousMicrophone({ ...quietly, onSentence: (audio) => sentences.push(audio) });
     feed(1000, 0.004);
     mic.pause(); // F.E.A.R. talking
     feed(1000, 0.08);
@@ -111,9 +116,27 @@ describe("openContinuousMicrophone", () => {
     expect(sentences).toHaveLength(1);
   });
 
+  it("says when what sounded like speech was only a cough", async () => {
+    const onQuiet = vi.fn();
+    const onSentence = vi.fn();
+    await openContinuousMicrophone({ ...quietly, onQuiet, onSentence });
+    feed(1000, 0.004);
+    feed(250, 0.3); // long enough to seem like speech, too short to be any
+    feed(1500, 0.004);
+    expect(onSentence).not.toHaveBeenCalled();
+    expect(onQuiet).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells when the microphone goes away", async () => {
+    const onLost = vi.fn();
+    await openContinuousMicrophone({ ...quietly, onLost });
+    track.onended?.(); // unplugged
+    expect(onLost).toHaveBeenCalledTimes(1);
+  });
+
   it("says so, and turns the microphone off, when audio waits for a click", async () => {
     audioState = "suspended";
-    const opening = openContinuousMicrophone({ onSpeech: () => {}, onSentence: () => {} });
+    const opening = openContinuousMicrophone(quietly);
     const failed = expect(opening).rejects.toBeInstanceOf(AudioNeedsGesture);
     await vi.advanceTimersByTimeAsync(500);
     await failed;

@@ -352,6 +352,63 @@ def test_webview2_still_opens_when_the_flags_cannot_be_given(monkeypatch) -> Non
     assert calls == {"original": True}  # pywebview's own setup, without the flags
 
 
+class _FakeAppWindow:
+    """pywebview's window, as far as telling its page goes."""
+
+    def __init__(self) -> None:
+        import types
+
+        self.scripts: list[str] = []
+        self.control = types.SimpleNamespace(Visible=True)
+        self.native = types.SimpleNamespace(
+            browser=types.SimpleNamespace(webview=self.control),
+            Invoke=lambda delegate: delegate(),  # runs "on the UI thread"
+        )
+
+    def evaluate_js(self, script: str) -> None:
+        self.scripts.append(script)
+
+
+def _wait_for(condition, seconds: float = 2.0) -> None:
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize("shown", [False, True])
+def test_the_page_learns_when_its_window_hides_in_the_tray(monkeypatch, shown: bool) -> None:
+    import types
+
+    system = types.ModuleType("System")
+
+    class Generic:
+        def __getitem__(self, _type):
+            return lambda fn: fn
+
+    system.Func = Generic()  # type: ignore[attr-defined]
+    system.Type = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "System", system)
+    monkeypatch.setattr(sys, "platform", "win32")
+    window = _FakeAppWindow()
+
+    desktop.tell_page_shown(window, shown)
+
+    _wait_for(lambda: window.scripts)
+    assert f"window.__fearHidden = {str(not shown).lower()};" in window.scripts[0]
+    assert "fear:window" in window.scripts[0]  # for a page already listening for it
+    assert window.control.Visible is shown  # hidden, the browser view stops drawing too
+
+
+def test_telling_the_page_never_breaks_the_window(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    class Broken:
+        def evaluate_js(self, script: str) -> None:
+            raise RuntimeError("page gone")
+
+    desktop.tell_page_shown(Broken(), False)  # no native window, page gone: still fine
+
+
 def test_autostart_command_starts_minimized() -> None:
     from fear.desktop_prefs import autostart_command
 

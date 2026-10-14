@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isFiller, useContinuousListening } from "@/lib/use-continuous-listening";
+import { isFiller, MICROPHONE_LOST, useContinuousListening } from "@/lib/use-continuous-listening";
 import {
   AudioNeedsGesture,
   type ContinuousMicrophone,
@@ -28,6 +28,13 @@ class FakeMicrophone implements ContinuousMicrophone {
   say() {
     this.handlers?.onSpeech();
     this.handlers?.onSentence(new Blob(["wav"], { type: "audio/wav" }));
+  }
+  cough() {
+    this.handlers?.onSpeech();
+    this.handlers?.onQuiet();
+  }
+  unplug() {
+    this.handlers?.onLost();
   }
 }
 
@@ -192,6 +199,48 @@ describe("useContinuousListening", () => {
     await advance(0);
     expect(hook.result.current.state).toBe("off");
     expect(notices[0]).toMatch(/permiss[aã]o/i);
+  });
+});
+
+describe("useContinuousListening, when things go sideways", () => {
+  it("goes back to listening after a cough that wasn't speech", async () => {
+    const { hook, mic } = setup();
+    await advance(600);
+    act(() => mic.cough());
+    expect(hook.result.current.state).toBe("listening"); // not stuck on "hearing you"
+  });
+
+  it("says when the microphone goes away, and a retry brings it back", async () => {
+    const { hook, mic, notices } = setup();
+    await advance(600);
+    act(() => mic.unplug());
+    expect(hook.result.current.state).toBe("off");
+    expect(mic.closed).toBe(true);
+    expect(notices).toEqual([MICROPHONE_LOST]);
+    mic.closed = false;
+    act(() => hook.result.current.retry());
+    await advance(600);
+    expect(hook.result.current.state).toBe("listening");
+  });
+
+  it("knows the click that woke it up", async () => {
+    const mic = new FakeMicrophone();
+    let attempts = 0;
+    const { hook } = setup({
+      open: async (handlers) => {
+        if (attempts++ === 0) throw new AudioNeedsGesture();
+        mic.handlers = handlers;
+        return mic;
+      },
+    });
+    await advance(0);
+    expect(hook.result.current.justWoken()).toBe(false);
+    await act(async () => {
+      fireEvent.pointerDown(window);
+    });
+    expect(hook.result.current.justWoken()).toBe(true); // so that click isn't also a pause
+    await advance(2000);
+    expect(hook.result.current.justWoken()).toBe(false);
   });
 });
 

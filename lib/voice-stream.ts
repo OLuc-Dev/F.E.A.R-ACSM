@@ -21,6 +21,10 @@ export interface MicrophoneHandlers {
   onSpeech(): void;
   /** They finished: what they said, as WAV. */
   onSentence(audio: Blob): void;
+  /** What seemed like speech was too short to be any (a cough, a click). */
+  onQuiet(): void;
+  /** The microphone went away (unplugged, or taken by the system). */
+  onLost(): void;
 }
 
 export type ContinuousMicrophoneFactory = (handlers: MicrophoneHandlers) => Promise<ContinuousMicrophone>;
@@ -98,7 +102,12 @@ function loudness(block: Float32Array): number {
   return Math.sqrt(sum / block.length);
 }
 
-export const openContinuousMicrophone: ContinuousMicrophoneFactory = async ({ onSpeech, onSentence }) => {
+export const openContinuousMicrophone: ContinuousMicrophoneFactory = async ({
+  onSpeech,
+  onSentence,
+  onQuiet,
+  onLost,
+}) => {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
   });
@@ -162,8 +171,13 @@ export const openContinuousMicrophone: ContinuousMicrophoneFactory = async ({ on
         const said = sentence;
         sentence = null;
         if (segmenter.speechMs >= LISTEN_TUNING.minSpeechMs) onSentence(encodeWav(said, rate));
+        else onQuiet();
       }
     };
+    // Ending by itself (not by close(), which never fires this): the device left.
+    stream.getAudioTracks().forEach((track) => {
+      track.onended = () => onLost();
+    });
 
     let closed = false;
     return {

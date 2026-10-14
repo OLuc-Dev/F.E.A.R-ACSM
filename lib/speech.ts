@@ -204,9 +204,14 @@ export function subscribeSpeaking(listener: () => void): () => void {
   return () => talkingListeners.delete(listener);
 }
 
+// A sentence the browser never starts saying (queued behind others, or dropped)
+// stops counting as "talking" after this.
+const NEVER_STARTED_MS = 120_000;
+
 export class BrowserSpeaker implements Speaker {
   private stopped = false;
   private pending = 0;
+  private silenceCheck: ReturnType<typeof setTimeout> | undefined;
 
   say(sentence: string): void {
     // The browser queues utterances itself, so sentences play in order.
@@ -218,14 +223,19 @@ export class BrowserSpeaker implements Speaker {
     const text = speechText(sentence);
     if (this.stopped || !speechSupported() || !hasWords(text)) return Promise.resolve();
     this.pending++;
+    clearTimeout(this.silenceCheck);
     markTalking(this, true);
     return new Promise<void>((done) => {
       let finished = false;
+      let watchdog: ReturnType<typeof setTimeout> | undefined;
+      let neverStarted: ReturnType<typeof setTimeout> | undefined;
       const resolve = () => {
         if (finished) return;
         finished = true;
+        clearTimeout(watchdog);
+        clearTimeout(neverStarted);
         this.pending = Math.max(0, this.pending - 1);
-        if (!this.pending) markTalking(this, false);
+        if (!this.pending) this.unmarkWhenQuiet();
         done();
       };
       const utterance = new SpeechSynthesisUtterance(text);
@@ -237,10 +247,15 @@ export class BrowserSpeaker implements Speaker {
         utterance.lang = "pt-BR";
       }
       utterance.pitch = 0.85; // a shade lower — cold and even, in character
+      // Some browsers skip the end event: never wait past what the words could
+      // take — counted from when this sentence starts, not from the queue.
+      utterance.onstart = () => {
+        clearTimeout(neverStarted);
+        watchdog = setTimeout(resolve, 2000 + text.length * 120);
+      };
       utterance.onend = () => resolve();
       utterance.onerror = () => resolve();
-      // Some browsers skip the end event; never wait past what the words could take.
-      setTimeout(resolve, 2000 + text.length * 120);
+      neverStarted = setTimeout(resolve, NEVER_STARTED_MS);
       window.speechSynthesis.speak(utterance);
     });
   }
@@ -249,8 +264,22 @@ export class BrowserSpeaker implements Speaker {
   stop(): void {
     this.stopped = true;
     this.pending = 0;
+    clearTimeout(this.silenceCheck);
     markTalking(this, false);
     if (speechSupported()) window.speechSynthesis.cancel();
+  }
+
+  // Done only once the browser has gone quiet: an end event (or a watchdog)
+  // can come while it's still talking, and then the microphone would hear it.
+  private unmarkWhenQuiet(): void {
+    const synth = speechSupported() ? window.speechSynthesis : null;
+    if (!this.stopped && synth && (synth.speaking || synth.pending)) {
+      this.silenceCheck = setTimeout(() => {
+        if (!this.pending) this.unmarkWhenQuiet();
+      }, 250);
+      return;
+    }
+    markTalking(this, false);
   }
 }
 

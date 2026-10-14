@@ -186,6 +186,43 @@ def add_show_route(application: FastAPI, key: str, show: Callable[[], None]) -> 
     application.add_api_route("/desktop/show", desktop_show, methods=["POST"])
 
 
+def tell_page_shown(window, shown: bool) -> None:
+    """Hidden in the tray or on screen: tell the page, which listens and films only on screen.
+
+    pywebview hides just the window, and WebView2 kept telling the page it was
+    visible — the Windows workflow caught F.E.A.R. still listening from the
+    tray. So the browser view is hidden along with the window (which also stops
+    it drawing in the background), and the page is told directly as well.
+    """
+    hidden = "false" if shown else "true"
+    script = (
+        f"window.__fearHidden = {hidden};"
+        f"window.dispatchEvent(new CustomEvent('fear:window', {{ detail: {{ hidden: {hidden} }} }}));"
+    )
+
+    def tell() -> None:
+        try:
+            window.evaluate_js(script)
+        except Exception:
+            logger.debug("Could not tell the page about its window", exc_info=True)
+
+    # evaluate_js waits for the page; never make the window's own thread wait on it.
+    threading.Thread(target=tell, daemon=True).start()
+    if sys.platform != "win32":
+        return
+    try:
+        from System import Func, Type  # type: ignore[import-not-found]
+
+        control = window.native.browser.webview
+
+        def apply() -> None:
+            control.Visible = shown
+
+        window.native.Invoke(Func[Type](apply))
+    except Exception:
+        logger.debug("Could not hide the browser view with its window", exc_info=True)
+
+
 def allow_media_for_own_page(window, origin: str) -> None:
     """Let the app's own page use the webcam (gestures) and microphone (voice), unprompted.
 
@@ -499,17 +536,37 @@ def main(argv: list[str] | None = None) -> None:
     bridge._window = window
     quitting = threading.Event()
 
+    shown = {"now": not args.minimized}
+
     def show() -> None:
         window.show()
         window.restore()
+        shown["now"] = True
+        tell_page_shown(window, True)
 
     def on_closing() -> bool:
         if quitting.is_set():
             return True
-        window.hide()  # keep listening in the tray
+        window.hide()  # stays in the tray, but stops listening and filming
+        shown["now"] = False
+        tell_page_shown(window, False)
         return False
 
     window.events.closing += on_closing
+
+    # Minimized to the taskbar counts as away too; back on screen, it listens again.
+    def on_minimized() -> None:
+        shown["now"] = False
+        tell_page_shown(window, False)
+
+    def on_restored() -> None:
+        if not shown["now"]:
+            shown["now"] = True
+            tell_page_shown(window, True)
+
+    window.events.minimized += on_minimized
+    window.events.restored += on_restored
+    window.events.maximized += on_restored
 
     port = pick_port()
     key = secrets.token_urlsafe(24)
@@ -523,6 +580,9 @@ def main(argv: list[str] | None = None) -> None:
         if not camera_ready.is_set():
             camera_ready.set()
             allow_media_for_own_page(window, f"http://127.0.0.1:{port}/")
+        # Each page loaded learns whether it's on screen (started in the tray, say).
+        if not shown["now"]:
+            tell_page_shown(window, False)
 
     window.events.loaded += on_loaded
 
