@@ -33,14 +33,12 @@ _ARTIFACTS = (
     "inscreva-se no canal",
     "obrigado por assistir",
 )
-# F.E.A.R.'s voice: 10% lower, a short comb (the metallic edge) and a slight
-# 60 Hz ring. Checked by round trip — Whisper still understands it as well as
-# the plain voice.
+# F.E.A.R.'s voice: 10% lower, with a short comb for a faint metallic edge —
+# no more, so it stays a voice rather than a robot. Checked by round trip:
+# Whisper understands it as well as the plain voice.
 FEAR_PITCH = 0.9
 _COMB_DELAY_S = 0.0032
-_COMB_GAIN = 0.4
-_RING_HZ = 60.0
-_RING_DEPTH = 0.15
+_COMB_GAIN = 0.2
 _PEAK = 0.89
 
 
@@ -122,11 +120,11 @@ class SpeechToText:
 
 
 def fear_voice(audio: np.ndarray, sample_rate: int, pitch: float = FEAR_PITCH) -> np.ndarray:
-    """Give plain speech F.E.A.R.'s timbre: lower, with a cold metallic edge.
+    """Give plain speech F.E.A.R.'s timbre: lower, with a faint metallic edge.
 
-    The speech must come in already sped up by `pitch` (Piper's length_scale):
-    stretching it back to its natural length is what lowers the pitch, so the
-    voice drops without slowing down.
+    The speech must come in already sped up by `pitch` (Piper's length_scale,
+    the online voice's rate): stretching it back to its natural length is what
+    lowers the pitch, so the voice drops without slowing down.
     """
     if audio.size == 0:
         return audio.astype(np.float32)
@@ -135,11 +133,8 @@ def fear_voice(audio: np.ndarray, sample_rate: int, pitch: float = FEAR_PITCH) -
         np.linspace(0.0, audio.size - 1, length), np.arange(audio.size), audio
     ).astype(np.float32)
     delay = max(1, int(sample_rate * _COMB_DELAY_S))
-    comb = stretched.copy()
-    comb[delay:] += _COMB_GAIN * stretched[:-delay]
-    t = np.arange(comb.size, dtype=np.float32) / sample_rate
-    ring = (1.0 - _RING_DEPTH) + _RING_DEPTH * np.cos(2.0 * np.pi * _RING_HZ * t)
-    voiced = comb * ring
+    voiced = stretched.copy()
+    voiced[delay:] += _COMB_GAIN * stretched[:-delay]
     peak = float(np.max(np.abs(voiced)))
     return (voiced / peak * _PEAK).astype(np.float32) if peak > 0 else voiced
 

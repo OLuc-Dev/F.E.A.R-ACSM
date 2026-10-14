@@ -6,10 +6,17 @@ import {
   currentSaying,
   type Fallback,
   isSpeaking,
+  loadOnlineVoice,
+  loadVoiceStyle,
   pickVoice,
+  saveOnlineVoice,
+  saveVoiceStyle,
   SentenceSplitter,
   ServerSpeaker,
+  setServerVoice,
   speechText,
+  startSpeaking,
+  stopSpeaking,
   subscribeSpeaking,
 } from "@/lib/speech";
 
@@ -269,6 +276,45 @@ describe("ServerSpeaker", () => {
     speaker.stop(); // cut short: the rest is never asked for
     await flush();
     expect(fetchVoice).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("the voice F.E.A.R. speaks with", () => {
+  beforeEach(() => window.localStorage.clear());
+  afterEach(() => {
+    stopSpeaking();
+    setServerVoice(null);
+    vi.unstubAllGlobals();
+  });
+
+  it("is the natural voice, online, until something else is chosen", () => {
+    expect(loadVoiceStyle()).toBe("natural");
+    expect(loadOnlineVoice()).toBe(true);
+    saveVoiceStyle("fear");
+    saveOnlineVoice(false);
+    expect(loadVoiceStyle()).toBe("fear");
+    expect(loadOnlineVoice()).toBe(false);
+  });
+
+  it("asks the backend in the chosen style, saying whether it may go online", async () => {
+    vi.stubGlobal("Audio", FakeAudio);
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    const asked: unknown[][] = [];
+    setServerVoice(async (...args) => {
+      asked.push(args);
+      return new Blob(["x"]);
+    });
+
+    saveOnlineVoice(false);
+    startSpeaking().say("Olá.");
+    startSpeaking("fear", true).say("Oi.");
+    await flush();
+
+    expect(asked.map(([text, style, , online]) => [text, style, online])).toEqual([
+      ["Olá.", "natural", false],
+      ["Oi.", "fear", true],
+    ]);
   });
 });
 

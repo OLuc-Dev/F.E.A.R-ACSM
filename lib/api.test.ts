@@ -5,6 +5,7 @@ import {
   CONSULTED_MEMORY_IDS_HEADER,
   UNAUTHORIZED_EVENT,
   captureVoiceOnce,
+  fetchVoice,
   getStatus,
   parseConsultedMemoryIdsHeader,
   sendCommand,
@@ -162,6 +163,26 @@ describe("parseConsultedMemoryIdsHeader", () => {
 
     await expect(getStatus()).rejects.toBeInstanceOf(ApiError);
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetchVoice asks for the sentence in the chosen style, online unless told otherwise", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(new Blob(["ID3"]), { headers: { "content-type": "audio/mpeg" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const signal = new AbortController().signal;
+
+    const audio = await fetchVoice("Olá.", "fear", signal);
+    await fetchVoice("Olá.", "natural", signal, false);
+
+    expect(await audio.text()).toBe("ID3");
+    const bodies = fetchMock.mock.calls.map((call) =>
+      JSON.parse((call as unknown as [string, RequestInit])[1].body as string),
+    );
+    expect(bodies).toEqual([
+      { text: "Olá.", style: "fear", online: true },
+      { text: "Olá.", style: "natural", online: false },
+    ]);
   });
 
   it("captureVoiceOnce tells a disabled mic apart from a queued clip", async () => {

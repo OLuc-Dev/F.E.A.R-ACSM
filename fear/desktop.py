@@ -435,6 +435,32 @@ def _voice_round_trip() -> bool:
     return True
 
 
+def _online_voice_round_trip() -> bool:
+    """The online voice must be in the app. Whether Microsoft answers from here is
+    only reported (a service on the internet); when it does, Whisper must hear it."""
+    import asyncio
+
+    try:
+        import edge_tts  # noqa: F401 — and aiohttp and certifi under it
+    except ImportError:
+        logger.exception("smoke test: the online voice isn't in the app")
+        return False
+    from fear.audio.online_voice import OnlineVoice, OnlineVoiceError
+    from fear.audio.speech import SpeechToText
+
+    try:
+        audio, media_type = asyncio.run(OnlineVoice().synthesize("Isto é um teste de voz."))
+    except OnlineVoiceError as exc:
+        logger.warning("smoke test: the online voice didn't answer from here: %s", exc)
+        return True
+    heard = SpeechToText(os.environ.get("FEAR_STT_MODEL", "")).transcribe(audio)
+    if "teste" not in heard.lower():
+        logger.error("smoke test: the online voice (%s) was heard as %r", media_type, heard)
+        return False
+    logger.info("smoke test: online voice (%s) round trip heard %r", media_type, heard)
+    return True
+
+
 def smoke_test(home: Path, resources: Path) -> int:
     """Boot the bundled app headless and check what a broken build would lose.
 
@@ -476,7 +502,9 @@ def smoke_test(home: Path, resources: Path) -> int:
         if len(LocalEmbedding().embed("teste")) != 384:
             logger.error("smoke test: the embedding model is broken")
             return 1
-        if voice_dir(resources) is not None and not _voice_round_trip():
+        if voice_dir(resources) is not None and not (
+            _voice_round_trip() and _online_voice_round_trip()
+        ):
             return 1
         logger.info("smoke test passed")
         return 0

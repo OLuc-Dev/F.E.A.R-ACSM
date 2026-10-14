@@ -118,6 +118,14 @@ def talk_to_it(page, report: dict) -> None:
     page.evaluate(WATCH_PLAYBACK)
     shown = page.evaluate(QUESTIONS_SHOWN)
     started = time.monotonic()
+    # Which voice spoke (reported, not required): Microsoft's sends MP3, the local one WAV.
+    voices: list[str] = report.setdefault("voices", [])
+
+    def note_voice(response) -> None:
+        if response.url.endswith("/voice/speak"):
+            voices.append(response.headers.get("content-type", ""))
+
+    page.on("response", note_voice)
     # The fake microphone keeps repeating the question: the app hears it by itself.
     with page.expect_response(
         lambda response: response.url.endswith("/voice/transcribe"), timeout=120_000

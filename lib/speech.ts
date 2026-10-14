@@ -1,31 +1,49 @@
 // How F.E.A.R. speaks its replies: sentence by sentence while the reply is still
 // streaming, so it starts talking at once instead of after the whole answer.
-// The voice is Piper (the app's own, via the backend) when available, and the
-// best voice the browser has otherwise. Every entry point is a no-op where the
-// browser lacks what it needs.
+// The voice comes from the backend when it has one — Microsoft's neural voice
+// online, Piper on this computer — and is the best voice the browser has
+// otherwise. Every entry point is a no-op where the browser lacks what it needs.
 
 export type VoiceStyle = "fear" | "natural" | "system";
 
 export const VOICE_STYLES: { value: VoiceStyle; label: string; hint: string }[] = [
-  { value: "fear", label: "F.E.A.R.", hint: "grave e levemente metálica" },
-  { value: "natural", label: "Natural", hint: "a mesma voz, sem efeito" },
+  { value: "natural", label: "Natural", hint: "a voz como ela é" },
+  { value: "fear", label: "F.E.A.R.", hint: "mais grave, com um leve brilho metálico" },
   { value: "system", label: "Do sistema", hint: "a voz do Windows ou do navegador" },
 ];
 
 const STYLE_KEY = "fear.voice.style";
+const ONLINE_KEY = "fear.voice.online";
 
 export function loadVoiceStyle(): VoiceStyle {
   try {
     const saved = window.localStorage.getItem(STYLE_KEY);
-    return saved === "natural" || saved === "system" ? saved : "fear";
+    return saved === "fear" || saved === "system" ? saved : "natural";
   } catch {
-    return "fear";
+    return "natural";
   }
 }
 
 export function saveVoiceStyle(style: VoiceStyle): void {
   try {
     window.localStorage.setItem(STYLE_KEY, style);
+  } catch {
+    // Storage unavailable: the choice lasts for this session.
+  }
+}
+
+/** Whether the backend may use the online voice (Microsoft's): yes, unless turned off. */
+export function loadOnlineVoice(): boolean {
+  try {
+    return window.localStorage.getItem(ONLINE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+export function saveOnlineVoice(on: boolean): void {
+  try {
+    window.localStorage.setItem(ONLINE_KEY, on ? "on" : "off");
   } catch {
     // Storage unavailable: the choice lasts for this session.
   }
@@ -341,7 +359,12 @@ export class BrowserSpeaker implements Speaker {
   }
 }
 
-export type VoiceFetcher = (text: string, style: VoiceStyle, signal: AbortSignal) => Promise<Blob>;
+export type VoiceFetcher = (
+  text: string,
+  style: VoiceStyle,
+  signal: AbortSignal,
+  online?: boolean,
+) => Promise<Blob>;
 
 /** Who speaks a sentence when the backend can't: waits until it has been said. */
 export type Fallback = Pick<BrowserSpeaker, "speak" | "stop">;
@@ -355,7 +378,7 @@ const PLAYBACK_LIMIT_MS = 90_000;
 
 type Spoken = { audio: Blob; text: string } | { text: string };
 
-/** Plays the backend's Piper audio, sentence by sentence, each fetched just ahead. */
+/** Plays the backend's audio, sentence by sentence, each fetched just ahead. */
 export class ServerSpeaker implements Speaker {
   // Sentences not asked for yet, then those being synthesized, in order — at
   // most LOOKAHEAD ahead of playback, so an answer cut short leaves no backlog.
@@ -477,16 +500,23 @@ export class ServerSpeaker implements Speaker {
 let serverVoice: VoiceFetcher | null = null;
 let current: Speaker | null = null;
 
-/** Called once the backend reports a voice (Piper); null falls back to the browser. */
+/** Called once the backend reports a voice; null falls back to the browser. */
 export function setServerVoice(fetcher: VoiceFetcher | null): void {
   serverVoice = fetcher;
   if (fetcher) outputMeter(); // started early, it's running by the first sentence
 }
 
-/** A fresh speaker for a new reply, in the chosen style; silences the previous one. */
-export function startSpeaking(style: VoiceStyle = loadVoiceStyle()): Speaker {
+/** A fresh speaker for a new reply, in the chosen voice; silences the previous one. */
+export function startSpeaking(
+  style: VoiceStyle = loadVoiceStyle(),
+  online: boolean = loadOnlineVoice(),
+): Speaker {
   stopSpeaking();
-  current = serverVoice && style !== "system" ? new ServerSpeaker(serverVoice, style) : new BrowserSpeaker();
+  const voice = serverVoice;
+  current =
+    voice && style !== "system"
+      ? new ServerSpeaker((text, chosen, signal) => voice(text, chosen, signal, online), style)
+      : new BrowserSpeaker();
   return current;
 }
 

@@ -41,13 +41,20 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
     *Gestos com as mãos* (ou no ícone de mão do dock) e a câmera aparece ali,
     com a mão desenhada por cima, o gesto que ele está vendo e a lista do que
     cada gesto faz. Em janelas estreitas, ela fica no canto de cima.
-  - Em **Configurações → Voz**: *Ouvir assim que abrir* (desligado, você clica
-    no núcleo ou segura Ctrl+Espaço para falar), a voz (do F.E.A.R., grave e
-    levemente metálica, ou natural) e *Interface só de voz* — desligada, volta
-    o chat escrito, que também aparece sozinho se não houver voz disponível.
+  - A voz: com internet, ele fala com a voz neural Antonio, da Microsoft (a
+    mesma do "Ler em voz alta" do Edge), e o texto de cada frase que ele fala
+    vai para o serviço de voz da Microsoft. Sem internet, ou se o serviço
+    falhar, ele fala com a voz do próprio PC (Piper), sem ficar mudo.
+  - Em **Configurações → Comportamento → Voz**: o estilo (*Natural*, o padrão,
+    ou *F.E.A.R.*, mais grave e com um leve brilho metálico), *Voz neural
+    online* (desligada, a voz é sempre feita no PC), *Ouvir assim que abrir*
+    (desligado, você clica no núcleo ou segura Ctrl+Espaço para falar) e
+    *Interface só de voz* — desligada, volta o chat escrito, que também aparece
+    sozinho se não houver voz disponível.
   - Ele ouve tudo perto do microfone: com música alta nas caixas de som ou
     outras pessoas conversando, pause o microfone ou use fone.
-  - A fala vira texto no próprio PC (Whisper): o áudio nunca sai dele.
+  - O que você fala vira texto no próprio PC (Whisper): o áudio do seu
+    microfone nunca sai dele.
   - O Windows precisa liberar o microfone em *Configurações → Privacidade →
     Microfone* para aplicativos da área de trabalho.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
@@ -61,9 +68,9 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
 - Opções avançadas continuam valendo num `.env` nessa pasta (veja
   `.env.example`).
 - O instalador tem cerca de 720 MB porque já traz a voz (reconhecimento e
-  fala), que funciona sem internet. A voz usa o Piper, que é GPL-3.0; a lista de
-  componentes e licenças vai junto, em `_internal\THIRD_PARTY_NOTICES.md` na
-  pasta do app.
+  fala), que funciona sem internet. A voz local usa o Piper, que é GPL-3.0; a
+  lista de componentes e licenças vai junto, em `_internal\THIRD_PARTY_NOTICES.md`
+  na pasta do app.
 
 **Publicar uma versão:** crie e envie uma tag (`git tag v0.2.0 && git push origin
 v0.2.0`). O workflow *Windows app* gera o instalador, testa o app empacotado e
@@ -128,9 +135,10 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   frase é separada no navegador e enviada como WAV) — ou, se preferir, pelo
   microfone do campo de texto (clique, segure, Ctrl+Espaço ou o gesto de
   apontar). O backend transcreve localmente com faster-whisper
-  (`/voice/transcribe`) e a resposta é falada frase a frase pelo Piper
-  (`/voice/speak`), na voz do F.E.A.R. ou natural — com a voz do sistema como
-  reserva. Sem os modelos, tudo continua por texto e pela voz do navegador.
+  (`/voice/transcribe`) e a resposta é falada frase a frase (`/voice/speak`)
+  pela voz neural da Microsoft (edge-tts) quando há internet, e pelo Piper no
+  PC quando não há, natural ou no timbre do F.E.A.R. — com a voz do sistema
+  como reserva. Sem os modelos, tudo continua por texto e pela voz do navegador.
 - **Voz da máquina** (opcional, rodando do código): push-to-talk no microfone do
   servidor (Whisper) e **TTS** natural (ElevenLabs) com fallback offline
   (`pyttsx3`).
@@ -229,7 +237,7 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/config`             | `{model?, persona_mode?}` → ajusta na sessão (sem segredos). |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |
 | POST   | `/voice/transcribe`   | Áudio gravado (webm/opus, wav…) → `{text}`, transcrito no próprio PC. |
-| POST   | `/voice/speak`        | `{text, style}` → WAV falado pelo Piper (`fear` ou `natural`). |
+| POST   | `/voice/speak`        | `{text, style, online}` → a frase falada: MP3 da voz online (Microsoft) ou WAV do Piper (`natural` ou `fear`). |
 | POST   | `/voice/{start,stop,capture-once}` | Captura push-to-talk no microfone do servidor (se habilitada). |
 | WS     | `/ws`                 | Canal de comandos por texto.                |
 

@@ -98,6 +98,8 @@ class StatusResponse(BaseModel):
     # Talking to F.E.A.R. in the app: speech recognition, and its own voice.
     voice_input: bool
     voice_output: bool
+    # Its voice can come from Microsoft's neural voices (with internet).
+    voice_online: bool
     obsidian: bool
     calendar: bool
 
@@ -143,7 +145,9 @@ class SpeakRequest(BaseModel):
     """One sentence for F.E.A.R. to say (the UI sends a reply sentence by sentence)."""
 
     text: str = Field(max_length=2000)
-    style: Literal["fear", "natural"] = "fear"
+    style: Literal["fear", "natural"] = "natural"
+    # Microsoft's neural voice when it answers; false: only the local one.
+    online: bool = True
 
 
 class DesktopSettingsResponse(BaseModel):
@@ -676,12 +680,17 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.loop = asyncio.get_running_loop()
 
     # Local speech (optional): unavailable without its packages or models.
+    from fear.audio.online_voice import OnlineVoice
     from fear.audio.speech import SpeechToText, TextToSpeech
 
     stt = SpeechToText(settings.stt_model, language=settings.voice_language)
     voice_out = TextToSpeech(settings.piper_voice)
     application.state.stt = stt if stt.available else None
     application.state.voice_out = voice_out if voice_out.available else None
+    online_voice = OnlineVoice()
+    application.state.voice_online = (
+        online_voice if settings.online_voice and online_voice.available else None
+    )
     if settings.preload_voice:
         for engine in (application.state.stt, application.state.voice_out):
             if engine is not None:
@@ -882,7 +891,9 @@ async def status(
         spotify=owner and bool(spotify is not None and spotify.is_configured),
         music=owner and bool(music is not None and music.is_configured),
         voice_input=getattr(state, "stt", None) is not None,
-        voice_output=getattr(state, "voice_out", None) is not None,
+        voice_output=getattr(state, "voice_out", None) is not None
+        or getattr(state, "voice_online", None) is not None,
+        voice_online=getattr(state, "voice_online", None) is not None,
         obsidian=owner and getattr(state, "obsidian_watcher", None) is not None,
         calendar=owner and bool(calendar is not None and calendar.is_configured),
     )
@@ -1131,9 +1142,12 @@ async def voice_transcribe(
 async def voice_speak(
     payload: SpeakRequest, request: Request, user: User = Depends(get_current_user)
 ) -> Response:
-    """One sentence in F.E.A.R.'s voice, as WAV (locally, with Piper)."""
-    voice_out = getattr(request.app.state, "voice_out", None)
-    if voice_out is None:
+    """One sentence in F.E.A.R.'s voice: Microsoft's neural voice when it's wanted
+    and answers, the local one (Piper) otherwise."""
+    state = request.app.state
+    voice_out = getattr(state, "voice_out", None)
+    online = getattr(state, "voice_online", None) if payload.online else None
+    if voice_out is None and online is None:
         raise HTTPException(status_code=503, detail="A voz do F.E.A.R. não está instalada.")
     text = payload.text.strip()
     if not text:
@@ -1141,12 +1155,25 @@ async def voice_speak(
     # One sentence at a time, waiting here rather than in a worker thread; and
     # a sentence whose reply was interrupted in the meantime (the page gave up
     # on it) is skipped, so a long answer cut short leaves no backlog behind.
-    state = request.app.state
     if getattr(state, "speech_turn", None) is None:
         state.speech_turn = asyncio.Lock()
     async with state.speech_turn:
         if await request.is_disconnected():
             return Response(status_code=204)
+        if online is not None and online.ready():
+            from fear.audio.online_voice import OnlineVoiceError
+
+            try:
+                audio, media_type = await online.synthesize(text, payload.style)
+                return Response(
+                    content=audio, media_type=media_type, headers={"Cache-Control": "no-store"}
+                )
+            except OnlineVoiceError as exc:
+                logger.warning("Online voice failed, speaking locally: %s", exc)
+        if voice_out is None:
+            raise HTTPException(
+                status_code=503, detail="A voz online não respondeu e não há voz local instalada."
+            )
         wav = await asyncio.to_thread(voice_out.synthesize, text, payload.style)
     return Response(content=wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 

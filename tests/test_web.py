@@ -12,6 +12,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
+from fear.audio.online_voice import OnlineVoiceError
 from fear.auth import Security, UserStore
 from fear.brain.async_conversation import CommandResponse, StreamSession
 from fear.config import Settings
@@ -188,6 +189,7 @@ def test_status(client: TestClient) -> None:
         "music",
         "voice_input",
         "voice_output",
+        "voice_online",
         "obsidian",
         "calendar",
     }
@@ -761,8 +763,25 @@ class FakeEars:
 
 
 class FakeVoice:
-    def synthesize(self, text: str, style: str = "fear") -> bytes:
+    def synthesize(self, text: str, style: str = "natural") -> bytes:
         return b"RIFF" + f"{style}:{text}".encode()
+
+
+class FakeOnlineVoice:
+    """Microsoft's neural voice, answering — or not, like without internet."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.said: list[tuple[str, str]] = []
+
+    def ready(self) -> bool:
+        return True
+
+    async def synthesize(self, text: str, style: str = "natural") -> tuple[bytes, str]:
+        self.said.append((text, style))
+        if self.fail:
+            raise OnlineVoiceError("ConnectionError: no internet")
+        return b"ID3" + text.encode(), "audio/mpeg"
 
 
 def test_voice_routes_need_a_signed_in_user(client: TestClient) -> None:
@@ -808,6 +827,67 @@ def test_speak_returns_a_sentence_as_wav(client: TestClient) -> None:
         assert bad_style.status_code == 422
     finally:
         delattr(app.state, "voice_out")
+
+
+def test_speak_uses_the_online_voice_when_it_answers(client: TestClient) -> None:
+    app.state.voice_out, app.state.voice_online = FakeVoice(), FakeOnlineVoice()
+    try:
+        _, headers = _register(client)
+        response = client.post("/voice/speak", json={"text": "Olá."}, headers=headers)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/mpeg"
+        assert response.content == "ID3Olá.".encode()
+        assert app.state.voice_online.said == [("Olá.", "natural")]
+    finally:
+        delattr(app.state, "voice_out")
+        delattr(app.state, "voice_online")
+
+
+def test_speak_falls_back_to_the_local_voice_when_the_online_one_fails(
+    client: TestClient,
+) -> None:
+    app.state.voice_out, app.state.voice_online = FakeVoice(), FakeOnlineVoice(fail=True)
+    try:
+        _, headers = _register(client)
+        response = client.post(
+            "/voice/speak", json={"text": "Olá.", "style": "fear"}, headers=headers
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.content == "RIFFfear:Olá.".encode()
+    finally:
+        delattr(app.state, "voice_out")
+        delattr(app.state, "voice_online")
+
+
+def test_speak_keeps_to_the_local_voice_when_asked(client: TestClient) -> None:
+    online = FakeOnlineVoice()
+    app.state.voice_out, app.state.voice_online = FakeVoice(), online
+    try:
+        _, headers = _register(client)
+        response = client.post(
+            "/voice/speak", json={"text": "Olá.", "online": False}, headers=headers
+        )
+        assert response.headers["content-type"] == "audio/wav"
+        assert online.said == []  # nothing went to Microsoft
+    finally:
+        delattr(app.state, "voice_out")
+        delattr(app.state, "voice_online")
+
+
+def test_speak_says_so_when_no_voice_can_speak(client: TestClient) -> None:
+    app.state.voice_online = FakeOnlineVoice(fail=True)
+    try:
+        _, headers = _register(client)
+        failed = client.post("/voice/speak", json={"text": "Olá."}, headers=headers)
+        assert failed.status_code == 503
+        # Only the online voice, and it isn't wanted: there's no voice at all.
+        local_only = client.post(
+            "/voice/speak", json={"text": "Olá.", "online": False}, headers=headers
+        )
+        assert local_only.status_code == 503
+    finally:
+        delattr(app.state, "voice_online")
 
 
 def test_transcribe_refuses_a_recording_too_long_before_reading_it_all(
@@ -881,6 +961,16 @@ def test_status_reports_voice_in_and_out(client: TestClient) -> None:
     try:
         body = client.get("/status").json()
         assert body["voice_input"] is True and body["voice_output"] is True
+        assert body["voice_online"] is False
     finally:
         delattr(app.state, "stt")
         delattr(app.state, "voice_out")
+
+
+def test_status_counts_the_online_voice_as_a_voice(client: TestClient) -> None:
+    app.state.voice_online = FakeOnlineVoice()
+    try:
+        body = client.get("/status").json()
+        assert body["voice_output"] is True and body["voice_online"] is True
+    finally:
+        delattr(app.state, "voice_online")
