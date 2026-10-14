@@ -35,19 +35,31 @@ import {
 
 import { AuthPanel } from "@/components/ui/auth-panel";
 import { type GestureFeedback, GesturePanel } from "@/components/ui/gesture-panel";
-import { ListeningButton } from "@/components/ui/listening-button";
+import { ListeningButton, LISTENING_LABELS, PAUSED_LABEL } from "@/components/ui/listening-button";
 import { MicButton } from "@/components/ui/mic-button";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
+import { type CoreMode } from "@/components/ui/reactor-core";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { type HudReading, useHudCaptions, VoiceHud } from "@/components/ui/voice-hud";
 import { fetchVoice, getStatus, sendCommand, type StatusResponse } from "@/lib/api";
 import { humanizeError } from "@/lib/chat-helpers";
 import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
 import { APP_VERSION, IS_DESKTOP } from "@/lib/desktop";
-import { isSpeaking, setServerVoice, stopSpeaking, subscribeSpeaking } from "@/lib/speech";
+import {
+  currentSaying,
+  isSpeaking,
+  setServerVoice,
+  speechText,
+  stopSpeaking,
+  subscribeSaying,
+  subscribeSpeaking,
+  voiceLevel,
+} from "@/lib/speech";
+import { loadVoiceInterface, saveVoiceInterface } from "@/lib/ui-mode";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 import { type UpdateInfo, checkForUpdate } from "@/lib/updates";
@@ -495,6 +507,36 @@ export default function HomePage() {
     void send(value, speaker);
   }
 
+  // The voice interface (JARVIS-style) is F.E.A.R.'s face: you talk, nothing is
+  // written. The written chat stays for when there's no voice to talk with, or
+  // by choice in Configurações.
+  const [voiceUi, setVoiceUi] = useState(true);
+  useEffect(() => setVoiceUi(loadVoiceInterface()), []);
+  const hud = voiceUi && (systemStatus ? canTalk : IS_DESKTOP);
+  useEffect(() => {
+    if (!hud) return;
+    // Always dark, like a HUD; the theme chosen comes back with the written chat.
+    const root = document.documentElement;
+    const was = root.classList.contains("light") ? "light" : "dark";
+    root.classList.remove("light");
+    root.classList.add("dark");
+    return () => {
+      root.classList.remove("light", "dark");
+      root.classList.add(was);
+    };
+  }, [hud]);
+  // Subtitles: the last thing you said, the sentence F.E.A.R. is saying now.
+  const saying = useSyncExternalStore(subscribeSaying, currentSaying, () => "");
+  const lastYou = [...messages].reverse().find((message) => message.role === "user");
+  const lastFear = [...messages].reverse().find((message) => message.role === "fear");
+  const captions = useHudCaptions({
+    heard: lastYou?.content ?? "",
+    heardId: lastYou?.id ?? 0,
+    saying,
+    notice: status === "error" && lastFear ? speechText(lastFear.content).slice(-240) : "",
+    quiet: !isBusy && !speaking && voice.state === "idle" && continuous.state !== "transcribing",
+  });
+
   const backendTone = backendOnline === null ? "muted" : backendOnline ? "ok" : "off";
   const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
   const backendDot =
@@ -587,6 +629,170 @@ export default function HomePage() {
       ...flag(systemStatus?.calendar, "ok"),
     },
   ];
+
+  const overlays = (
+    <>
+      <MacOSDock
+        apps={fearApps}
+        onAppClick={(appId) => {
+          if (appId === "memory") openSettings("memoria");
+          else if (appId === "gestures") setGestures(!gesturesOn);
+          else if (appId === "voice" && canTalk) {
+            if (listensAlways) toggleListening();
+            else if (voice.state === "idle") void voice.start("auto");
+            else void voice.stop();
+          } else void handleAppAction(appId, speaker);
+        }}
+        openApps={[
+          ...(voice.state === "listening" || (listensAlways && !listenPaused && continuous.state !== "off")
+            ? ["voice"]
+            : []),
+          ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
+          ...(gesturesOn ? ["gestures"] : []),
+        ]}
+        className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
+      />
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          setStatusTick((tick) => tick + 1);
+          setConsultedFocus([]);
+        }}
+        status={systemStatus}
+        speaker={speaker}
+        initialTab={settingsTab}
+        highlightMemoryIds={consultedFocus}
+        hasOpenRouterKey={user.has_openrouter_key}
+        alwaysListen={alwaysListen}
+        onAlwaysListenChange={(on) => {
+          saveAlwaysListen(on);
+          setAlwaysListen(on);
+          setListenPaused(false);
+        }}
+        voiceInterface={voiceUi}
+        onVoiceInterfaceChange={(on) => {
+          saveVoiceInterface(on);
+          setVoiceUi(on);
+        }}
+      />
+
+      <AuthPanel
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        user={user}
+        onSignIn={signIn}
+        onSignUp={signUp}
+        onSignOut={signOut}
+        onSaveKey={saveOpenRouterKey}
+      />
+    </>
+  );
+
+  if (hud) {
+    // What the core shows: F.E.A.R. talking or thinking first, then you.
+    const manualListening = voice.state === "listening";
+    const coreMode: CoreMode = speaking
+      ? "speaking"
+      : isBusy
+        ? "thinking"
+        : manualListening
+          ? "hearing"
+          : voice.state === "transcribing" || continuous.state === "transcribing"
+            ? "transcribing"
+            : !listensAlways
+              ? "off"
+              : listenPaused
+                ? "paused"
+                : continuous.state === "hearing"
+                  ? "hearing"
+                  : continuous.state === "off" || continuous.state === "blocked"
+                    ? "off"
+                    : "listening";
+    const answering = speaking || isBusy;
+    const micLabel = !listensAlways
+      ? "Falar com o F.E.A.R. — clique, ou segure Ctrl+Espaço"
+      : listenPaused
+        ? PAUSED_LABEL
+        : LISTENING_LABELS[continuous.state];
+    const coreLabel = answering ? `${micLabel} · clique para interromper` : micLabel;
+    const hint = answering
+      ? "Clique no núcleo para interromper"
+      : manualListening
+        ? "Fale e pare quando terminar"
+        : !listensAlways
+          ? "Clique no núcleo para falar · ou segure Ctrl+Espaço"
+          : listenPaused
+            ? "Microfone pausado · clique no núcleo para voltar"
+            : continuous.state === "blocked"
+              ? "Clique em qualquer lugar para eu começar a ouvir"
+              : continuous.state === "off"
+                ? "Microfone desligado · clique no núcleo para ligar"
+                : continuous.state === "hearing"
+                  ? "Pode continuar — espero você terminar"
+                  : "É só falar";
+    const onCore = () => {
+      if (answering) return stop(); // cut it short: it listens again right after
+      if (listensAlways) return toggleListening();
+      if (voice.state === "idle") void voice.start("auto");
+      else void voice.stop();
+    };
+    const readings: HudReading[] = [
+      { label: "Backend", value: backendValue, on: backendTone === "ok" },
+      ...systemItems.map((item) => ({ label: item.label, value: item.value, on: item.tone === "ok" })),
+    ];
+    return (
+      <main className="relative min-h-screen">
+        <VoiceHud
+          mode={coreMode}
+          coreLabel={coreLabel}
+          corePressed={listensAlways ? !listenPaused : manualListening}
+          onCore={onCore}
+          inputLevel={manualListening ? voice.levelRef : continuous.levelRef}
+          outputLevel={voiceLevel}
+          hint={hint}
+          notice={voiceNotice?.text ?? null}
+          you={captions.you}
+          fear={captions.fear}
+          readings={readings}
+          backendOnline={backendOnline}
+          userName={accountName(user.email)}
+          hasKey={user.has_openrouter_key}
+          onAddKey={() => setAuthOpen(true)}
+          onAccount={() => setAuthOpen(true)}
+          onSettings={() => openSettings("conhecimento")}
+          update={update}
+          presence={
+            isDesktop ? (
+              <FearRobot
+                status={status}
+                pulse={memoryTick}
+                greetSignal={greetSignal}
+                gaze={gazeRef}
+                className="h-full"
+              />
+            ) : null
+          }
+          gestures={
+            gesturesOn ? (
+              <GesturePanel
+                onCommand={runGesture}
+                onTurnOff={() => setGestures(false)}
+                feedback={gestureFeedback}
+                musicAvailable={Boolean(systemStatus?.music)}
+                voiceAvailable={canTalk}
+                onHand={(hand) => {
+                  gazeRef.current = hand;
+                }}
+              />
+            ) : null
+          }
+        />
+        {overlays}
+      </main>
+    );
+  }
 
   return (
     <main className="relative min-h-screen text-foreground">
@@ -961,56 +1167,7 @@ export default function HomePage() {
         </section>
       </div>
 
-      <MacOSDock
-        apps={fearApps}
-        onAppClick={(appId) => {
-          if (appId === "memory") openSettings("memoria");
-          else if (appId === "gestures") setGestures(!gesturesOn);
-          else if (appId === "voice" && canTalk) {
-            if (listensAlways) toggleListening();
-            else if (voice.state === "idle") void voice.start("auto");
-            else void voice.stop();
-          } else void handleAppAction(appId, speaker);
-        }}
-        openApps={[
-          ...(voice.state === "listening" || (listensAlways && !listenPaused && continuous.state !== "off")
-            ? ["voice"]
-            : []),
-          ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
-          ...(gesturesOn ? ["gestures"] : []),
-        ]}
-        className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
-      />
-
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => {
-          setSettingsOpen(false);
-          setStatusTick((tick) => tick + 1);
-          setConsultedFocus([]);
-        }}
-        status={systemStatus}
-        speaker={speaker}
-        initialTab={settingsTab}
-        highlightMemoryIds={consultedFocus}
-        hasOpenRouterKey={user.has_openrouter_key}
-        alwaysListen={alwaysListen}
-        onAlwaysListenChange={(on) => {
-          saveAlwaysListen(on);
-          setAlwaysListen(on);
-          setListenPaused(false);
-        }}
-      />
-
-      <AuthPanel
-        open={authOpen}
-        onClose={() => setAuthOpen(false)}
-        user={user}
-        onSignIn={signIn}
-        onSignUp={signUp}
-        onSignOut={signOut}
-        onSaveKey={saveOpenRouterKey}
-      />
+      {overlays}
     </main>
   );
 }

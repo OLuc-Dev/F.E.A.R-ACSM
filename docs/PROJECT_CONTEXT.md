@@ -73,15 +73,21 @@ gravada).
   `lib/hand-worker.ts` (gestos com MediaPipe, num Web Worker), `settings-panel.tsx` +
   `app-settings-tab.tsx` (aba App), `lib/updates.ts` (aviso de versão nova), `auth-panel.tsx`,
   `mac-os-dock.tsx`, `messages.tsx`; `lib/api.ts` (cliente tipado + header de
-  auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`. Voz: por
-  padrão sempre ouvindo com a janela aberta — `listening-button.tsx` +
+  auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`. A face
+  padrão é a interface de voz (estilo J.A.R.V.I.S., sem chat escrito):
+  `voice-hud.tsx` (legendas do que está sendo dito, leituras, presença) +
+  `reactor-core.tsx` (o núcleo: microfone e voz do F.E.A.R. ao mesmo tempo); o
+  chat escrito fica como alternativa (`lib/ui-mode.ts`). Voz: por padrão sempre
+  ouvindo com a janela aberta — `listening-button.tsx` +
   `lib/use-continuous-listening.ts` (turnos: pausa enquanto ele responde/fala)
   sobre `lib/voice-stream.ts` (AudioWorklet, pré-roll, WAV) e o `SpeechSegmenter`
   de `lib/voice-activity.ts`; no modo manual, `mic-button.tsx` +
   `lib/use-voice-input.ts` (clique, segurar, Ctrl+Espaço, gesto de apontar) sobre
   `lib/voice-capture.ts` (MediaRecorder + nível). `lib/speech.ts` fala a resposta
   frase a frase durante o streaming (Piper pelo backend, voz do sistema de
-  reserva) e avisa quando ele está falando.
+  reserva) e avisa quando ele está falando, o que está dizendo e quão alto.
+  `lib/page-visibility.ts`: a página está à vista? (o app avisa quando a janela
+  vai para a bandeja, que o WebView2 sozinho não reporta).
 
 ## 4. Multiusuário e segurança
 

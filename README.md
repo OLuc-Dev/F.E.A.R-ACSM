@@ -25,22 +25,25 @@ sem login.
 Cada instalação é um F.E.A.R. particular: memória, chave e configurações ficam
 em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
 
-- **Fale com ele**: abriu a janela, é só falar — ele fica ouvindo e responde em
-  voz alta, sem clicar em nada.
-  - Enquanto ele fala, não ouve (para não responder a si mesmo) e volta a
-    ouvir assim que termina. Com a janela minimizada ou fechada na bandeja, o
-    microfone desliga (e a câmera dos gestos também).
-  - Um clique no microfone pausa ou retoma. **Ctrl+Espaço** (segure enquanto
-    fala) ou, com os gestos ligados, apontar o indicador para cima por 0,6 s
-    cortam a resposta para você falar na hora.
-  - Prefere que ele só ouça quando você pedir? Desligue *Ouvir assim que abrir*
-    em **Configurações → Voz**: aí você clica no microfone (ele escuta até você
-    parar) ou segura o botão/Ctrl+Espaço.
+- **Converse com ele, estilo J.A.R.V.I.S.**: a tela é só para conversar — sem
+  caixa de texto nem histórico. No centro, um núcleo que ouve você (ciano) e
+  fala com a voz do F.E.A.R. (âmbar), com legendas só do que está sendo dito
+  agora; em volta, o estado do sistema, o relógio e o robô.
+  - Abriu a janela, é só falar: ele fica ouvindo e responde em voz alta, sem
+    clicar em nada. Enquanto ele fala, não ouve (para não responder a si
+    mesmo) e volta a ouvir assim que termina. Com a janela minimizada ou
+    fechada na bandeja, o microfone desliga (e a câmera dos gestos também).
+  - Um clique no núcleo pausa ou retoma o microfone — ou, enquanto ele fala,
+    interrompe a resposta. **Ctrl+Espaço** (segure enquanto fala) ou, com os
+    gestos ligados, apontar o indicador para cima por 0,6 s também cortam a
+    resposta para você falar na hora.
+  - Em **Configurações → Voz**: *Ouvir assim que abrir* (desligado, você clica
+    no núcleo ou segura Ctrl+Espaço para falar), a voz (do F.E.A.R., grave e
+    levemente metálica, ou natural) e *Interface só de voz* — desligada, volta
+    o chat escrito, que também aparece sozinho se não houver voz disponível.
   - Ele ouve tudo perto do microfone: com música alta nas caixas de som ou
     outras pessoas conversando, pause o microfone ou use fone.
-  - A fala vira texto no próprio PC (Whisper): o áudio nunca sai dele. A
-    resposta vem frase a frase, enquanto é escrita — na voz do F.E.A.R. (grave
-    e levemente metálica) ou numa voz natural, também em **Configurações → Voz**.
+  - A fala vira texto no próprio PC (Whisper): o áudio nunca sai dele.
   - O Windows precisa liberar o microfone em *Configurações → Privacidade →
     Microfone* para aplicativos da área de trabalho.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a

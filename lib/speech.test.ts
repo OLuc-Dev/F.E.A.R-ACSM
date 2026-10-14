@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   BrowserSpeaker,
+  currentSaying,
   type Fallback,
   isSpeaking,
   pickVoice,
@@ -239,6 +240,20 @@ describe("ServerSpeaker", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("says which sentence is being spoken, for the subtitles", async () => {
+    const speaker = speakerFor(async (text) => blob(text), "fear");
+    speaker.say("**Primeira.**");
+    speaker.say("Segunda.");
+    await flush();
+    expect(currentSaying()).toBe("Primeira."); // what's heard, without the markdown
+    FakeAudio.current?.end();
+    await flush();
+    expect(currentSaying()).toBe("Segunda.");
+    FakeAudio.current?.end();
+    await flush();
+    expect(currentSaying()).toBe(""); // quiet again
   });
 
   it("asks the backend for only a couple of sentences ahead", async () => {

@@ -102,6 +102,8 @@ export function SettingsPanel({
   hasOpenRouterKey = false,
   alwaysListen = false,
   onAlwaysListenChange,
+  voiceInterface = false,
+  onVoiceInterfaceChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -116,6 +118,9 @@ export function SettingsPanel({
   // Listening as soon as the window opens (the switch shows when there's a voice).
   alwaysListen?: boolean;
   onAlwaysListenChange?: (on: boolean) => void;
+  // The voice interface (JARVIS-style, no written chat) instead of the chat.
+  voiceInterface?: boolean;
+  onVoiceInterfaceChange?: (on: boolean) => void;
 }) {
   const [tab, setTab] = useState<Tab>("conhecimento");
   const [data, setData] = useState<KnowledgeListResponse | null>(null);
@@ -466,6 +471,20 @@ export function SettingsPanel({
                             ? "A voz do F.E.A.R. é gerada neste computador. Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."
                             : "Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."}
                         </p>
+                        {status?.voice_input && onVoiceInterfaceChange && (
+                          <>
+                            <Switch
+                              checked={voiceInterface}
+                              onChange={onVoiceInterfaceChange}
+                              label="Interface só de voz (estilo J.A.R.V.I.S.)"
+                            />
+                            <p className="text-[11px] leading-4 text-muted-foreground/60">
+                              Ligada, a tela é só para conversar: o núcleo no centro ouve você e fala com a
+                              voz do F.E.A.R., com legendas do que está sendo dito — sem caixa de texto nem
+                              histórico. Desligada, volta o chat escrito.
+                            </p>
+                          </>
+                        )}
                         {status?.voice_input && onAlwaysListenChange && (
                           <>
                             <Switch

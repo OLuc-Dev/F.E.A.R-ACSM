@@ -190,6 +190,7 @@ function markTalking(speaker: object, on: boolean): void {
   const before = talking.size > 0;
   if (on) talking.add(speaker);
   else talking.delete(speaker);
+  if (!talking.size) setSaying("");
   if (before !== talking.size > 0) talkingListeners.forEach((listener) => listener());
 }
 
@@ -202,6 +203,62 @@ export function isSpeaking(): boolean {
 export function subscribeSpeaking(listener: () => void): () => void {
   talkingListeners.add(listener);
   return () => talkingListeners.delete(listener);
+}
+
+// --- what F.E.A.R. is saying right now (for subtitles) ------------------------
+
+let sayingNow = "";
+const sayingListeners = new Set<() => void>();
+
+function setSaying(text: string): void {
+  if (sayingNow === text) return;
+  sayingNow = text;
+  sayingListeners.forEach((listener) => listener());
+}
+
+/** The sentence F.E.A.R. is saying right now ("" when it's quiet). */
+export function currentSaying(): string {
+  return sayingNow;
+}
+
+/** Called whenever that changes (fits useSyncExternalStore). */
+export function subscribeSaying(listener: () => void): () => void {
+  sayingListeners.add(listener);
+  return () => sayingListeners.delete(listener);
+}
+
+// --- how loud F.E.A.R.'s own voice is (for the core that glows with it) -------
+
+let meter: { context: AudioContext; analyser: AnalyserNode; samples: Float32Array<ArrayBuffer> } | null =
+  null;
+
+// The analyser F.E.A.R.'s voice can play through — only once its audio graph is
+// running: routed into a paused graph, the voice would go silent.
+function outputMeter(): typeof meter {
+  if (!meter) {
+    if (typeof AudioContext === "undefined") return null;
+    try {
+      const context = new AudioContext();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.connect(context.destination);
+      meter = { context, analyser, samples: new Float32Array(analyser.fftSize) };
+      void context.resume().catch(() => undefined);
+    } catch {
+      return null;
+    }
+  }
+  return meter.context.state === "running" ? meter : null;
+}
+
+/** Loudness of F.E.A.R.'s voice right now (RMS, 0–1); 0 where it can't be measured. */
+export function voiceLevel(): number {
+  const active = meter?.context.state === "running" ? meter : null;
+  if (!active || !isSpeaking()) return 0;
+  active.analyser.getFloatTimeDomainData(active.samples);
+  let sum = 0;
+  for (const value of active.samples) sum += value * value;
+  return Math.sqrt(sum / active.samples.length);
 }
 
 // A sentence the browser never starts saying (queued behind others, or dropped)
@@ -252,6 +309,7 @@ export class BrowserSpeaker implements Speaker {
       utterance.onstart = () => {
         clearTimeout(neverStarted);
         watchdog = setTimeout(resolve, 2000 + text.length * 120);
+        setSaying(text);
       };
       utterance.onend = () => resolve();
       utterance.onerror = () => resolve();
@@ -295,7 +353,7 @@ const LOOKAHEAD = 2;
 const SYNTHESIS_TIMEOUT_MS = 20_000;
 const PLAYBACK_LIMIT_MS = 90_000;
 
-type Spoken = { audio: Blob } | { text: string };
+type Spoken = { audio: Blob; text: string } | { text: string };
 
 /** Plays the backend's Piper audio, sentence by sentence, each fetched just ahead. */
 export class ServerSpeaker implements Speaker {
@@ -351,7 +409,7 @@ export class ServerSpeaker implements Speaker {
       this.requested.push(
         Promise.race([this.fetchVoice(text, this.style, request.signal), late])
           .then(
-            (audio): Spoken => ({ audio }),
+            (audio): Spoken => ({ audio, text }),
             // The backend voice failed for this one: the browser's says it, in its turn.
             (): Spoken | null => (this.stopped ? null : { text }),
           )
@@ -371,8 +429,12 @@ export class ServerSpeaker implements Speaker {
       this.request(); // the one after starts synthesizing while this one plays
       const spoken = await next;
       if (!spoken || this.stopped) continue;
-      if ("audio" in spoken) await this.play(spoken.audio);
-      else await this.fallback.speak(spoken.text);
+      if ("audio" in spoken) {
+        setSaying(spoken.text);
+        await this.play(spoken.audio);
+      } else {
+        await this.fallback.speak(spoken.text);
+      }
     }
     this.draining = false;
     markTalking(this, false);
@@ -383,6 +445,14 @@ export class ServerSpeaker implements Speaker {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
       this.audio = audio;
+      const meterNow = outputMeter();
+      if (meterNow) {
+        try {
+          meterNow.context.createMediaElementSource(audio).connect(meterNow.analyser);
+        } catch {
+          // Plays as usual, just unmeasured.
+        }
+      }
       let limit: ReturnType<typeof setTimeout> | undefined;
       const done = () => {
         clearTimeout(limit);
@@ -410,6 +480,7 @@ let current: Speaker | null = null;
 /** Called once the backend reports a voice (Piper); null falls back to the browser. */
 export function setServerVoice(fetcher: VoiceFetcher | null): void {
   serverVoice = fetcher;
+  if (fetcher) outputMeter(); // started early, it's running by the first sentence
 }
 
 /** A fresh speaker for a new reply, in the chosen style; silences the previous one. */
