@@ -716,7 +716,7 @@ export default function HomePage() {
       : listenPaused
         ? PAUSED_LABEL
         : LISTENING_LABELS[continuous.state];
-    const coreLabel = answering ? `${micLabel} · clique para interromper` : micLabel;
+    const coreLabel = answering && coreMode !== "off" ? `${micLabel} · clique para interromper` : micLabel;
     const hint = answering
       ? "Clique no núcleo para interromper"
       : manualListening

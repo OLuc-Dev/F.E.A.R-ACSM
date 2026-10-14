@@ -188,7 +188,7 @@ export function VoiceHud({
         className="pointer-events-none absolute inset-0 [background:radial-gradient(120%_90%_at_50%_45%,transparent_55%,rgba(0,0,0,0.75))]"
       />
 
-      <div className="relative mx-auto flex min-h-screen max-w-[1500px] flex-col px-5 pb-28 pt-4 lg:px-8">
+      <div className="relative mx-auto flex min-h-screen max-w-[1500px] flex-col px-5 pb-24 pt-4 lg:px-8">
         {/* Top bar */}
         <header className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -268,7 +268,7 @@ export function VoiceHud({
           </div>
 
           <div className="flex flex-col items-center justify-center gap-5">
-            <div className="w-[min(30rem,52vh,78vw,calc(100vh-26rem))]">
+            <div className="w-[min(34rem,52vh,78vw,calc(100vh-26rem))]">
               <ReactorCore
                 mode={mode}
                 inputLevel={inputLevel}
