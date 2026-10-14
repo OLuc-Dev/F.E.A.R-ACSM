@@ -90,6 +90,7 @@ describe("useContinuousListening", () => {
     const { hook, mic } = setup();
     await advance(600);
     expect(hook.result.current.state).toBe("listening");
+    expect(hook.result.current.live).toBe(true);
     expect(mic.paused).toBe(false);
   });
 
@@ -118,6 +119,7 @@ describe("useContinuousListening", () => {
     hook.rerender({ active: true, hold: true }); // a typed question being answered out loud
     await advance(0);
     expect(hook.result.current.state).toBe("waiting");
+    expect(hook.result.current.live).toBe(true); // still open, back as soon as it's done
     expect(mic.paused).toBe(true);
   });
 
@@ -147,6 +149,7 @@ describe("useContinuousListening", () => {
     await advance(0);
     expect(mic.closed).toBe(true);
     expect(hook.result.current.state).toBe("off");
+    expect(hook.result.current.live).toBe(false);
     mic.closed = false;
     hook.rerender({ active: true, hold: false });
     await advance(600);
@@ -183,6 +186,7 @@ describe("useContinuousListening", () => {
     });
     await advance(0);
     expect(hook.result.current.state).toBe("blocked");
+    expect(hook.result.current.live).toBe(false);
     await act(async () => {
       fireEvent.pointerDown(window);
     });

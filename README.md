@@ -37,6 +37,10 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
     interrompe a resposta. **Ctrl+Espaço** (segure enquanto fala) ou, com os
     gestos ligados, apontar o indicador para cima por 0,6 s também cortam a
     resposta para você falar na hora.
+  - Os gestos com as mãos ficam à esquerda, abaixo de *Sistema*: clique em
+    *Gestos com as mãos* (ou no ícone de mão do dock) e a câmera aparece ali,
+    com a mão desenhada por cima, o gesto que ele está vendo e a lista do que
+    cada gesto faz. Em janelas estreitas, ela fica no canto de cima.
   - Em **Configurações → Voz**: *Ouvir assim que abrir* (desligado, você clica
     no núcleo ou segura Ctrl+Espaço para falar), a voz (do F.E.A.R., grave e
     levemente metálica, ou natural) e *Interface só de voz* — desligada, volta
@@ -132,11 +136,14 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   (`pyttsx3`).
 - **Observador do Obsidian**: na primeira vez lê o vault inteiro; depois indexa o
   que você escreve, e ao abrir recupera o que mudou com o app fechado.
-- **Gestos com as mãos** (MediaPipe): ligue no ícone de mão do dock. O robô passa
+- **Gestos com as mãos** (MediaPipe): ligue no ícone de mão do dock ou, na
+  interface de voz, no cartão *Gestos com as mãos*. O robô passa
   a olhar para a sua mão; acenar faz ele acenar de volta; palma parada por 1 s dá
   play/pause; deslizar a mão para a direita ou para a esquerda troca de faixa;
   punho fechado por 0,7 s silencia o F.E.A.R.; apontar o indicador para cima por
-  0,6 s abre o microfone para você falar. Cada comando exige um gesto
+  0,6 s faz ele parar de falar e ouvir você (se ele já está ouvindo, nada muda:
+  o que você está dizendo não é cortado; com o microfone pausado ou desligado,
+  abre para uma frase). Cada comando exige um gesto
   deliberado (pose segurada, deslize a partir da mão parada, pausa entre
   comandos), para que mexer as mãos conversando não pause a música. A câmera só
   fica ligada com a janela visível, e o reconhecimento roda no próprio

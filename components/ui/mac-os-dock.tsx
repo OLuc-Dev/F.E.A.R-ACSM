@@ -24,7 +24,7 @@ const MacOSDock: React.FC<MacOSDockProps> = ({ apps, onAppClick, openApps = [], 
   const [currentScales, setCurrentScales] = useState<number[]>(apps.map(() => 1));
   const [currentPositions, setCurrentPositions] = useState<number[]>([]);
   const dockRef = useRef<HTMLDivElement>(null);
-  const iconRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const iconRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const animationFrameRef = useRef<number | undefined>(undefined);
   const lastMouseMoveTime = useRef<number>(0);
 
@@ -229,12 +229,13 @@ const MacOSDock: React.FC<MacOSDockProps> = ({ apps, onAppClick, openApps = [], 
           const scaledSize = baseIconSize * scale;
 
           return (
-            <div
+            <button
+              type="button"
               key={app.id}
               ref={(el) => {
                 iconRefs.current[index] = el;
               }}
-              className="absolute flex cursor-pointer flex-col items-center justify-end"
+              className="absolute flex cursor-pointer flex-col items-center justify-end rounded-[22%] outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70"
               title={app.name}
               aria-label={app.name}
               onClick={() => handleAppClick(app.id, index)}
@@ -276,7 +277,7 @@ const MacOSDock: React.FC<MacOSDockProps> = ({ apps, onAppClick, openApps = [], 
                   }}
                 />
               )}
-            </div>
+            </button>
           );
         })}
       </div>

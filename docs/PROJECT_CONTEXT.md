@@ -75,9 +75,11 @@ gravada).
   `mac-os-dock.tsx`, `messages.tsx`; `lib/api.ts` (cliente tipado + header de
   auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`. A face
   padrão é a interface de voz (estilo J.A.R.V.I.S., sem chat escrito):
-  `voice-hud.tsx` (legendas do que está sendo dito, leituras, presença) +
-  `reactor-core.tsx` (o núcleo: microfone e voz do F.E.A.R. ao mesmo tempo); o
-  chat escrito fica como alternativa (`lib/ui-mode.ts`). Voz: por padrão sempre
+  `voice-hud.tsx` (legendas do que está sendo dito, leituras, presença, e a
+  câmera dos gestos — `gesture-panel.tsx` com `look="hud"` — abaixo das leituras)
+  + `reactor-core.tsx` (o núcleo: microfone e voz do F.E.A.R. ao mesmo tempo) +
+  `hud-panel.tsx` (a moldura dos painéis); o chat escrito fica como alternativa
+  (`lib/ui-mode.ts`). Voz: por padrão sempre
   ouvindo com a janela aberta — `listening-button.tsx` +
   `lib/use-continuous-listening.ts` (turnos: pausa enquanto ele responde/fala)
   sobre `lib/voice-stream.ts` (AudioWorklet, pré-roll, WAV) e o `SpeechSegmenter`

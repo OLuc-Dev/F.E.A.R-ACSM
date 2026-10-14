@@ -291,7 +291,11 @@ export function useContinuousListening({
   /** Whether a click just now is the one that woke the microphone up. */
   const justWoken = useCallback(() => Date.now() - wokenAtRef.current < 1500, []);
 
-  return { state, levelRef, cancel, retry, justWoken };
+  // The microphone is open (or opening), even while it waits for an answer:
+  // what you say is heard without opening another one.
+  const live = state !== "off" && state !== "blocked";
+
+  return { state, live, levelRef, cancel, retry, justWoken };
 }
 
 export type ContinuousListening = ReturnType<typeof useContinuousListening>;

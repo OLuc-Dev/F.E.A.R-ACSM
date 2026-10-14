@@ -111,4 +111,17 @@ describe("VoiceHud", () => {
     expect(screen.getByText("Nenhum microfone encontrado.")).toBeTruthy();
     expect(screen.queryByText("É só falar")).toBeNull();
   });
+
+  it("offers the hand gestures where their camera goes, while they're off", () => {
+    const onGestures = vi.fn();
+    hud({ onGestures });
+    fireEvent.click(screen.getByRole("button", { name: /Gestos com as mãos/ }));
+    expect(onGestures).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the gesture camera there once they're on", () => {
+    hud({ onGestures: vi.fn(), gestures: <section aria-label="Gestos com as mãos">câmera</section> });
+    expect(screen.getByRole("region", { name: "Gestos com as mãos" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Gestos com as mãos/ })).toBeNull();
+  });
 });

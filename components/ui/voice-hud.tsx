@@ -1,9 +1,10 @@
 "use client";
 
-import { type ReactNode, type RefObject, useEffect, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { KeyRound, Settings, Sparkles, UserRound } from "lucide-react";
+import { Hand, KeyRound, Settings, Sparkles, UserRound } from "lucide-react";
 
+import { HudPanel } from "@/components/ui/hud-panel";
 import { type CoreMode, ReactorCore } from "@/components/ui/reactor-core";
 
 /** One line of the system readout. */
@@ -64,6 +65,19 @@ export function useHudCaptions({
   return { you, fear };
 }
 
+// Scrolls the subtitles to the end of the newest line, and says whether
+// anything is cut off above. A line fading out is lifted out of the flow
+// (position: absolute) and doesn't count.
+function showNewest(box: HTMLElement): boolean {
+  let bottom = 0;
+  for (const line of Array.from(box.children) as HTMLElement[]) {
+    if (getComputedStyle(line).position === "absolute") continue;
+    bottom = Math.max(bottom, line.offsetTop + line.offsetHeight);
+  }
+  box.scrollTop = Math.max(0, bottom - box.clientHeight);
+  return box.scrollTop > 0;
+}
+
 function useClock() {
   const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
@@ -72,31 +86,6 @@ function useClock() {
     return () => clearInterval(timer);
   }, []);
   return now;
-}
-
-/** A HUD frame: thin border, lit corners, a spaced-out title. */
-function HudPanel({
-  title,
-  children,
-  className = "",
-}: {
-  title: string;
-  children: ReactNode;
-  className?: string;
-}) {
-  const corner = "pointer-events-none absolute size-3 border-cyan-300/60";
-  return (
-    <section
-      className={`relative rounded-lg border border-cyan-300/[0.14] bg-[#060d14]/70 p-3.5 backdrop-blur-md ${className}`}
-    >
-      <span aria-hidden className={`${corner} -left-px -top-px rounded-tl-lg border-l-2 border-t-2`} />
-      <span aria-hidden className={`${corner} -right-px -top-px rounded-tr-lg border-r-2 border-t-2`} />
-      <span aria-hidden className={`${corner} -bottom-px -left-px rounded-bl-lg border-b-2 border-l-2`} />
-      <span aria-hidden className={`${corner} -bottom-px -right-px rounded-br-lg border-b-2 border-r-2`} />
-      <h2 className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.32em] text-cyan-200/55">{title}</h2>
-      {children}
-    </section>
-  );
 }
 
 function HudButton({
@@ -147,6 +136,7 @@ export function VoiceHud({
   update,
   presence,
   gestures,
+  onGestures,
 }: {
   mode: CoreMode;
   coreLabel: string;
@@ -169,12 +159,23 @@ export function VoiceHud({
   onSettings: () => void;
   update?: { version: string; url: string } | null;
   presence?: ReactNode;
+  /** The hand-gesture camera, while it's on. */
   gestures?: ReactNode;
+  /** Turns the gestures on: offered where their camera would be, while they're off. */
+  onGestures?: () => void;
 }) {
   const now = useClock();
   const time = now ? now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "--:--";
   const date = now ? now.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" }) : "";
   const online = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
+
+  // A long answer never pushes the page: the subtitles keep their height and
+  // show the newest words, fading out what no longer fits above them.
+  const captionsRef = useRef<HTMLDivElement>(null);
+  const [captionsClipped, setCaptionsClipped] = useState(false);
+  useEffect(() => {
+    if (captionsRef.current) setCaptionsClipped(showNewest(captionsRef.current));
+  }, [you, fear]);
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#03060a] text-cyan-50">
@@ -247,8 +248,10 @@ export function VoiceHud({
 
         {/* The deck: readouts · the core · the presence */}
         <div className="grid flex-1 items-center gap-6 py-4 lg:grid-cols-[250px_minmax(0,1fr)_290px]">
-          <div className="hidden flex-col gap-4 self-center lg:flex">
-            <HudPanel title="Sistema">
+          {/* Readouts on the left; on a narrow window only the gesture camera
+              stays, floating in the corner (it must never be on unseen). */}
+          <div className="fixed left-4 top-[4.5rem] z-30 flex w-[200px] flex-col gap-4 lg:static lg:z-auto lg:w-auto lg:self-center">
+            <HudPanel title="Sistema" className="hidden lg:block">
               <ul className="space-y-1.5">
                 {readings.map((reading) => (
                   <li key={reading.label} className="flex items-center gap-2 font-mono text-[11px]">
@@ -264,11 +267,28 @@ export function VoiceHud({
                 ))}
               </ul>
             </HudPanel>
-            {gestures}
+            {gestures ??
+              (onGestures && (
+                <button
+                  type="button"
+                  onClick={onGestures}
+                  className="tap group hidden items-center gap-3 rounded-lg border border-dashed border-cyan-300/20 bg-cyan-300/[0.03] px-3.5 py-3 text-left transition hover:border-cyan-300/45 hover:bg-cyan-300/[0.06] lg:flex"
+                >
+                  <Hand className="size-4 shrink-0 text-cyan-200/60 transition group-hover:text-cyan-100" />
+                  <span>
+                    <span className="block font-mono text-[10px] uppercase tracking-[0.28em] text-cyan-100/75">
+                      Gestos com as mãos
+                    </span>
+                    <span className="block text-[11px] text-white/40">
+                      desligados · clique para ligar a câmera
+                    </span>
+                  </span>
+                </button>
+              ))}
           </div>
 
           <div className="flex flex-col items-center justify-center gap-5">
-            <div className="w-[min(34rem,52vh,78vw,calc(100vh-26rem))]">
+            <div className="w-[min(34rem,52vh,78vw,calc(100vh-27rem))]">
               <ReactorCore
                 mode={mode}
                 inputLevel={inputLevel}
@@ -288,8 +308,9 @@ export function VoiceHud({
 
             {/* Subtitles: only what's being said now. */}
             <div
+              ref={captionsRef}
               aria-live="polite"
-              className="flex min-h-[6.5rem] w-full max-w-3xl flex-col items-center gap-3 text-center"
+              className={`relative flex h-[8.5rem] w-full max-w-3xl flex-col items-center gap-3 overflow-hidden text-center ${captionsClipped ? "[-webkit-mask-image:linear-gradient(to_bottom,transparent,#000_2.5rem)] [mask-image:linear-gradient(to_bottom,transparent,#000_2.5rem)]" : ""}`}
             >
               <AnimatePresence mode="popLayout">
                 {you && (
@@ -324,13 +345,12 @@ export function VoiceHud({
 
           <div className="hidden self-center lg:block">
             {presence && (
-              <HudPanel title="Presença" className="p-0 pt-3.5">
-                <div className="px-3.5">
+              <HudPanel title="Presença">
+                <div className="px-3.5 pb-3.5">
                   <div className="relative h-[46vh] max-h-[440px] min-h-[260px] overflow-hidden rounded-md bg-[#02050a]">
                     {presence}
                   </div>
                 </div>
-                <div className="h-3.5" />
               </HudPanel>
             )}
           </div>

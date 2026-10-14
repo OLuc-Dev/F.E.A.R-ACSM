@@ -414,6 +414,14 @@ export default function HomePage() {
         show("Falar", "o reconhecimento de voz não está disponível");
         return;
       }
+      // Already listening the whole time: a second microphone would cut short
+      // what you're saying. Pointing only makes F.E.A.R. stop talking, and it
+      // listens again right after.
+      if (continuous.live) {
+        stop();
+        show("Ouvindo", "pode falar");
+        return;
+      }
       void voice.start("auto");
       show("Ouvindo", "pode falar");
       return;
@@ -777,6 +785,7 @@ export default function HomePage() {
           gestures={
             gesturesOn ? (
               <GesturePanel
+                look="hud"
                 onCommand={runGesture}
                 onTurnOff={() => setGestures(false)}
                 feedback={gestureFeedback}
@@ -788,6 +797,7 @@ export default function HomePage() {
               />
             ) : null
           }
+          onGestures={() => setGestures(true)}
         />
         {overlays}
       </main>
