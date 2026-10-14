@@ -9,6 +9,8 @@ text inside the app folder (`_internal`, next to each package or in its
 | --- | --- | --- |
 | Piper (`piper-tts`), with espeak-ng | F.E.A.R.'s voice | GPL-3.0-or-later |
 | Piper voice `pt_BR-cadu-medium` | F.E.A.R.'s voice | trained on CC0 data |
+| edge-tts | F.E.A.R.'s online voice (Microsoft's neural voices) | LGPL-3.0 |
+| aiohttp | the online voice's connection | Apache-2.0 |
 | faster-whisper | speech recognition | MIT |
 | Whisper `small` model (OpenAI) | speech recognition | MIT |
 | CTranslate2 | speech recognition | MIT |
@@ -22,7 +24,12 @@ text inside the app folder (`_internal`, next to each package or in its
 Because the app bundles GPL-3.0 components, the app as distributed is offered
 under terms compatible with the GPL: its complete source code is public at
 https://github.com/OLuc-Dev/F.E.A.R-ACSM, and the sources of Piper and espeak-ng
-are at https://github.com/OHF-Voice/piper1-gpl and https://github.com/espeak-ng/espeak-ng.
+are at https://github.com/OHF-Voice/piper1-gpl and https://github.com/espeak-ng/espeak-ng
+(edge-tts, LGPL-3.0: https://github.com/rany2/edge-tts).
+
+The online voice sends the text of each sentence F.E.A.R. says to Microsoft's
+speech service (the one Edge's "Read aloud" uses); it can be turned off in
+Configurações → Comportamento → Voz, and then speech is made only on this computer.
 
 ## License texts
 

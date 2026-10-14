@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     piper_voice: str = Field("", validation_alias="FEAR_PIPER_VOICE")
     # Load both models at start (in the background) so the first command is quick.
     preload_voice: bool = Field(False, validation_alias="FEAR_PRELOAD_VOICE")
+    # F.E.A.R. speaks with Microsoft's neural voice when there's internet (each
+    # sentence goes to Microsoft), the local one otherwise; off: always local.
+    online_voice: bool = Field(True, validation_alias="FEAR_ONLINE_VOICE")
 
     chroma_path: str = Field("data/chroma", validation_alias="CHROMA_PATH")
 

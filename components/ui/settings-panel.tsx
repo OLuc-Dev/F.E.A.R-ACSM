@@ -29,7 +29,15 @@ import {
   type StatusResponse,
 } from "@/lib/api";
 import { IS_DESKTOP } from "@/lib/desktop";
-import { loadVoiceStyle, saveVoiceStyle, startSpeaking, VOICE_STYLES, type VoiceStyle } from "@/lib/speech";
+import {
+  loadOnlineVoice,
+  loadVoiceStyle,
+  saveOnlineVoice,
+  saveVoiceStyle,
+  startSpeaking,
+  VOICE_STYLES,
+  type VoiceStyle,
+} from "@/lib/speech";
 import { fade, springSoft } from "@/lib/motion";
 import { AppSettingsTab, Switch } from "@/components/ui/app-settings-tab";
 import { MemoryTab } from "@/components/ui/memory-tab";
@@ -125,9 +133,12 @@ export function SettingsPanel({
   const [tab, setTab] = useState<Tab>("conhecimento");
   const [data, setData] = useState<KnowledgeListResponse | null>(null);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
-  const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("fear");
+  const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("natural");
+  const [onlineVoice, setOnlineVoice] = useState(true);
   useEffect(() => {
-    if (open) setVoiceStyle(loadVoiceStyle());
+    if (!open) return;
+    setVoiceStyle(loadVoiceStyle());
+    setOnlineVoice(loadOnlineVoice());
   }, [open]);
   const [modelInput, setModelInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -466,10 +477,29 @@ export function SettingsPanel({
                             );
                           })}
                         </div>
+                        {status?.voice_online && (
+                          <>
+                            <Switch
+                              checked={onlineVoice}
+                              onChange={(on) => {
+                                saveOnlineVoice(on);
+                                setOnlineVoice(on);
+                              }}
+                              label="Voz neural online (Microsoft)"
+                            />
+                            <p className="text-[11px] leading-4 text-muted-foreground/60">
+                              A mais natural: a voz Antonio, da Microsoft — o texto de cada frase que ele fala
+                              vai para o serviço de voz dela. Sem internet, ele fala com a voz deste
+                              computador. Desligada, a voz é sempre feita aqui.
+                            </p>
+                          </>
+                        )}
                         <p className="text-[11px] leading-4 text-muted-foreground/60">
-                          {status?.voice_output
-                            ? "A voz do F.E.A.R. é gerada neste computador. Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."
-                            : "Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."}
+                          {status?.voice_output && !(status.voice_online && onlineVoice)
+                            ? "A voz do F.E.A.R. é gerada neste computador. "
+                            : ""}
+                          Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no
+                          topo.
                         </p>
                         {status?.voice_input && onVoiceInterfaceChange && (
                           <>

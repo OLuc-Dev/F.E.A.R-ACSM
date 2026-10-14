@@ -57,9 +57,11 @@ export interface StatusResponse {
   spotify: boolean;
   /** Some way to control music here: Spotify's API or the system media keys. */
   music: boolean;
-  /** Talking to F.E.A.R.: local speech recognition, and its own (Piper) voice. */
+  /** Talking to F.E.A.R.: local speech recognition, and its voice (online, or Piper). */
   voice_input: boolean;
   voice_output: boolean;
+  /** Its voice can come from Microsoft's neural voices (with internet). */
+  voice_online: boolean;
   obsidian: boolean;
   calendar: boolean;
 }
@@ -262,11 +264,12 @@ export async function fetchVoice(
   text: string,
   style: "fear" | "natural" | "system",
   signal: AbortSignal,
+  online = true,
 ): Promise<Blob> {
   const response = await apiFetch("/voice/speak", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text, style: style === "natural" ? "natural" : "fear" }),
+    body: JSON.stringify({ text, style: style === "fear" ? "fear" : "natural", online }),
     signal,
   });
   if (!response.ok) throw new ApiError(await errorDetail(response), response.status);

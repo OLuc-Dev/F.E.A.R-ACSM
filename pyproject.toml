@@ -41,10 +41,12 @@ desktop = [
   "pystray>=0.19,<0.20",
   "pillow>=10,<12",
 ]
-# Talking to F.E.A.R. in the app: local speech recognition + its own voice.
+# Talking to F.E.A.R. in the app: local speech recognition + its own voice
+# (Piper, local; Microsoft's neural voice through edge-tts when online).
 voice = [
   "faster-whisper>=1.2,<2",
   "piper-tts>=1.8,<2",
+  "edge-tts>=7.2,<8",
 ]
 # Optional microphone voice input (push-to-talk + clap detector). Needs the
 # system portaudio library for pyaudio. Install with `pip install -e ".[audio]"`.

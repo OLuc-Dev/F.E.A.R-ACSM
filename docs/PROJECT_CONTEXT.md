@@ -36,7 +36,8 @@ gravada).
   Obsidian. **Voz da janela** atrás do extra `.[voice]`: faster-whisper
   (CTranslate2 int8, CPU) transcreve e Piper fala, ambos locais, com modelos
   fixados e verificados por sha256 (`packaging/fetch_voice_models.py`) e
-  embutidos no app do Windows. Voz da máquina (Whisper + pyaudio) segue opcional,
+  embutidos no app do Windows; com internet, quem fala é a voz neural da
+  Microsoft (edge-tts), e o Piper fica de reserva. Voz da máquina (Whisper + pyaudio) segue opcional,
   atrás do extra `.[audio]`.
 - **Infra:** Docker (`Dockerfile`, sem torch) + `fly.toml` (Fly.io) pro backend,
   Vercel pro frontend (ver `DEPLOY.md`). CI no GitHub Actions.
@@ -61,7 +62,12 @@ gravada).
 - `fear/audio/speech.py` — `SpeechToText` (faster-whisper; as threads do OpenMP
   esperam dormindo, `OMP_WAIT_POLICY=PASSIVE`, senão uma transcrição de 3 s vira
   20 s com a CPU ocupada), `TextToSpeech` (Piper) e `fear_voice` (o timbre:
-  10% mais grave, comb de 3,2 ms e anel de 60 Hz).
+  10% mais grave e um comb leve de 3,2 ms).
+- `fear/audio/online_voice.py` — `OnlineVoice`: a voz Antonio da Microsoft
+  (edge-tts, a do "Ler em voz alta" do Edge; não é API oficial). Cada falha faz
+  `/voice/speak` usar o Piper naquela frase e deixa a voz online descansando
+  (1 min, dobrando até 15 min). Confia também nos certificados do Windows e usa
+  o proxy do sistema (redes de empresa). `FEAR_ONLINE_VOICE=0` desliga.
 - `fear/integrations/music.py` — intenção de música (pt/en) + teclas de mídia do Windows
   (`MediaKeys`), usadas quando a API do Spotify não está configurada.
 - `fear/desktop.py` + `fear/desktop_prefs.py` — o app do Windows (janela, bandeja,
@@ -86,8 +92,9 @@ gravada).
   de `lib/voice-activity.ts`; no modo manual, `mic-button.tsx` +
   `lib/use-voice-input.ts` (clique, segurar, Ctrl+Espaço, gesto de apontar) sobre
   `lib/voice-capture.ts` (MediaRecorder + nível). `lib/speech.ts` fala a resposta
-  frase a frase durante o streaming (Piper pelo backend, voz do sistema de
-  reserva) e avisa quando ele está falando, o que está dizendo e quão alto.
+  frase a frase durante o streaming (voz online ou Piper pelo backend, voz do
+  sistema de reserva) e avisa quando ele está falando, o que está dizendo e
+  quão alto.
   `lib/page-visibility.ts`: a página está à vista? (o app avisa quando a janela
   vai para a bandeja, que o WebView2 sozinho não reporta).
 

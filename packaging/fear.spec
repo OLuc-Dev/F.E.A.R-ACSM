@@ -41,6 +41,10 @@ for package in (
     "ctranslate2",
     "av",
     "piper",
+    # The online voice (Microsoft's neural voices) and its websocket client,
+    # with their license texts.
+    "edge_tts",
+    "aiohttp",
 ):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas
