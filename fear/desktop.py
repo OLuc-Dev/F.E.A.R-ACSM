@@ -3,7 +3,8 @@
 Each install is a private, single-person F.E.A.R. The launcher creates the one
 local account itself and hands the window a fresh session on every start, so
 there is never a login. Closing the window only hides it to the tray (the mic
-and clap detector keep running); "Sair" in the tray quits for real.
+and clap detector keep running; hand gestures pause with the window, since the
+camera is only on while you can see the app); "Sair" in the tray quits for real.
 
 Run from source with ``python -m fear.desktop`` (needs the ``desktop`` extra and
 a UI built with ``NEXT_PUBLIC_FEAR_DESKTOP=1 npm run build``).
@@ -13,8 +14,10 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import importlib
 import json
 import logging
+import mimetypes
 import os
 import re
 import secrets
@@ -22,24 +25,40 @@ import socket
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
+from fear.desktop_prefs import APP_NAME, autostart_enabled, set_autostart
 from fear.logging_config import configure_logging
 
-APP_NAME = "F.E.A.R."
 APP_DIR_NAME = "FEAR"
 # Fixed so the window keeps the same origin (and so its saved theme etc.) across
 # launches; a random port is used only if this one is taken.
 PREFERRED_PORT = 47865
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 INSTANCE_HEADER = "X-Fear-Instance"
 _LOG_LIMIT_BYTES = 5 * 1024 * 1024
 
 logger = logging.getLogger("fear.desktop")
+
+# Python's mimetypes also reads the Windows registry, where a stray entry can map
+# .js to text/plain; the UI's files (and gestures' WASM) need their real types.
+STATIC_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".wasm": "application/wasm",
+    ".task": "application/octet-stream",
+    ".glb": "model/gltf-binary",
+    ".svg": "image/svg+xml",
+}
+
+PIPER_VOICE_FILE = "pt_BR-cadu-medium.onnx"
 
 LOADING_HTML = """<!doctype html><html><body style="margin:0;height:100vh;display:grid;
 place-items:center;background:#050506;color:#9aa0a6;font:14px system-ui,sans-serif">
@@ -65,6 +84,15 @@ def ui_dir(resources: Path) -> Path:
     """The static UI: bundled as ui/ in the app, or the fresh `out/` export from source."""
     bundled = resources / "ui"
     return bundled if bundled.exists() else resources / "out"
+
+
+def mount_ui(application: FastAPI, resources: Path) -> None:
+    """Serve the static UI at "/", after every API route so those keep precedence."""
+    from fastapi.staticfiles import StaticFiles
+
+    for extension, media_type in STATIC_TYPES.items():
+        mimetypes.add_type(media_type, extension)
+    application.mount("/", StaticFiles(directory=ui_dir(resources), html=True), name="ui")
 
 
 def load_or_create_secret(path: Path) -> str:
@@ -126,6 +154,25 @@ def wake_running_instance(instance_file: Path, timeout: float = 2.0) -> bool:
         return False
 
 
+class DesktopBridge:
+    """What the page may ask of the app itself, as ``window.pywebview.api``.
+
+    Only public methods are exposed to the page; the window stays private.
+    """
+
+    def __init__(self) -> None:
+        self._window: Any = None
+
+    def pick_folder(self) -> str:
+        """Open Windows' folder picker: the folder chosen, or "" if cancelled."""
+        import webview
+
+        if self._window is None:
+            return ""
+        chosen = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+        return str(chosen[0]) if chosen else ""
+
+
 def add_show_route(application: FastAPI, key: str, show: Callable[[], None]) -> None:
     """Let a second launch bring this window forward instead of starting another app."""
 
@@ -139,41 +186,81 @@ def add_show_route(application: FastAPI, key: str, show: Callable[[], None]) -> 
     application.add_api_route("/desktop/show", desktop_show, methods=["POST"])
 
 
-# --- "Iniciar com o Windows" (the same Run entry the installer writes) ------------
+def tell_page_shown(window, shown: bool) -> None:
+    """Hidden in the tray or on screen: tell the page, which listens and films only on screen.
 
+    pywebview hides just the window, and WebView2 kept telling the page it was
+    visible — the Windows workflow caught F.E.A.R. still listening from the
+    tray. So the browser view is hidden along with the window (which also stops
+    it drawing in the background), and the page is told directly as well.
+    """
+    hidden = "false" if shown else "true"
+    script = (
+        f"window.__fearHidden = {hidden};"
+        f"window.dispatchEvent(new CustomEvent('fear:window', {{ detail: {{ hidden: {hidden} }} }}));"
+    )
 
-def autostart_command() -> str:
-    if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" --minimized'
-    return f'"{sys.executable}" -m fear.desktop --minimized'
+    def tell() -> None:
+        try:
+            window.evaluate_js(script)
+        except Exception:
+            logger.debug("Could not tell the page about its window", exc_info=True)
 
-
-def autostart_enabled() -> bool:
-    if sys.platform != "win32":
-        return False
-    import winreg
-
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            winreg.QueryValueEx(key, APP_NAME)
-        return True
-    except OSError:
-        return False
-
-
-def set_autostart(enabled: bool) -> None:
+    # evaluate_js waits for the page; never make the window's own thread wait on it.
+    threading.Thread(target=tell, daemon=True).start()
     if sys.platform != "win32":
         return
-    import winreg
+    try:
+        from System import Func, Type  # type: ignore[import-not-found]
 
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-        if enabled:
-            winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, autostart_command())
-        else:
-            try:
-                winreg.DeleteValue(key, APP_NAME)
-            except FileNotFoundError:
-                pass
+        control = window.native.browser.webview
+
+        def apply() -> None:
+            control.Visible = shown
+
+        window.native.Invoke(Func[Type](apply))
+    except Exception:
+        logger.debug("Could not hide the browser view with its window", exc_info=True)
+
+
+def allow_media_for_own_page(window, origin: str) -> None:
+    """Let the app's own page use the webcam (gestures) and microphone (voice), unprompted.
+
+    WebView2 would otherwise ask on its own; only pages served by this app's
+    backend (``origin``) are approved, and only those two — any other page or
+    permission still goes through WebView2's default prompt.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        from Microsoft.Web.WebView2.Core import (  # type: ignore[import-not-found]
+            CoreWebView2PermissionKind,
+            CoreWebView2PermissionState,
+        )
+        from System import Func, Type  # type: ignore[import-not-found]
+    except Exception:
+        logger.warning("WebView2 is not reachable; camera and microphone will ask first")
+        return
+
+    allowed = (CoreWebView2PermissionKind.Camera, CoreWebView2PermissionKind.Microphone)
+
+    def on_permission_requested(_sender, args) -> None:
+        if args.PermissionKind in allowed and str(args.Uri).startswith(origin):
+            args.State = CoreWebView2PermissionState.Allow
+
+    def attach() -> None:
+        # CoreWebView2 may only be touched on the window's UI thread.
+        try:
+            window.native.browser.webview.CoreWebView2.PermissionRequested += (
+                on_permission_requested
+            )
+        except Exception:
+            logger.warning("Could not pre-approve camera and microphone", exc_info=True)
+
+    try:
+        window.native.Invoke(Func[Type](attach))
+    except Exception:
+        logger.warning("Could not pre-approve camera and microphone", exc_info=True)
 
 
 # --- process setup ----------------------------------------------------------------
@@ -200,13 +287,111 @@ def prepare_environment(home: Path, resources: Path) -> None:
     os.chdir(home)
     # The person's own overrides (e.g. FEAR_ENABLE_CLAP_DETECTOR=1) live here.
     load_dotenv(home / ".env")
-    os.environ.setdefault("FEAR_DESKTOP", "1")
-    os.environ.setdefault("FEAR_ENV", "local")
-    os.environ.setdefault("FEAR_SECRET_KEY", load_or_create_secret(home / "secret.key"))
-    os.environ.setdefault("FEAR_PERSONA_FILE", str(resources / "prompts" / "fear_persona.md"))
+    _provide("FEAR_DESKTOP", "1")
+    _provide("FEAR_ENV", "local")
+    _provide("FEAR_SECRET_KEY", load_or_create_secret(home / "secret.key"))
+    # A persona of their own counts only if it's really there: .env.example's
+    # prompts/fear_persona.md means the repo's copy, which isn't in this folder.
+    persona = os.environ.get("FEAR_PERSONA_FILE", "").strip()
+    if not (persona and Path(persona).is_file()):
+        os.environ["FEAR_PERSONA_FILE"] = str(resources / "prompts" / "fear_persona.md")
     model_dir = resources / "onnx_models" / "all-MiniLM-L6-v2"
     if model_dir.exists():
-        os.environ.setdefault("FEAR_ONNX_MODEL_DIR", str(model_dir))
+        _provide("FEAR_ONNX_MODEL_DIR", str(model_dir))
+    voice = voice_dir(resources)
+    if voice is not None:
+        _provide("FEAR_STT_MODEL", str(voice / "whisper-small"))
+        _provide("FEAR_PIPER_VOICE", str(voice / "piper" / PIPER_VOICE_FILE))
+        # Loaded in the background at start, so the first spoken command is quick.
+        _provide("FEAR_PRELOAD_VOICE", "1")
+
+
+def _provide(name: str, value: str) -> None:
+    """What the app ships, unless the person's .env sets it to something.
+
+    Blank counts as unset: a .env copied from .env.example is full of empty
+    placeholders (FEAR_SECRET_KEY=, …) that must not switch off what the app
+    brings — an empty secret, for one, would lose the saved key on every start.
+    """
+    if not os.environ.get(name, "").strip():
+        os.environ[name] = value
+
+
+def webview2_flags(existing: str) -> str:
+    """The browser flags for the app's WebView2 window, keeping any already set.
+
+    F.E.A.R. answers out loud even when you only spoke or gestured (no click
+    yet), which WebView2's autoplay policy would otherwise silence. pywebview's
+    own flag (no rubber-band scrolling) comes along, since its way of passing
+    it doesn't apply when it creates the environment itself.
+    """
+    flags = existing.split()
+    if not any(flag.startswith("--autoplay-policy") for flag in flags):
+        flags.append("--autoplay-policy=no-user-gesture-required")
+    if not any(flag.startswith("--disable-features") for flag in flags):
+        flags.append("--disable-features=ElasticOverscroll")
+    return " ".join(flags)
+
+
+def give_webview2_flags(flags: str) -> None:
+    """Start WebView2 with these browser flags, in its environment's options.
+
+    With a storage folder, pywebview creates WebView2's environment itself and
+    passes no options; WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS didn't reach the
+    browser then (in the Windows workflow, its command line had none of them).
+    So the same call is made with the flags where WebView2 documents them. If
+    that fails for any reason, pywebview's own call runs instead: the window
+    opens either way.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        # pywebview's module first: it loads .NET and registers WebView2's
+        # assemblies, without which the types below can't be imported.
+        edgechromium = importlib.import_module("webview.platforms.edgechromium")
+        from Microsoft.Web.WebView2.Core import (  # type: ignore[import-not-found]
+            CoreWebView2Environment,
+            CoreWebView2EnvironmentOptions,
+        )
+        from System import Action  # type: ignore[import-not-found]
+        from System.Threading.Tasks import Task  # type: ignore[import-not-found]
+    except Exception as error:
+        logger.warning(
+            "WebView2 flags can't be set (%s); F.E.A.R. may need a click to speak", error
+        )
+        return
+    original = edgechromium.EdgeChrome.setup_webview2_environment
+
+    def setup_webview2_environment(self) -> None:
+        def ready(task) -> None:
+            if task.IsFaulted:  # refused the flags: still open, without them
+                logger.error("WebView2 refused the browser flags: %s", task.Exception)
+                original(self)
+                return
+            self.webview.EnsureCoreWebView2Async(task.Result)
+
+        try:
+            options = CoreWebView2EnvironmentOptions()
+            options.AdditionalBrowserArguments = flags
+            environment = CoreWebView2Environment.CreateAsync(
+                None, edgechromium._state["storage_path"], options
+            )
+            environment.ContinueWith(
+                Action[Task[CoreWebView2Environment]](ready), self.syncContextTaskScheduler
+            )
+        except Exception:
+            logger.exception("WebView2 didn't take the browser flags; starting without them")
+            original(self)
+
+    edgechromium.EdgeChrome.setup_webview2_environment = setup_webview2_environment
+
+
+def voice_dir(resources: Path) -> Path | None:
+    """The speech models: bundled as voice/ in the app, or fetched for a source run."""
+    for candidate in (resources / "voice", resources / "packaging" / "build" / "voice"):
+        if (candidate / "whisper-small").is_dir():
+            return candidate
+    return None
 
 
 def _start_backend(port: int):
@@ -233,6 +418,23 @@ def _tray_image(resources: Path):
     return Image.open(resources / "packaging" / "fear.ico")
 
 
+def _voice_round_trip() -> bool:
+    """Piper says a sentence, Whisper must hear it: both engines, end to end."""
+    from fear.audio.speech import SpeechToText, TextToSpeech
+
+    voice_out = TextToSpeech(os.environ.get("FEAR_PIPER_VOICE", ""))
+    ears = SpeechToText(os.environ.get("FEAR_STT_MODEL", ""))
+    if not (voice_out.available and ears.available):
+        logger.error("smoke test: voice models are bundled but speech can't load them")
+        return False
+    heard = ears.transcribe(voice_out.synthesize("Isto é um teste de voz.", "fear"))
+    if "teste" not in heard.lower():
+        logger.error("smoke test: the voice round trip heard %r", heard)
+        return False
+    logger.info("smoke test: voice round trip heard %r", heard)
+    return True
+
+
 def smoke_test(home: Path, resources: Path) -> int:
     """Boot the bundled app headless and check what a broken build would lose.
 
@@ -240,12 +442,10 @@ def smoke_test(home: Path, resources: Path) -> int:
     and the bundled embedding model must all work, or the release is not made.
     """
     prepare_environment(home, resources)
-    from fastapi.staticfiles import StaticFiles
-
     from fear.memory.embedding import LocalEmbedding
     from fear.web.app import app
 
-    app.mount("/", StaticFiles(directory=ui_dir(resources), html=True), name="ui")
+    mount_ui(app, resources)
     port = pick_port(0)
     server, thread = _start_backend(port)
     try:
@@ -260,11 +460,29 @@ def smoke_test(home: Path, resources: Path) -> int:
             if b"<html" not in response.read().lower():
                 logger.error("smoke test: the UI is missing")
                 return 1
+        # Hand gestures: the model and the WASM runtime, with the type the
+        # browser needs to compile it.
+        with urllib.request.urlopen(f"{base}/mediapipe/gesture_recognizer.task", timeout=10) as r:
+            if len(r.read()) < 1_000_000:
+                logger.error("smoke test: the gesture model is missing")
+                return 1
+        wasm = f"{base}/mediapipe/wasm/vision_wasm_internal.wasm"
+        with urllib.request.urlopen(wasm, timeout=10) as response:
+            if response.headers.get_content_type() != "application/wasm":
+                logger.error(
+                    "smoke test: gesture WASM served as %s", response.headers.get_content_type()
+                )
+                return 1
         if len(LocalEmbedding().embed("teste")) != 384:
             logger.error("smoke test: the embedding model is broken")
             return 1
+        if voice_dir(resources) is not None and not _voice_round_trip():
+            return 1
         logger.info("smoke test passed")
         return 0
+    except urllib.error.HTTPError as error:
+        logger.error("smoke test: %s is missing from the bundle (HTTP %s)", error.url, error.code)
+        return 1
     finally:
         server.should_exit = True
         thread.join(timeout=10)
@@ -292,7 +510,6 @@ def main(argv: list[str] | None = None) -> None:
 
     import pystray
     import webview
-    from fastapi.staticfiles import StaticFiles
 
     from fear.auth import Security, UserStore
     from fear.config import Settings
@@ -305,34 +522,69 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         store.close()
 
+    bridge = DesktopBridge()
     window = webview.create_window(
         APP_NAME,
         html=LOADING_HTML,
+        js_api=bridge,
         width=1320,
         height=860,
         min_size=(960, 640),
         hidden=args.minimized,
         background_color="#050506",
     )
+    bridge._window = window
     quitting = threading.Event()
+
+    shown = {"now": not args.minimized}
 
     def show() -> None:
         window.show()
         window.restore()
+        shown["now"] = True
+        tell_page_shown(window, True)
 
     def on_closing() -> bool:
         if quitting.is_set():
             return True
-        window.hide()  # keep listening in the tray
+        window.hide()  # stays in the tray, but stops listening and filming
+        shown["now"] = False
+        tell_page_shown(window, False)
         return False
 
     window.events.closing += on_closing
 
+    # Minimized to the taskbar counts as away too; back on screen, it listens again.
+    def on_minimized() -> None:
+        shown["now"] = False
+        tell_page_shown(window, False)
+
+    def on_restored() -> None:
+        if not shown["now"]:
+            shown["now"] = True
+            tell_page_shown(window, True)
+
+    window.events.minimized += on_minimized
+    window.events.restored += on_restored
+    window.events.maximized += on_restored
+
     port = pick_port()
     key = secrets.token_urlsafe(24)
     add_show_route(app, key, show)
-    # Mounted last so every API route above keeps precedence over the UI files.
-    app.mount("/", StaticFiles(directory=ui_dir(resources), html=True), name="ui")
+    mount_ui(app, resources)
+
+    camera_ready = threading.Event()
+
+    def on_loaded() -> None:
+        # WebView2 exists once the first page has loaded; hook it up only once.
+        if not camera_ready.is_set():
+            camera_ready.set()
+            allow_media_for_own_page(window, f"http://127.0.0.1:{port}/")
+        # Each page loaded learns whether it's on screen (started in the tray, say).
+        if not shown["now"]:
+            tell_page_shown(window, False)
+
+    window.events.loaded += on_loaded
 
     def quit_app(icon) -> None:
         quitting.set()
@@ -375,6 +627,10 @@ def main(argv: list[str] | None = None) -> None:
         instance_file.write_text(json.dumps({"port": port, "key": key}), encoding="utf-8")
         window.load_url(f"http://127.0.0.1:{port}/#token={token}")
 
+    if sys.platform == "win32":
+        flags = webview2_flags(os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", ""))
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = flags
+        give_webview2_flags(flags)
     tray.run_detached()
     try:
         webview.start(boot, private_mode=False, storage_path=str(home / "webview"))

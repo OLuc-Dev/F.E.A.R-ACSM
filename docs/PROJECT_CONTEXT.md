@@ -30,9 +30,14 @@ gravada).
   Fernet (tokens de sessão + criptografia das chaves de API por usuário).
 - **Frontend:** Next.js 14.2 (App Router, **fixo no 14**), React 18.3,
   TypeScript strict, Tailwind 3.4, framer-motion 11, **three.js** (presença 3D de corpo
-  inteiro), Web Speech API (TTS no navegador), lucide-react.
+  inteiro), MediaRecorder (microfone da janela), Web Speech API (voz de reserva),
+  lucide-react.
 - **Integrações:** Spotify, Google Calendar (somente leitura), watcher do
-  Obsidian. Áudio opcional (Whisper + pyaudio), atrás do extra `.[audio]`.
+  Obsidian. **Voz da janela** atrás do extra `.[voice]`: faster-whisper
+  (CTranslate2 int8, CPU) transcreve e Piper fala, ambos locais, com modelos
+  fixados e verificados por sha256 (`packaging/fetch_voice_models.py`) e
+  embutidos no app do Windows. Voz da máquina (Whisper + pyaudio) segue opcional,
+  atrás do extra `.[audio]`.
 - **Infra:** Docker (`Dockerfile`, sem torch) + `fly.toml` (Fly.io) pro backend,
   Vercel pro frontend (ver `DEPLOY.md`). CI no GitHub Actions.
 
@@ -42,7 +47,8 @@ gravada).
   `/auth/register|login|me|openrouter-key`, `/command`, `/command/stream`
   (streaming), `/memory`, `/memory/forget`, `/knowledge` (listar/texto/apagar),
   `/config`, `/conversation/reset`, `/status`, `/health`, `/wearable/tap`,
-  `/voice/*`, `/ws`.
+  `/voice/transcribe` + `/voice/speak` (voz da janela), `/voice/{start,stop,
+  capture-once}` (microfone da máquina), `/ws`.
 - `fear/brain/async_conversation.py` — `AsyncConversationalBrain`: monta o
   contexto (memória + conhecimento + agenda), fala com o modelo e faz streaming.
   `UserContext` carrega chave/modelo/persona por usuário. Roteamento de intenção
@@ -52,12 +58,38 @@ gravada).
 - `fear/library/reference_library.py` — conhecimento (markdown/texto), escopo por usuário.
 - `fear/auth/` — `security.py` (senha/token/cripto), `store.py` (`UserStore` SQLite).
 - `fear/config.py` — `Settings` (pydantic-settings), lê o `.env`.
+- `fear/audio/speech.py` — `SpeechToText` (faster-whisper; as threads do OpenMP
+  esperam dormindo, `OMP_WAIT_POLICY=PASSIVE`, senão uma transcrição de 3 s vira
+  20 s com a CPU ocupada), `TextToSpeech` (Piper) e `fear_voice` (o timbre:
+  10% mais grave, comb de 3,2 ms e anel de 60 Hz).
+- `fear/integrations/music.py` — intenção de música (pt/en) + teclas de mídia do Windows
+  (`MediaKeys`), usadas quando a API do Spotify não está configurada.
+- `fear/desktop.py` + `fear/desktop_prefs.py` — o app do Windows (janela, bandeja,
+  sessão local) e as chaves da aba **App** (palmas, vault, iniciar com o Windows).
 - `prompts/fear_persona.md` — a personalidade (carregada por `FEAR_PERSONA_FILE`).
 - Frontend: `app/page.tsx` (deck + gate de login + aviso de chave),
   `components/ui/fear-robot.tsx` + `lib/fear-robot-scene.ts` / `lib/fear-robot-motion.ts`
-  (3D), `settings-panel.tsx`, `auth-panel.tsx`,
+  (3D), `gesture-panel.tsx` + `lib/hand-gestures.ts` / `lib/hand-tracker.ts` /
+  `lib/hand-worker.ts` (gestos com MediaPipe, num Web Worker), `settings-panel.tsx` +
+  `app-settings-tab.tsx` (aba App), `lib/updates.ts` (aviso de versão nova), `auth-panel.tsx`,
   `mac-os-dock.tsx`, `messages.tsx`; `lib/api.ts` (cliente tipado + header de
-  auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`, `lib/speech.ts`.
+  auth), `lib/use-conversation.ts`, `lib/use-auth.ts`, `lib/auth.ts`. A face
+  padrão é a interface de voz (estilo J.A.R.V.I.S., sem chat escrito):
+  `voice-hud.tsx` (legendas do que está sendo dito, leituras, presença, e a
+  câmera dos gestos — `gesture-panel.tsx` com `look="hud"` — abaixo das leituras)
+  + `reactor-core.tsx` (o núcleo: microfone e voz do F.E.A.R. ao mesmo tempo) +
+  `hud-panel.tsx` (a moldura dos painéis); o chat escrito fica como alternativa
+  (`lib/ui-mode.ts`). Voz: por padrão sempre
+  ouvindo com a janela aberta — `listening-button.tsx` +
+  `lib/use-continuous-listening.ts` (turnos: pausa enquanto ele responde/fala)
+  sobre `lib/voice-stream.ts` (AudioWorklet, pré-roll, WAV) e o `SpeechSegmenter`
+  de `lib/voice-activity.ts`; no modo manual, `mic-button.tsx` +
+  `lib/use-voice-input.ts` (clique, segurar, Ctrl+Espaço, gesto de apontar) sobre
+  `lib/voice-capture.ts` (MediaRecorder + nível). `lib/speech.ts` fala a resposta
+  frase a frase durante o streaming (Piper pelo backend, voz do sistema de
+  reserva) e avisa quando ele está falando, o que está dizendo e quão alto.
+  `lib/page-visibility.ts`: a página está à vista? (o app avisa quando a janela
+  vai para a bandeja, que o WebView2 sozinho não reporta).
 
 ## 4. Multiusuário e segurança
 
@@ -101,7 +133,9 @@ Memória com dedup + inspetor + "esquecer"; sistema de contas completo
 memória/conhecimento/config; login obrigatório; remoção da brecha que lia
 arquivos do servidor; presença 3D repaginada (núcleo dourado + flash de memória
 de 3,2s + calibração "premium"); persona afiada; arquivos de deploy
-(Docker/Fly/Vercel/DEPLOY.md). Testes: ≈72 no back, 9 no front, CI verde.
+(Docker/Fly/Vercel/DEPLOY.md); app do Windows (instalador, bandeja, gestos com
+MediaPipe); conversa por voz local na janela (Whisper ouve, Piper responde frase
+a frase na voz do F.E.A.R. ou natural). Testes: ≈72 no back, 9 no front, CI verde.
 
 ## 8. Lacunas conhecidas (bons alvos de melhoria)
 

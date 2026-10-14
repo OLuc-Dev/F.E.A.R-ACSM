@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import time
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import WebSocketDisconnect
@@ -183,6 +185,9 @@ def test_status(client: TestClient) -> None:
         "memory",
         "voice",
         "spotify",
+        "music",
+        "voice_input",
+        "voice_output",
         "obsidian",
         "calendar",
     }
@@ -728,3 +733,154 @@ def test_owner_email_setting_picks_the_owner(client: TestClient, tmp_path: Path)
         assert client.post("/voice/start", headers=second).status_code == 200
     finally:
         delattr(app.state, "voice_listener")
+
+
+def test_status_reports_music_control_to_the_owner(client: TestClient) -> None:
+    from fear.integrations.music import MediaKeys
+
+    app.state.music = MediaKeys(press=lambda key: None)
+    try:
+        _, owner = _register(client, "owner@example.com")
+        _, guest = _register(client, "guest@example.com")
+        assert client.get("/status", headers=owner).json()["music"] is True
+        assert client.get("/status", headers=guest).json()["music"] is False
+    finally:
+        delattr(app.state, "music")
+
+
+# --- talking to F.E.A.R. through the app (local speech) ---
+
+
+class FakeEars:
+    def __init__(self) -> None:
+        self.heard: list[bytes] = []
+
+    def transcribe(self, audio: bytes) -> str:
+        self.heard.append(audio)
+        return "qual é a próxima reunião?"
+
+
+class FakeVoice:
+    def synthesize(self, text: str, style: str = "fear") -> bytes:
+        return b"RIFF" + f"{style}:{text}".encode()
+
+
+def test_voice_routes_need_a_signed_in_user(client: TestClient) -> None:
+    assert client.post("/voice/transcribe", content=b"audio").status_code == 401
+    assert client.post("/voice/speak", json={"text": "oi"}).status_code == 401
+
+
+def test_voice_routes_say_when_speech_is_not_installed(client: TestClient) -> None:
+    _, headers = _register(client)
+    assert client.post("/voice/transcribe", content=b"audio", headers=headers).status_code == 503
+    assert client.post("/voice/speak", json={"text": "oi"}, headers=headers).status_code == 503
+
+
+def test_transcribe_turns_a_recording_into_text(client: TestClient) -> None:
+    ears = FakeEars()
+    app.state.stt = ears
+    try:
+        _, headers = _register(client)
+        response = client.post(
+            "/voice/transcribe",
+            content=b"opus-bytes",
+            headers={**headers, "content-type": "audio/webm"},
+        )
+        assert response.json() == {"text": "qual é a próxima reunião?"}
+        assert ears.heard == [b"opus-bytes"]
+        assert client.post("/voice/transcribe", content=b"", headers=headers).status_code == 422
+    finally:
+        delattr(app.state, "stt")
+
+
+def test_speak_returns_a_sentence_as_wav(client: TestClient) -> None:
+    app.state.voice_out = FakeVoice()
+    try:
+        _, headers = _register(client)
+        response = client.post(
+            "/voice/speak", json={"text": " Olá. ", "style": "natural"}, headers=headers
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+        assert response.content == "RIFFnatural:Olá.".encode()
+        assert client.post("/voice/speak", json={"text": "  "}, headers=headers).status_code == 422
+        bad_style = client.post("/voice/speak", json={"text": "oi", "style": "x"}, headers=headers)
+        assert bad_style.status_code == 422
+    finally:
+        delattr(app.state, "voice_out")
+
+
+def test_transcribe_refuses_a_recording_too_long_before_reading_it_all(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(app_module, "_MAX_VOICE_UPLOAD", 1000)
+    ears = FakeEars()
+    app.state.stt = ears
+    try:
+        _, headers = _register(client)
+        declared = client.post("/voice/transcribe", content=b"x" * 2000, headers=headers)
+        # Sent in pieces with no size up front: cut off once past the limit.
+        streamed = client.post(
+            "/voice/transcribe", content=iter([b"x" * 600, b"x" * 600]), headers=headers
+        )
+        assert (declared.status_code, streamed.status_code) == (413, 413)
+        assert ears.heard == []
+    finally:
+        delattr(app.state, "stt")
+
+
+class _SlowVoice:
+    """Counts how many sentences are being synthesized at once."""
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.most = 0
+        self.said: list[str] = []
+
+    def synthesize(self, text: str, style: str = "fear") -> bytes:
+        self.active += 1
+        self.most = max(self.most, self.active)
+        time.sleep(0.05)
+        self.said.append(text)
+        self.active -= 1
+        return b"RIFF"
+
+
+class _Request:
+    def __init__(self, voice: _SlowVoice, gone: bool = False) -> None:
+        self.app = SimpleNamespace(state=SimpleNamespace(voice_out=voice))
+        self.gone = gone
+
+    async def is_disconnected(self) -> bool:
+        return self.gone
+
+
+async def _speak(request: _Request, text: str):
+    payload = app_module.SpeakRequest(text=text)
+    return await app_module.voice_speak(payload, request, object())  # type: ignore[arg-type]
+
+
+async def test_speak_synthesizes_one_sentence_at_a_time() -> None:
+    voice = _SlowVoice()
+    request = _Request(voice)
+    await asyncio.gather(*(_speak(request, f"Frase {n}.") for n in range(3)))
+    assert voice.most == 1  # the rest wait their turn without holding a worker thread
+    assert sorted(voice.said) == ["Frase 0.", "Frase 1.", "Frase 2."]
+
+
+async def test_speak_skips_a_sentence_nobody_waits_for_anymore() -> None:
+    voice = _SlowVoice()
+    # The reply was interrupted: the page gave up on this sentence while it queued.
+    response = await _speak(_Request(voice, gone=True), "Olá.")
+    assert response.status_code == 204
+    assert voice.said == []
+
+
+def test_status_reports_voice_in_and_out(client: TestClient) -> None:
+    app.state.stt, app.state.voice_out = FakeEars(), FakeVoice()
+    try:
+        body = client.get("/status").json()
+        assert body["voice_input"] is True and body["voice_output"] is True
+    finally:
+        delattr(app.state, "stt")
+        delattr(app.state, "voice_out")

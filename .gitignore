@@ -241,3 +241,6 @@ token.pickle
 # The Python "lib/" ignore above is for build artifacts, not the frontend lib.
 !/lib/
 !/lib/**
+
+# MediaPipe's WASM runtime, copied from node_modules before dev/build
+public/mediapipe/wasm/

@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     chunk_size: int = Field(1_024, validation_alias="FEAR_CHUNK_SIZE", gt=0)
 
     whisper_model_name: str = Field("base", validation_alias="WHISPER_MODEL")
+    # Talking to F.E.A.R. through the app (faster-whisper + Piper, all local).
+    # The STT model is a faster-whisper name ("small") or a folder; the Windows
+    # app points both at the models it ships.
+    stt_model: str = Field("small", validation_alias="FEAR_STT_MODEL")
+    voice_language: str = Field("pt", validation_alias="FEAR_VOICE_LANGUAGE")
+    piper_voice: str = Field("", validation_alias="FEAR_PIPER_VOICE")
+    # Load both models at start (in the background) so the first command is quick.
+    preload_voice: bool = Field(False, validation_alias="FEAR_PRELOAD_VOICE")
 
     chroma_path: str = Field("data/chroma", validation_alias="CHROMA_PATH")
 
@@ -50,6 +58,10 @@ class Settings(BaseSettings):
     owner_email: str = Field("", validation_alias="FEAR_OWNER_EMAIL")
     # Set by the Windows app launcher: one built-in account, no sign-up or login.
     desktop: bool = Field(False, validation_alias="FEAR_DESKTOP")
+    # The Windows app's settings-panel switches (claps, Obsidian vault).
+    desktop_settings_path: str = Field(
+        "data/desktop.json", validation_alias="FEAR_DESKTOP_SETTINGS"
+    )
 
     # OpenRouter is used through an OpenAI-compatible client interface.
     openrouter_api_key: str = Field("", validation_alias="OPENROUTER_API_KEY")

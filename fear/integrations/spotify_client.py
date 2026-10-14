@@ -3,29 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from dataclasses import dataclass
 from typing import Any
 
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
+from fear.integrations.music import music_intent
+
 logger = logging.getLogger(__name__)
-
-# \w, not [a-z]: an ASCII class split "próxima" into "pr" + "xima".
-_WORD_RE = re.compile(r"\w+")
-
-# Intent words, English and Brazilian Portuguese (F.E.A.R. is spoken to in both).
-_TOGGLE = {"toggle", "alternar", "alterna"}
-_NEXT = {"next", "skip", "próxima", "proxima", "pular", "pula", "avançar", "avança"}
-_PREVIOUS = {"previous", "back", "anterior", "voltar", "volta"}
-_PAUSE = {"pause", "stop", "pausar", "pausa", "parar"}
-_RESUME = {"resume", "play", "tocar", "toca", "continuar", "continua", "retomar"}
-
-
-def _words(text: str) -> set[str]:
-    """Lowercased whole words of `text`, for substring-proof intent matching."""
-    return set(_WORD_RE.findall(text.lower()))
 
 
 @dataclass(slots=True)
@@ -104,41 +90,41 @@ class SpotifyClient:
     async def pause(self) -> str:
         """Pause playback."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.pause_playback)
-        return "Paused Spotify."
+        return "Música pausada."
 
     async def resume(self) -> str:
         """Resume playback."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.start_playback)
-        return "Resumed Spotify."
+        return "Música retomada."
 
     async def next_track(self) -> str:
         """Skip to the next track."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.next_track)
-        return "Skipped to the next track."
+        return "Próxima faixa."
 
     async def previous_track(self) -> str:
         """Return to the previous track."""
         if self._client is None:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         await asyncio.to_thread(self._client.previous_track)
-        return "Went back to the previous track."
+        return "Faixa anterior."
 
     async def toggle(self) -> str:
         """Pause when playing, otherwise resume."""
         status = await self.status()
 
         if not status.is_configured:
-            return "Spotify is not configured."
+            return "O Spotify não está configurado."
 
         if status.is_playing:
             return await self.pause()
@@ -147,21 +133,15 @@ class SpotifyClient:
 
     async def handle_intent(self, text: str) -> str:
         """Handle simple natural-language Spotify commands."""
-        words = _words(text)
-
-        # Whole words only: substring matching made "pause playback" hit "back"
-        # and skip to the previous track. Specific intents are still checked
-        # before the greedy "play"/"resume" branch, so "toggle Spotify playback"
-        # is not misread as "resume".
-        if words & _TOGGLE:
+        intent = music_intent(text)
+        if intent == "toggle":
             return await self.toggle()
-        if words & _NEXT:
+        if intent == "next":
             return await self.next_track()
-        if words & _PREVIOUS:
+        if intent == "previous":
             return await self.previous_track()
-        if words & _PAUSE:
+        if intent == "pause":
             return await self.pause()
-        if words & _RESUME:
+        if intent == "resume":
             return await self.resume()
-
         return ""

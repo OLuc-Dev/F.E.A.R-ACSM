@@ -12,6 +12,7 @@ import {
   Plug,
   Plus,
   Sparkles,
+  Volume2,
   Trash2,
   X,
 } from "lucide-react";
@@ -27,16 +28,25 @@ import {
   type KnowledgeListResponse,
   type StatusResponse,
 } from "@/lib/api";
+import { IS_DESKTOP } from "@/lib/desktop";
+import { loadVoiceStyle, saveVoiceStyle, startSpeaking, VOICE_STYLES, type VoiceStyle } from "@/lib/speech";
 import { fade, springSoft } from "@/lib/motion";
+import { AppSettingsTab, Switch } from "@/components/ui/app-settings-tab";
 import { MemoryTab } from "@/components/ui/memory-tab";
 
-export type Tab = "conhecimento" | "comportamento" | "memoria";
+export type Tab = "conhecimento" | "comportamento" | "memoria" | "app";
 
 const TAB_LABELS: Record<Tab, string> = {
   conhecimento: "Conhecimento",
   comportamento: "Comportamento",
   memoria: "Memória",
+  app: "App",
 };
+
+// The Windows app adds its own switches; the web version has none to show.
+const TABS: Tab[] = IS_DESKTOP
+  ? ["conhecimento", "comportamento", "memoria", "app"]
+  : ["conhecimento", "comportamento", "memoria"];
 
 const MODE_META: Record<string, { label: string; desc: string }> = {
   equilibrio: { label: "Equilíbrio", desc: "Frio, lúcido e leal. A persona como ele é." },
@@ -44,16 +54,25 @@ const MODE_META: Record<string, { label: string; desc: string }> = {
   cirurgico: { label: "Cirúrgico", desc: "Sem teatro. Diagnóstico, decisão, ação." },
 };
 
-type StatusFlag = "openrouter" | "memory" | "spotify" | "obsidian" | "voice" | "calendar";
+type StatusFlag = "openrouter" | "memory" | "spotify" | "music" | "obsidian" | "voice" | "calendar";
 
-const INTEGRATIONS: { key: StatusFlag; label: string; hint: string }[] = [
-  { key: "openrouter", label: "OpenRouter", hint: "OPENROUTER_API_KEY no .env" },
-  { key: "memory", label: "Memória", hint: "local, ativa por padrão" },
-  { key: "spotify", label: "Spotify", hint: "python scripts/spotify_login.py" },
-  { key: "obsidian", label: "Obsidian", hint: "OBSIDIAN_VAULT_PATH no .env" },
-  { key: "calendar", label: "Agenda", hint: "python scripts/google_login.py" },
-  { key: "voice", label: "Voz", hint: "FEAR_ENABLE_VOICE_LISTENER=1" },
-];
+const INTEGRATIONS: { key: StatusFlag; label: string; hint: string }[] = IS_DESKTOP
+  ? [
+      { key: "openrouter", label: "OpenRouter", hint: "cole sua chave no ícone de conta" },
+      { key: "memory", label: "Memória", hint: "local, ativa por padrão" },
+      { key: "music", label: "Música", hint: "teclas de mídia do Windows" },
+      { key: "obsidian", label: "Obsidian", hint: "escolha a pasta na aba App" },
+      { key: "calendar", label: "Agenda", hint: "ainda não disponível no app" },
+      { key: "voice", label: "Voz", hint: "reinstale o app para trazer a voz" },
+    ]
+  : [
+      { key: "openrouter", label: "OpenRouter", hint: "OPENROUTER_API_KEY no .env" },
+      { key: "memory", label: "Memória", hint: "local, ativa por padrão" },
+      { key: "spotify", label: "Spotify", hint: "python scripts/spotify_login.py" },
+      { key: "obsidian", label: "Obsidian", hint: "OBSIDIAN_VAULT_PATH no .env" },
+      { key: "calendar", label: "Agenda", hint: "python scripts/google_login.py" },
+      { key: "voice", label: "Voz", hint: 'pip install -e ".[voice]"' },
+    ];
 
 function Field(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
@@ -80,6 +99,11 @@ export function SettingsPanel({
   speaker,
   initialTab = "conhecimento",
   highlightMemoryIds,
+  hasOpenRouterKey = false,
+  alwaysListen = false,
+  onAlwaysListenChange,
+  voiceInterface = false,
+  onVoiceInterfaceChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -89,10 +113,22 @@ export function SettingsPanel({
   // Memories to mark as "consultada nesta resposta" in the memory tab (set when
   // the inspector is opened from a reply's chip).
   highlightMemoryIds?: string[];
+  // The signed-in user's own key counts as "OpenRouter on", not just the server's.
+  hasOpenRouterKey?: boolean;
+  // Listening as soon as the window opens (the switch shows when there's a voice).
+  alwaysListen?: boolean;
+  onAlwaysListenChange?: (on: boolean) => void;
+  // The voice interface (JARVIS-style, no written chat) instead of the chat.
+  voiceInterface?: boolean;
+  onVoiceInterfaceChange?: (on: boolean) => void;
 }) {
   const [tab, setTab] = useState<Tab>("conhecimento");
   const [data, setData] = useState<KnowledgeListResponse | null>(null);
   const [config, setConfig] = useState<ConfigResponse | null>(null);
+  const [voiceStyle, setVoiceStyle] = useState<VoiceStyle>("fear");
+  useEffect(() => {
+    if (open) setVoiceStyle(loadVoiceStyle());
+  }, [open]);
   const [modelInput, setModelInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -229,7 +265,7 @@ export function SettingsPanel({
               </div>
 
               <div className="flex gap-1 rounded-xl border border-overlay/10 bg-overlay/[0.03] p-1">
-                {(["conhecimento", "comportamento", "memoria"] as const).map((value) => (
+                {TABS.map((value) => (
                   <button
                     key={value}
                     onClick={() => setTab(value)}
@@ -384,6 +420,87 @@ export function SettingsPanel({
                         </div>
                       </section>
 
+                      {/* Voice */}
+                      <section className="space-y-2">
+                        <SectionLabel icon={<Volume2 className="size-3.5" />}>Voz</SectionLabel>
+                        <div className="grid gap-1.5">
+                          {VOICE_STYLES.filter(
+                            (option) => option.value === "system" || status?.voice_output,
+                          ).map((option) => {
+                            const active = voiceStyle === option.value;
+                            return (
+                              <div
+                                key={option.value}
+                                className={`flex items-center gap-2 rounded-xl border p-1 ${
+                                  active
+                                    ? "border-brand/40 bg-brand/[0.08]"
+                                    : "border-overlay/10 bg-overlay/[0.025]"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    saveVoiceStyle(option.value);
+                                    setVoiceStyle(option.value);
+                                  }}
+                                  aria-pressed={active}
+                                  className="tap flex-1 rounded-lg px-2 py-1.5 text-left"
+                                >
+                                  <span
+                                    className={`text-sm font-medium ${active ? "text-brand" : "text-foreground/90"}`}
+                                  >
+                                    {option.label}
+                                  </span>
+                                  <span className="ml-2 text-xs text-muted-foreground">{option.hint}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    startSpeaking(option.value).say("Eu sou o F.E.A.R. É assim que eu falo.")
+                                  }
+                                  className="tap rounded-lg px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
+                                >
+                                  Ouvir
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[11px] leading-4 text-muted-foreground/60">
+                          {status?.voice_output
+                            ? "A voz do F.E.A.R. é gerada neste computador. Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."
+                            : "Ele responde em voz alta quando você fala com ele, ou sempre, com o som ligado no topo."}
+                        </p>
+                        {status?.voice_input && onVoiceInterfaceChange && (
+                          <>
+                            <Switch
+                              checked={voiceInterface}
+                              onChange={onVoiceInterfaceChange}
+                              label="Interface só de voz (estilo J.A.R.V.I.S.)"
+                            />
+                            <p className="text-[11px] leading-4 text-muted-foreground/60">
+                              Ligada, a tela é só para conversar: o núcleo no centro ouve você e fala com a
+                              voz do F.E.A.R., com legendas do que está sendo dito — sem caixa de texto nem
+                              histórico. Desligada, volta o chat escrito.
+                            </p>
+                          </>
+                        )}
+                        {status?.voice_input && onAlwaysListenChange && (
+                          <>
+                            <Switch
+                              checked={alwaysListen}
+                              onChange={onAlwaysListenChange}
+                              label="Ouvir assim que abrir"
+                            />
+                            <p className="text-[11px] leading-4 text-muted-foreground/60">
+                              Com a janela aberta ele fica ouvindo e responde ao que você falar — sem clicar.
+                              Não ouve enquanto ele mesmo fala, nem com a janela minimizada. Desligado, você
+                              fala pelo botão do microfone ou segurando Ctrl+Espaço.
+                            </p>
+                          </>
+                        )}
+                      </section>
+
                       {/* Model */}
                       <section className="space-y-2">
                         <SectionLabel icon={<Cpu className="size-3.5" />}>Modelo (OpenRouter)</SectionLabel>
@@ -426,7 +543,11 @@ export function SettingsPanel({
                         <SectionLabel icon={<Plug className="size-3.5" />}>Integrações</SectionLabel>
                         <ul className="space-y-0.5">
                           {INTEGRATIONS.map((item) => {
-                            const on = status?.[item.key] ?? false;
+                            const on =
+                              (status?.[item.key] ?? false) ||
+                              (item.key === "openrouter" && hasOpenRouterKey) ||
+                              // Talking through the window counts, not only the machine's microphone.
+                              (item.key === "voice" && Boolean(status?.voice_input));
                             return (
                               <li
                                 key={item.key}
@@ -446,10 +567,14 @@ export function SettingsPanel({
                           })}
                         </ul>
                         <p className="text-[11px] leading-4 text-muted-foreground/50">
-                          Chaves de API ficam só no seu .env — nunca aqui.
+                          {IS_DESKTOP
+                            ? "Sua chave do OpenRouter fica criptografada neste computador."
+                            : "Chaves de API ficam só no seu .env — nunca aqui."}
                         </p>
                       </section>
                     </>
+                  ) : tab === "app" ? (
+                    <AppSettingsTab />
                   ) : (
                     <MemoryTab speaker={speaker} highlightIds={highlightMemoryIds} />
                   )}

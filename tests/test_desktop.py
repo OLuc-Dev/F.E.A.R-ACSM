@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -176,5 +177,281 @@ def test_prepare_environment_points_the_backend_at_the_install(monkeypatch, tmp_
         os.environ.update(saved)
 
 
+def test_a_copied_env_example_keeps_what_the_app_ships(monkeypatch, tmp_path: Path) -> None:
+    # The README points to .env.example for advanced options. Copied whole into
+    # the app's folder, its blanks (FEAR_SECRET_KEY=) and repo-relative paths
+    # must not cost anyone their saved key, the persona or the voice.
+    for name in (
+        "FEAR_DESKTOP",
+        "FEAR_ENV",
+        "FEAR_SECRET_KEY",
+        "FEAR_PERSONA_FILE",
+        "FEAR_ONNX_MODEL_DIR",
+        "FEAR_STT_MODEL",
+        "FEAR_PIPER_VOICE",
+        "FEAR_PRELOAD_VOICE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    resources = tmp_path / "bundle"
+    (resources / "prompts").mkdir(parents=True)
+    (resources / "prompts" / "fear_persona.md").write_text("F.E.A.R.", encoding="utf-8")
+    (resources / "voice" / "whisper-small").mkdir(parents=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    example = Path(__file__).resolve().parents[1] / ".env.example"
+    (home / ".env").write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    cwd = os.getcwd()
+    saved = dict(os.environ)
+    try:
+        desktop.prepare_environment(home, resources)
+        assert os.environ["FEAR_SECRET_KEY"] == (home / "secret.key").read_text(encoding="utf-8")
+        assert os.environ["FEAR_PERSONA_FILE"] == str(resources / "prompts" / "fear_persona.md")
+        assert os.environ["FEAR_STT_MODEL"] == str(resources / "voice" / "whisper-small")
+        assert os.environ["FEAR_PIPER_VOICE"] == str(
+            resources / "voice" / "piper" / desktop.PIPER_VOICE_FILE
+        )
+        assert os.environ["FEAR_PRELOAD_VOICE"] == "1"
+        assert Settings().desktop is True
+    finally:
+        os.chdir(cwd)
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def test_a_persona_of_their_own_is_kept(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "minha_persona.md").write_text("outra", encoding="utf-8")
+    (home / ".env").write_text("FEAR_PERSONA_FILE=minha_persona.md\n", encoding="utf-8")
+    monkeypatch.delenv("FEAR_PERSONA_FILE", raising=False)
+    cwd = os.getcwd()
+    saved = dict(os.environ)
+    try:
+        desktop.prepare_environment(home, tmp_path / "bundle")
+        assert os.environ["FEAR_PERSONA_FILE"] == "minha_persona.md"  # in the app's folder
+    finally:
+        os.chdir(cwd)
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def test_webview2_lets_speech_play_and_keeps_flags_already_set() -> None:
+    assert desktop.webview2_flags("").split() == [
+        "--autoplay-policy=no-user-gesture-required",
+        "--disable-features=ElasticOverscroll",  # pywebview's own, which the variable replaces
+    ]
+    # A test run's switches stay, and a policy or feature list set on purpose wins.
+    assert desktop.webview2_flags(
+        "--remote-debugging-port=9223 --autoplay-policy=document-user-activation-required"
+    ).split() == [
+        "--remote-debugging-port=9223",
+        "--autoplay-policy=document-user-activation-required",
+        "--disable-features=ElasticOverscroll",
+    ]
+
+
+def _fake_webview2(monkeypatch, storage: str):
+    """Just enough of pywebview's WebView2 module and the .NET types it uses."""
+    import types
+
+    calls: dict = {}
+
+    class Options:
+        AdditionalBrowserArguments = None
+
+    class Environment:
+        faulted = False
+
+        @staticmethod
+        def CreateAsync(folder, user_data, options):  # noqa: N802 — .NET name
+            calls["create"] = (folder, user_data, options.AdditionalBrowserArguments)
+            return types.SimpleNamespace(ContinueWith=lambda action, scheduler: action("task"))
+
+    class EdgeChrome:
+        def __init__(self) -> None:
+            self.syncContextTaskScheduler = "ui"
+            self.webview = types.SimpleNamespace(
+                EnsureCoreWebView2Async=lambda env: calls.setdefault("ensure", env)
+            )
+
+        def setup_webview2_environment(self) -> None:
+            calls["original"] = True
+
+    class Generic:
+        def __getitem__(self, _type):
+            return lambda fn: (
+                lambda task: fn(
+                    types.SimpleNamespace(
+                        IsFaulted=Environment.faulted,
+                        Exception="bad flag",
+                        Result=f"env from {task}",
+                    )
+                )
+            )
+
+    edgechromium = types.ModuleType("webview.platforms.edgechromium")
+    edgechromium.EdgeChrome = EdgeChrome  # type: ignore[attr-defined]
+    edgechromium._state = {"storage_path": storage}  # type: ignore[attr-defined]
+    platforms = types.ModuleType("webview.platforms")
+    platforms.edgechromium = edgechromium  # type: ignore[attr-defined]
+    core = types.ModuleType("Microsoft.Web.WebView2.Core")
+    core.CoreWebView2Environment = Environment  # type: ignore[attr-defined]
+    core.CoreWebView2EnvironmentOptions = Options  # type: ignore[attr-defined]
+    system = types.ModuleType("System")
+    system.Action = Generic()  # type: ignore[attr-defined]
+    tasks = types.ModuleType("System.Threading.Tasks")
+    tasks.Task = Generic()  # type: ignore[attr-defined]
+    for name, module in {
+        "webview.platforms": platforms,
+        "webview.platforms.edgechromium": edgechromium,
+        "Microsoft.Web.WebView2.Core": core,
+        "System": system,
+        "System.Threading.Tasks": tasks,
+    }.items():
+        monkeypatch.setitem(sys.modules, name, module)
+    monkeypatch.setattr(sys, "platform", "win32")
+    return EdgeChrome, Environment, calls
+
+
+def test_webview2_gets_the_flags_in_its_environment_options(monkeypatch) -> None:
+    edge_chrome, _, calls = _fake_webview2(monkeypatch, "C:/FEAR/webview")
+    desktop.give_webview2_flags("--autoplay-policy=no-user-gesture-required")
+
+    edge_chrome().setup_webview2_environment()
+
+    assert calls["create"] == (
+        None,
+        "C:/FEAR/webview",  # the same storage folder pywebview would use
+        "--autoplay-policy=no-user-gesture-required",
+    )
+    assert calls["ensure"] == "env from task"  # the window starts on that environment
+    assert "original" not in calls
+
+
+def test_webview2_still_opens_when_it_refuses_the_flags(monkeypatch) -> None:
+    edge_chrome, environment, calls = _fake_webview2(monkeypatch, "C:/FEAR/webview")
+    monkeypatch.setattr(environment, "faulted", True)
+    desktop.give_webview2_flags("--autoplay-policy=no-user-gesture-required")
+
+    edge_chrome().setup_webview2_environment()
+
+    assert "ensure" not in calls and calls["original"] is True  # pywebview's own setup
+
+
+def test_webview2_still_opens_when_the_flags_cannot_be_given(monkeypatch) -> None:
+    edge_chrome, environment, calls = _fake_webview2(monkeypatch, "C:/FEAR/webview")
+
+    def refuse(*_args):
+        raise RuntimeError("no such overload")
+
+    monkeypatch.setattr(environment, "CreateAsync", staticmethod(refuse))
+    desktop.give_webview2_flags("--autoplay-policy=no-user-gesture-required")
+
+    edge_chrome().setup_webview2_environment()
+
+    assert calls == {"original": True}  # pywebview's own setup, without the flags
+
+
+class _FakeAppWindow:
+    """pywebview's window, as far as telling its page goes."""
+
+    def __init__(self) -> None:
+        import types
+
+        self.scripts: list[str] = []
+        self.control = types.SimpleNamespace(Visible=True)
+        self.native = types.SimpleNamespace(
+            browser=types.SimpleNamespace(webview=self.control),
+            Invoke=lambda delegate: delegate(),  # runs "on the UI thread"
+        )
+
+    def evaluate_js(self, script: str) -> None:
+        self.scripts.append(script)
+
+
+def _wait_for(condition, seconds: float = 2.0) -> None:
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+
+@pytest.mark.parametrize("shown", [False, True])
+def test_the_page_learns_when_its_window_hides_in_the_tray(monkeypatch, shown: bool) -> None:
+    import types
+
+    system = types.ModuleType("System")
+
+    class Generic:
+        def __getitem__(self, _type):
+            return lambda fn: fn
+
+    system.Func = Generic()  # type: ignore[attr-defined]
+    system.Type = object  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "System", system)
+    monkeypatch.setattr(sys, "platform", "win32")
+    window = _FakeAppWindow()
+
+    desktop.tell_page_shown(window, shown)
+
+    _wait_for(lambda: window.scripts)
+    assert f"window.__fearHidden = {str(not shown).lower()};" in window.scripts[0]
+    assert "fear:window" in window.scripts[0]  # for a page already listening for it
+    assert window.control.Visible is shown  # hidden, the browser view stops drawing too
+
+
+def test_telling_the_page_never_breaks_the_window(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    class Broken:
+        def evaluate_js(self, script: str) -> None:
+            raise RuntimeError("page gone")
+
+    desktop.tell_page_shown(Broken(), False)  # no native window, page gone: still fine
+
+
 def test_autostart_command_starts_minimized() -> None:
-    assert desktop.autostart_command().endswith("--minimized")
+    from fear.desktop_prefs import autostart_command
+
+    assert autostart_command().endswith("--minimized")
+
+
+def test_ui_files_are_served_with_their_real_types(monkeypatch, tmp_path: Path) -> None:
+    # Python's mimetypes also reads the Windows registry, where a stray entry can
+    # map .js to text/plain; the browser then refuses the gestures' WASM runtime.
+    import mimetypes
+
+    mimetypes.init()
+    monkeypatch.setitem(mimetypes.types_map, ".js", "text/plain")
+    monkeypatch.setitem(mimetypes.types_map, ".wasm", "text/plain")
+    ui = tmp_path / "ui"
+    (ui / "mediapipe" / "wasm").mkdir(parents=True)
+    (ui / "index.html").write_text("<html></html>", encoding="utf-8")
+    (ui / "mediapipe" / "wasm" / "runtime.js").write_text("void 0;", encoding="utf-8")
+    (ui / "mediapipe" / "wasm" / "runtime.wasm").write_bytes(b"\x00asm\x01\x00\x00\x00")
+    application = FastAPI()
+    desktop.mount_ui(application, tmp_path)
+    client = TestClient(application)
+
+    wasm = client.get("/mediapipe/wasm/runtime.wasm")
+    script = client.get("/mediapipe/wasm/runtime.js")
+
+    assert wasm.headers["content-type"] == "application/wasm"
+    assert script.headers["content-type"].startswith("text/javascript")
+    assert client.get("/").status_code == 200
+
+
+def test_the_folder_picker_returns_the_choice_or_nothing() -> None:
+    class FakeWindow:
+        def __init__(self, result):
+            self.result = result
+
+        def create_file_dialog(self, dialog_type):
+            return self.result
+
+    pytest.importorskip("webview")
+    bridge = desktop.DesktopBridge()
+    assert bridge.pick_folder() == ""  # no window yet
+    bridge._window = FakeWindow(["C:/Users/lucas/Obsidian"])
+    assert bridge.pick_folder() == "C:/Users/lucas/Obsidian"
+    bridge._window = FakeWindow(None)  # cancelled
+    assert bridge.pick_folder() == ""

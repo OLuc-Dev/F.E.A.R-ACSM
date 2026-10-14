@@ -17,6 +17,7 @@ describe("humanizeSource", () => {
     expect(humanizeSource("conversation")).toBe("conversa");
     expect(humanizeSource("voice")).toBe("voz");
     expect(humanizeSource("spotify")).toBe("Spotify");
+    expect(humanizeSource("music")).toBe("música");
     expect(humanizeSource("calendar")).toBe("calendário");
     expect(humanizeSource("obsidian")).toBe("Obsidian");
   });

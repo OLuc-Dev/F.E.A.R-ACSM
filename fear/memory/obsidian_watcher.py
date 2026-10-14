@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
@@ -129,12 +130,16 @@ class ObsidianWatcher:
         speaker: str = "fear_user",
         source: str = "obsidian",
         user_id: Callable[[], str] = _no_owner,
+        state_file: str | Path | None = None,
     ) -> None:
         self.vault_path = Path(vault_path).expanduser().resolve()
         self.memory = memory
         self.speaker = speaker
         self.source = source
         self.user_id = user_id
+        # Remembers when each vault was last scanned, so a restart only reads
+        # the notes written in the meantime instead of embedding the vault again.
+        self.state_file = Path(state_file) if state_file is not None else None
         self._observer: BaseObserver | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -167,19 +172,52 @@ class ObsidianWatcher:
 
         self._thread = None
 
-    def index_existing_files(self) -> None:
-        """Index existing Markdown files once before live watching."""
+    def catch_up(self) -> int:
+        """Index the notes written since the last scan: the whole vault the first time.
+
+        Live watching only sees changes made while F.E.A.R. runs; without this,
+        the notes that already existed (or were edited while it was closed) would
+        never reach its memory. Returns how many files were indexed.
+        """
         if not self.vault_path.exists():
             self._logger.warning("Obsidian vault does not exist: %s", self.vault_path)
-            return
-
+            return 0
+        state = self._load_state()
+        since = float(state.get(str(self.vault_path), 0.0))
+        started = time.time()
         handler = self._handler()
-
+        indexed = 0
         for path in iter_markdown_files(self.vault_path):
+            if self._stop_event.is_set():
+                return indexed  # interrupted: don't record a scan that didn't finish
             try:
+                if path.stat().st_mtime <= since:
+                    continue
                 handler.index_markdown_file(path)
+                indexed += 1
             except Exception:
                 self._logger.exception("Failed to index existing file: %s", path)
+        state[str(self.vault_path)] = started
+        self._save_state(state)
+        return indexed
+
+    def _load_state(self) -> dict[str, float]:
+        if self.state_file is None:
+            return {}
+        try:
+            data = json.loads(self.state_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_state(self, state: dict[str, float]) -> None:
+        if self.state_file is None:
+            return
+        try:
+            self.state_file.parent.mkdir(parents=True, exist_ok=True)
+            self.state_file.write_text(json.dumps(state), encoding="utf-8")
+        except OSError:
+            self._logger.warning("Could not record the Obsidian scan", exc_info=True)
 
     def _handler(self) -> ObsidianMarkdownHandler:
         return ObsidianMarkdownHandler(
@@ -203,6 +241,10 @@ class ObsidianWatcher:
         self._observer = observer
 
         try:
+            # Watching first, so notes saved while the catch-up runs aren't missed.
+            indexed = self.catch_up()
+            if indexed:
+                self._logger.info("Indexed %d Obsidian note(s) written while away", indexed)
             while not self._stop_event.wait(timeout=0.25):
                 pass
         finally:

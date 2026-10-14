@@ -53,6 +53,8 @@ const config = {
         overlay: "rgb(var(--overlay-rgb) / <alpha-value>)",
         brand: "rgb(var(--brand-rgb) / <alpha-value>)",
         danger: "rgb(var(--danger-rgb) / <alpha-value>)",
+        // F.E.A.R.'s own amber (--energy), for what is about the app itself.
+        energy: "hsl(var(--energy) / <alpha-value>)",
       },
       borderRadius: {
         lg: "var(--radius)",

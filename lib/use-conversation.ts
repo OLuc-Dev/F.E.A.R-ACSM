@@ -9,7 +9,7 @@ import {
   humanizeError,
   isBlankMessage,
 } from "@/lib/chat-helpers";
-import { primeSpeech, speak, stopSpeaking } from "@/lib/speech";
+import { primeSpeech, SentenceSplitter, type Speaker, startSpeaking, stopSpeaking } from "@/lib/speech";
 
 export type Role = "user" | "fear" | "system";
 export type Status = "online" | "listening" | "thinking" | "speaking" | "error";
@@ -146,11 +146,14 @@ export function useConversation() {
   }, []);
 
   const send = useCallback(
-    async (text: string, speaker: string) => {
+    // `speak` voices this reply even with the voice toggle off — for a question
+    // asked out loud, the answer comes back out loud. Resolves false when the
+    // message was refused (blank, or another reply still being written).
+    async (text: string, speaker: string, options: { speak?: boolean } = {}): Promise<boolean> => {
       const trimmed = text.trim();
       // Guard on a ref, not `isBusy`: state updates a render late, so two fast
       // Enters would both see false and double-send. A ref flips synchronously.
-      if (isBlankMessage(trimmed) || busyRef.current) return;
+      if (isBlankMessage(trimmed) || busyRef.current) return false;
       busyRef.current = true;
       stopRef.current = false;
 
@@ -181,7 +184,10 @@ export function useConversation() {
       };
       arm();
 
-      stopSpeaking();
+      // Spoken sentence by sentence as the reply streams, not after it ends.
+      const voice: Speaker | null = options.speak || voiceOnRef.current ? startSpeaking() : null;
+      if (!voice) stopSpeaking();
+      const sentences = new SentenceSplitter();
       let full = "";
       try {
         await streamCommand(
@@ -191,6 +197,7 @@ export function useConversation() {
             if (!full) setStatus("speaking");
             full += chunk;
             appendToLastFear(chunk);
+            if (voice) for (const sentence of sentences.push(chunk)) voice.say(sentence);
           },
           controller.signal,
           tagLastFearConsulted,
@@ -200,20 +207,20 @@ export function useConversation() {
         if (!full.trim()) {
           setLastFear(EMPTY_REPLY_NOTICE);
           setStatus("online");
-          return;
+          return true;
         }
         setStatus("online");
         // A fresh exchange just landed in memory — flare the presence.
         setMemoryTick((tick) => tick + 1);
-        // Speak the finished reply if the voice is on.
-        if (voiceOnRef.current) speak(full);
+        if (voice) for (const sentence of sentences.flush()) voice.say(sentence);
       } catch (error) {
         clearTimeout(watchdog);
+        voice?.stop();
         // A stalled stream that the watchdog aborted → recoverable timeout error.
         if (timedOut) {
           setLastFear(full ? `${full}\n\n${TIMEOUT_NOTICE}` : TIMEOUT_NOTICE);
           setStatus("error");
-          return;
+          return true;
         }
         // An abort that isn't a timeout is either a manual stop or an unmount.
         if (controller.signal.aborted) {
@@ -226,7 +233,7 @@ export function useConversation() {
             setStatus("online");
           }
           // else: unmount / navigation — leave the thread untouched, stay silent.
-          return;
+          return true;
         }
         // A real network/API failure → human error text (never a raw HTTP code).
         const notice = humanizeError(error);
@@ -237,6 +244,7 @@ export function useConversation() {
         busyRef.current = false;
         setIsBusy(false);
       }
+      return true;
     },
     [pushMessage, appendToLastFear, setLastFear, tagLastFearConsulted],
   );
@@ -251,9 +259,17 @@ export function useConversation() {
   // Manually stop the in-flight reply. Aborts the stream; `send`'s catch turns
   // that into a neutral interruption (not an error). No-op when idle.
   const stop = useCallback(() => {
+    // Silence first: the last sentences can still be playing after the text ended.
+    stopSpeaking();
     if (!busyRef.current) return;
     stopRef.current = true;
     abortRef.current?.abort();
+  }, []);
+
+  // The microphone is open: F.E.A.R. listens (unless it's mid-answer).
+  const setListening = useCallback((active: boolean) => {
+    if (busyRef.current) return;
+    setStatus((current) => (active ? "listening" : current === "listening" ? "online" : current));
   }, []);
 
   const handleAppAction = useCallback(
@@ -267,7 +283,7 @@ export function useConversation() {
         if (appId === "spotify") {
           setStatus("thinking");
           const data = await sendCommand({ text: "toggle Spotify playback", speaker: who });
-          pushMessage("fear", data.reply || "Spotify acionado.");
+          pushMessage("fear", data.reply || "Música acionada.");
           setStatus("online");
         } else if (appId === "voice") {
           // The backend records for several seconds before answering, so say
@@ -312,6 +328,7 @@ export function useConversation() {
     send,
     retry,
     stop,
+    setListening,
     handleAppAction,
   };
 }

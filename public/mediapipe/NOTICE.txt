@@ -1,0 +1,8 @@
+gesture_recognizer.task — MediaPipe Gesture Recognizer (float16, version 1)
+Source: https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task
+SHA-256: 97952348cf6a6a4915c2ea1496b4b37ebabc50cbbf80571435643c455f2b0482
+Copyright Google LLC. Licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+
+The wasm/ folder next to this file is copied from the @mediapipe/tasks-vision
+npm package (Apache-2.0) by scripts/copy-mediapipe.mjs.

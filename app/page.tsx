@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import {
@@ -14,6 +14,8 @@ import {
   Cpu,
   Crosshair,
   Database,
+  Download,
+  Hand,
   KeyRound,
   Loader2,
   Mic,
@@ -28,19 +30,48 @@ import {
   VolumeX,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 
 import { AuthPanel } from "@/components/ui/auth-panel";
+import { type GestureFeedback, GesturePanel } from "@/components/ui/gesture-panel";
+import { ListeningButton, LISTENING_LABELS, PAUSED_LABEL } from "@/components/ui/listening-button";
+import { MicButton } from "@/components/ui/mic-button";
 import MacOSDock, { type DockApp } from "@/components/ui/mac-os-dock";
 import { AssistantMessage, SystemMessage, UserMessage } from "@/components/ui/messages";
 import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings-panel";
+import { type CoreMode } from "@/components/ui/reactor-core";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { getStatus, type StatusResponse } from "@/lib/api";
+import { type HudReading, useHudCaptions, VoiceHud } from "@/components/ui/voice-hud";
+import { fetchVoice, getStatus, sendCommand, type StatusResponse } from "@/lib/api";
+import { humanizeError } from "@/lib/chat-helpers";
+import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
 import { fade, springSnappy, springSoft } from "@/lib/motion";
-import { IS_DESKTOP } from "@/lib/desktop";
+import { APP_VERSION, IS_DESKTOP } from "@/lib/desktop";
+import {
+  currentSaying,
+  isSpeaking,
+  setServerVoice,
+  speechText,
+  stopSpeaking,
+  subscribeSaying,
+  subscribeSpeaking,
+  voiceLevel,
+} from "@/lib/speech";
+import { loadVoiceInterface, saveVoiceInterface } from "@/lib/ui-mode";
 import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
+import { type UpdateInfo, checkForUpdate } from "@/lib/updates";
+import { loadGesturePreference, saveGesturePreference } from "@/lib/use-hand-gestures";
+import {
+  type ListeningState,
+  loadAlwaysListen,
+  saveAlwaysListen,
+  useContinuousListening,
+} from "@/lib/use-continuous-listening";
+import { onPageShownChange, isPageShown, usePageShown } from "@/lib/page-visibility";
+import { useVoiceInput } from "@/lib/use-voice-input";
 
 const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((module) => module.FearRobot), {
   ssr: false,
@@ -53,11 +84,35 @@ const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((modul
 
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
+  { id: "gestures", name: "Gestos", icon: <Hand className="h-full w-full text-amber-200" /> },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
-  { id: "spotify", name: "Spotify", icon: <Music className="h-full w-full text-emerald-200" /> },
+  { id: "spotify", name: "Música", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
   { id: "reset", name: "Nova conversa", icon: <RotateCcw className="h-full w-full text-danger" /> },
 ];
+
+// The music gestures, as the commands the brain routes to the music player
+// (Spotify's API, or the system media keys in the Windows app).
+const MUSIC_GESTURES: Partial<Record<GestureCommand, { title: string; text: string }>> = {
+  palm_hold: { title: "Play/pause", text: "toggle Spotify playback" },
+  swipe_right: { title: "Próxima faixa", text: "next Spotify song" },
+  swipe_left: { title: "Faixa anterior", text: "previous Spotify song" },
+};
+
+// What you said arrived while something else still ran (say, a dock action).
+const STILL_ANSWERING = "Ainda estou terminando a resposta anterior. Fale de novo em seguida.";
+
+// Under the message box while F.E.A.R. is always listening.
+const LISTEN_HINTS: Record<ListeningState | "paused", string> = {
+  paused: "Microfone pausado · clique no microfone para voltar",
+  off: "Microfone desligado · clique no microfone para ligar",
+  starting: "Ligando o microfone…",
+  listening: "Ouvindo — é só falar · Ctrl+Espaço interrompe",
+  hearing: "Ouvindo você…",
+  transcribing: "Entendendo o que você disse…",
+  waiting: "Respondendo · volto a ouvir em seguida",
+  blocked: "Clique em qualquer lugar para eu começar a ouvir",
+};
 
 const STATUS_LABEL: Record<Status, string> = {
   online: "pronto",
@@ -122,7 +177,9 @@ function flag(on: boolean | undefined, onLabel: string): { value: string; tone: 
 
 function WelcomeScreen({ onPick, busy }: { onPick: (prompt: string) => void; busy: boolean }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center px-4 py-10 text-center">
+    // "safe" centering: in a short window it scrolls from the top instead of
+    // cutting the top off, and the message box below stays in view.
+    <div className="flex flex-1 flex-col items-center px-4 py-10 text-center [justify-content:safe_center]">
       {/* A calm mark — one soft ring, one quiet point. No rotating neon. */}
       <div className="relative grid size-14 place-items-center">
         <div className="absolute inset-0 rounded-full border border-overlay/10" />
@@ -179,6 +236,34 @@ export default function HomePage() {
   const [isDesktop, setIsDesktop] = useState(false);
   const [modKey, setModKey] = useState("⌘");
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Hand gestures start off; the choice is remembered once made.
+  const [gesturesOn, setGesturesOn] = useState(false);
+  const [gestureFeedback, setGestureFeedback] = useState<GestureFeedback | null>(null);
+  // Bumped when F.E.A.R. sees a wave, so the robot waves back.
+  const [greetSignal, setGreetSignal] = useState(0);
+  // The hand the camera sees, for the robot's eyes; a ref, read every frame by
+  // the 3D scene, so tracking never re-renders the page.
+  const gazeRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => setGesturesOn(loadGesturePreference()), []);
+
+  // A downloaded install learns about newer releases (dismissed for this session).
+  const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  useEffect(() => {
+    if (!IS_DESKTOP) return;
+    let active = true;
+    void checkForUpdate(APP_VERSION).then((found) => {
+      if (active) setUpdate(found);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function setGestures(on: boolean) {
+    saveGesturePreference(on);
+    setGesturesOn(on);
+  }
 
   const { user, ready, signIn, signUp, signOut, saveOpenRouterKey } = useAuth();
 
@@ -210,12 +295,152 @@ export default function HomePage() {
     send,
     retry,
     stop,
+    setListening,
     handleAppAction,
   } = useConversation();
 
   // F.E.A.R. addresses the person by their account (email local part) — no more
   // free-text "speaker". Only read in the deck, where a user always exists.
   const speaker = user ? accountName(user.email) : "user";
+
+  // Talking to F.E.A.R.: what you say goes in as a message, and the answer comes
+  // back out loud. Problems show briefly under the composer, never in the thread.
+  const [voiceNotice, setVoiceNotice] = useState<{ text: string; at: number } | null>(null);
+  const notify = (message: string) => setVoiceNotice({ text: message, at: Date.now() });
+  const sendSpoken = (spoken: string) => {
+    void send(spoken, speaker, { speak: true }).then((sent) => {
+      if (!sent) notify(STILL_ANSWERING);
+    });
+  };
+  const voice = useVoiceInput({
+    onTranscript: sendSpoken,
+    onNotice: notify,
+    // Talking cuts F.E.A.R. off: a reply still being written stops, and it listens.
+    onStart: stop,
+  });
+  const canTalk = Boolean(systemStatus?.voice_input);
+
+  // Always listening: with the window open, what you say is heard without a
+  // click. It waits while F.E.A.R. answers or talks (so it never hears itself)
+  // and turns the microphone off whenever the window is hidden.
+  const [alwaysListen, setAlwaysListen] = useState(true);
+  useEffect(() => setAlwaysListen(loadAlwaysListen()), []);
+  const [listenPaused, setListenPaused] = useState(false);
+  const pageVisible = usePageShown();
+  const speaking = useSyncExternalStore(subscribeSpeaking, isSpeaking, () => false);
+  const listensAlways = canTalk && alwaysListen;
+  const continuous = useContinuousListening({
+    active: listensAlways && !listenPaused && pageVisible,
+    hold: isBusy || speaking || voice.state !== "idle",
+    onTranscript: sendSpoken,
+    onNotice: notify,
+  });
+  const toggleListening = () => {
+    // The click that woke a microphone waiting for one isn't also a pause.
+    if (continuous.state === "blocked" || continuous.justWoken()) return;
+    // Off though not paused: the microphone failed or went away — try again.
+    if (continuous.state === "off" && !listenPaused) return continuous.retry();
+    setListenPaused((paused) => !paused);
+  };
+
+  useEffect(
+    () => setListening(voice.state === "listening" || continuous.state === "hearing"),
+    [voice.state, continuous.state, setListening],
+  );
+
+  useEffect(() => {
+    if (!voiceNotice) return;
+    const timer = setTimeout(() => setVoiceNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [voiceNotice]);
+
+  // F.E.A.R.'s own voice (Piper) when the backend has it; the browser's otherwise.
+  useEffect(() => {
+    setServerVoice(systemStatus?.voice_output ? fetchVoice : null);
+  }, [systemStatus?.voice_output]);
+
+  // Hold Ctrl+Space to talk; let go to send.
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
+  useEffect(() => {
+    if (!canTalk) return;
+    let holding = false;
+    function down(event: KeyboardEvent) {
+      if (!event.ctrlKey || event.code !== "Space" || event.repeat) return;
+      event.preventDefault();
+      holding = true;
+      void voiceRef.current.start("hold");
+    }
+    function release() {
+      if (!holding) return;
+      holding = false;
+      void voiceRef.current.stop();
+    }
+    function up(event: KeyboardEvent) {
+      if (event.code === "Space" || event.key === "Control") release();
+    }
+    // Keys let go in another window never reach this one: leaving it counts as letting go.
+    function hidden() {
+      if (!isPageShown()) release();
+    }
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", release);
+    const stopWatching = onPageShownChange(hidden);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", release);
+      stopWatching();
+    };
+  }, [canTalk]);
+
+  async function runGesture(command: GestureCommand) {
+    const show = (title: string, detail?: string) => setGestureFeedback({ title, detail, at: Date.now() });
+    if (command === "wave") {
+      setGreetSignal((count) => count + 1);
+      show("Aceno", "o F.E.A.R. te viu");
+      return;
+    }
+    if (command === "fist_hold") {
+      stop();
+      voice.cancel();
+      continuous.cancel();
+      show("Silêncio");
+      return;
+    }
+    if (command === "point_hold") {
+      if (!canTalk) {
+        show("Falar", "o reconhecimento de voz não está disponível");
+        return;
+      }
+      // Already listening the whole time: a second microphone would cut short
+      // what you're saying. Pointing only makes F.E.A.R. stop talking, and it
+      // listens again right after.
+      if (continuous.live) {
+        stop();
+        show("Ouvindo", "pode falar");
+        return;
+      }
+      void voice.start("auto");
+      show("Ouvindo", "pode falar");
+      return;
+    }
+    const music = MUSIC_GESTURES[command];
+    if (!music) return;
+    // Nothing to play it on here: say so instead of sending a command that can't work.
+    if (!systemStatus?.music) {
+      show(music.title, "conecte o Spotify para usar este gesto");
+      return;
+    }
+    show(music.title);
+    try {
+      const data = await sendCommand({ text: music.text, speaker });
+      show(music.title, data.reply);
+    } catch (error) {
+      show(music.title, humanizeError(error));
+    }
+  }
 
   // Show the right modifier hint per platform (avoids a hydration mismatch by
   // starting from a stable default and correcting after mount).
@@ -251,6 +476,9 @@ export default function HomePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [settingsOpen]);
 
+  // Read on load, and again after the settings panel closes: its switches
+  // (Obsidian vault, claps) change what the system panel should show.
+  const [statusTick, setStatusTick] = useState(0);
   useEffect(() => {
     let active = true;
     getStatus()
@@ -266,7 +494,7 @@ export default function HomePage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [statusTick]);
 
   // First run without a key: open the account panel once (AuthPanel focuses the
   // key field). Closing it won't reopen — no nag loop.
@@ -286,6 +514,36 @@ export default function HomePage() {
     if (composerRef.current) composerRef.current.style.height = "auto";
     void send(value, speaker);
   }
+
+  // The voice interface (JARVIS-style) is F.E.A.R.'s face: you talk, nothing is
+  // written. The written chat stays for when there's no voice to talk with, or
+  // by choice in Configurações.
+  const [voiceUi, setVoiceUi] = useState(true);
+  useEffect(() => setVoiceUi(loadVoiceInterface()), []);
+  const hud = voiceUi && (systemStatus ? canTalk : IS_DESKTOP);
+  useEffect(() => {
+    if (!hud) return;
+    // Always dark, like a HUD; the theme chosen comes back with the written chat.
+    const root = document.documentElement;
+    const was = root.classList.contains("light") ? "light" : "dark";
+    root.classList.remove("light");
+    root.classList.add("dark");
+    return () => {
+      root.classList.remove("light", "dark");
+      root.classList.add(was);
+    };
+  }, [hud]);
+  // Subtitles: the last thing you said, the sentence F.E.A.R. is saying now.
+  const saying = useSyncExternalStore(subscribeSaying, currentSaying, () => "");
+  const lastYou = [...messages].reverse().find((message) => message.role === "user");
+  const lastFear = [...messages].reverse().find((message) => message.role === "fear");
+  const captions = useHudCaptions({
+    heard: lastYou?.content ?? "",
+    heardId: lastYou?.id ?? 0,
+    saying,
+    notice: status === "error" && lastFear ? speechText(lastFear.content).slice(-240) : "",
+    quiet: !isBusy && !speaking && voice.state === "idle" && continuous.state !== "transcribing",
+  });
 
   const backendTone = backendOnline === null ? "muted" : backendOnline ? "ok" : "off";
   const backendValue = backendOnline === null ? "verificando" : backendOnline ? "online" : "offline";
@@ -360,12 +618,13 @@ export default function HomePage() {
     {
       icon: <Mic className="size-3.5" />,
       label: "Voz",
-      ...flag(systemStatus?.voice, "ativa"),
+      // Talking through this window (local Whisper), or the machine's own microphone.
+      ...flag(systemStatus?.voice_input || systemStatus?.voice, "ativa"),
     },
     {
       icon: <Music className="size-3.5" />,
-      label: "Spotify",
-      ...flag(systemStatus?.spotify, "ok"),
+      label: "Música",
+      ...flag(systemStatus?.music, systemStatus?.spotify ? "Spotify" : "teclas de mídia"),
     },
     {
       icon: <BookOpen className="size-3.5" />,
@@ -378,6 +637,172 @@ export default function HomePage() {
       ...flag(systemStatus?.calendar, "ok"),
     },
   ];
+
+  const overlays = (
+    <>
+      <MacOSDock
+        apps={fearApps}
+        onAppClick={(appId) => {
+          if (appId === "memory") openSettings("memoria");
+          else if (appId === "gestures") setGestures(!gesturesOn);
+          else if (appId === "voice" && canTalk) {
+            if (listensAlways) toggleListening();
+            else if (voice.state === "idle") void voice.start("auto");
+            else void voice.stop();
+          } else void handleAppAction(appId, speaker);
+        }}
+        openApps={[
+          ...(voice.state === "listening" || (listensAlways && !listenPaused && continuous.state !== "off")
+            ? ["voice"]
+            : []),
+          ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
+          ...(gesturesOn ? ["gestures"] : []),
+        ]}
+        className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
+      />
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          setStatusTick((tick) => tick + 1);
+          setConsultedFocus([]);
+        }}
+        status={systemStatus}
+        speaker={speaker}
+        initialTab={settingsTab}
+        highlightMemoryIds={consultedFocus}
+        hasOpenRouterKey={user.has_openrouter_key}
+        alwaysListen={alwaysListen}
+        onAlwaysListenChange={(on) => {
+          saveAlwaysListen(on);
+          setAlwaysListen(on);
+          setListenPaused(false);
+        }}
+        voiceInterface={voiceUi}
+        onVoiceInterfaceChange={(on) => {
+          saveVoiceInterface(on);
+          setVoiceUi(on);
+        }}
+      />
+
+      <AuthPanel
+        open={authOpen}
+        onClose={() => setAuthOpen(false)}
+        user={user}
+        onSignIn={signIn}
+        onSignUp={signUp}
+        onSignOut={signOut}
+        onSaveKey={saveOpenRouterKey}
+      />
+    </>
+  );
+
+  if (hud) {
+    // What the core shows: F.E.A.R. talking or thinking first, then you.
+    const manualListening = voice.state === "listening";
+    const coreMode: CoreMode = speaking
+      ? "speaking"
+      : isBusy
+        ? "thinking"
+        : manualListening
+          ? "hearing"
+          : voice.state === "transcribing" || continuous.state === "transcribing"
+            ? "transcribing"
+            : !listensAlways
+              ? "off"
+              : listenPaused
+                ? "paused"
+                : continuous.state === "hearing"
+                  ? "hearing"
+                  : continuous.state === "off" || continuous.state === "blocked"
+                    ? "off"
+                    : "listening";
+    const answering = speaking || isBusy;
+    const micLabel = !listensAlways
+      ? "Falar com o F.E.A.R. — clique, ou segure Ctrl+Espaço"
+      : listenPaused
+        ? PAUSED_LABEL
+        : LISTENING_LABELS[continuous.state];
+    const coreLabel = answering && coreMode !== "off" ? `${micLabel} · clique para interromper` : micLabel;
+    const hint = answering
+      ? "Clique no núcleo para interromper"
+      : manualListening
+        ? "Fale e pare quando terminar"
+        : !listensAlways
+          ? "Clique no núcleo para falar · ou segure Ctrl+Espaço"
+          : listenPaused
+            ? "Microfone pausado · clique no núcleo para voltar"
+            : continuous.state === "blocked"
+              ? "Clique em qualquer lugar para eu começar a ouvir"
+              : continuous.state === "off"
+                ? "Microfone desligado · clique no núcleo para ligar"
+                : continuous.state === "hearing"
+                  ? "Pode continuar — espero você terminar"
+                  : "É só falar";
+    const onCore = () => {
+      if (answering) return stop(); // cut it short: it listens again right after
+      if (listensAlways) return toggleListening();
+      if (voice.state === "idle") void voice.start("auto");
+      else void voice.stop();
+    };
+    const readings: HudReading[] = [
+      { label: "Backend", value: backendValue, on: backendTone === "ok" },
+      ...systemItems.map((item) => ({ label: item.label, value: item.value, on: item.tone === "ok" })),
+    ];
+    return (
+      <main className="relative min-h-screen">
+        <VoiceHud
+          mode={coreMode}
+          coreLabel={coreLabel}
+          corePressed={listensAlways ? !listenPaused : manualListening}
+          onCore={onCore}
+          inputLevel={manualListening ? voice.levelRef : continuous.levelRef}
+          outputLevel={voiceLevel}
+          hint={hint}
+          notice={voiceNotice?.text ?? null}
+          you={captions.you}
+          fear={captions.fear}
+          readings={readings}
+          backendOnline={backendOnline}
+          userName={accountName(user.email)}
+          hasKey={user.has_openrouter_key}
+          onAddKey={() => setAuthOpen(true)}
+          onAccount={() => setAuthOpen(true)}
+          onSettings={() => openSettings("conhecimento")}
+          update={update}
+          presence={
+            isDesktop ? (
+              <FearRobot
+                status={status}
+                pulse={memoryTick}
+                greetSignal={greetSignal}
+                gaze={gazeRef}
+                className="h-full"
+              />
+            ) : null
+          }
+          gestures={
+            gesturesOn ? (
+              <GesturePanel
+                look="hud"
+                onCommand={runGesture}
+                onTurnOff={() => setGestures(false)}
+                feedback={gestureFeedback}
+                musicAvailable={Boolean(systemStatus?.music)}
+                voiceAvailable={canTalk}
+                onHand={(hand) => {
+                  gazeRef.current = hand;
+                }}
+              />
+            ) : null
+          }
+          onGestures={() => setGestures(true)}
+        />
+        {overlays}
+      </main>
+    );
+  }
 
   return (
     <main className="relative min-h-screen text-foreground">
@@ -448,6 +873,32 @@ export default function HomePage() {
 
         {/* Nudge a signed-in user to add their OpenRouter key, without which
             F.E.A.R. can't reply. Disappears the moment the key is saved. */}
+        {update && (
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-energy/30 bg-energy/[0.07] px-3.5 py-2.5 text-[13px] text-foreground/85">
+            <span className="flex items-center gap-2">
+              <Download className="size-4 shrink-0 text-energy" />
+              Nova versão {update.version} do F.E.A.R. disponível.
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <a
+                href={update.url}
+                target="_blank"
+                rel="noreferrer"
+                className="tap rounded-lg border border-energy/35 bg-energy/10 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-energy/20"
+              >
+                Baixar
+              </a>
+              <button
+                onClick={() => setUpdate(null)}
+                aria-label="Dispensar aviso de atualização"
+                className="tap grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-overlay/[0.06] hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            </span>
+          </div>
+        )}
+
         {!user.has_openrouter_key && (
           <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-brand/25 bg-brand/[0.06] px-3.5 py-2.5 text-[13px] text-brand/90">
             <span className="flex items-center gap-2">
@@ -466,14 +917,14 @@ export default function HomePage() {
         {/* Deck */}
         <section className="grid flex-1 gap-5 pt-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.62fr)] lg:gap-6">
           {/* Conversation */}
-          <div className="panel flex h-[72vh] min-h-[460px] min-w-0 flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[78vh]">
+          <div className="panel flex h-[72vh] min-h-[460px] min-w-0 flex-col rounded-[1.4rem] p-3.5 sm:p-4 lg:h-[min(78vh,calc(100dvh-18rem))]">
             {/* No exit-wait here: the thread must mount immediately so a fast first
                 reply is pinned to the bottom (it would otherwise stream into a
                 not-yet-mounted element). */}
             {showWelcome ? (
               <motion.div
                 key="welcome"
-                className="flex flex-1 flex-col"
+                className="flex min-h-0 flex-1 flex-col overflow-y-auto"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={fade}
@@ -577,6 +1028,16 @@ export default function HomePage() {
                   className="max-h-36 min-h-[2.75rem] flex-1 resize-none bg-transparent px-3 py-2.5 text-[15px] leading-6 outline-none placeholder:text-muted-foreground/50"
                   placeholder="Comece com uma pergunta."
                 />
+                {canTalk &&
+                  (listensAlways ? (
+                    <ListeningButton
+                      listening={continuous}
+                      paused={listenPaused}
+                      onToggle={toggleListening}
+                    />
+                  ) : (
+                    <MicButton voice={voice} />
+                  ))}
                 {isBusy ? (
                   <button
                     type="button"
@@ -599,8 +1060,22 @@ export default function HomePage() {
                 )}
               </div>
               <div className="mt-2 flex items-center justify-between px-1.5">
-                <span className="text-[10px] text-muted-foreground/45">
-                  Enter envia · Shift+Enter quebra linha
+                <span
+                  role="status"
+                  aria-live="polite"
+                  className={`text-[10px] ${voiceNotice ? "text-energy" : "text-muted-foreground/45"}`}
+                >
+                  {voiceNotice
+                    ? voiceNotice.text
+                    : voice.state === "listening"
+                      ? "Ouvindo… fale e pare quando terminar"
+                      : voice.state === "transcribing"
+                        ? "Entendendo o que você disse…"
+                        : listensAlways
+                          ? LISTEN_HINTS[listenPaused ? "paused" : continuous.state]
+                          : canTalk
+                            ? "Enter envia · Ctrl+Espaço (segure) fala"
+                            : "Enter envia · Shift+Enter quebra linha"}
                 </span>
                 <kbd className="rounded border border-overlay/10 bg-overlay/[0.04] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground/50">
                   {modKey === "⌘" ? "⌘K" : "Ctrl+K"}
@@ -629,9 +1104,28 @@ export default function HomePage() {
                     the amber/metal core is calibrated for dark) and its edges
                     melt into the page instead of ending on a hard seam. */}
                 <div className="absolute inset-0 overflow-hidden rounded-[1.4rem] bg-[hsl(var(--stage))] [-webkit-mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)] [mask-image:radial-gradient(120%_115%_at_50%_44%,#000_56%,transparent_100%)]">
-                  <FearRobot status={status} pulse={memoryTick} className="h-full" />
+                  <FearRobot
+                    status={status}
+                    pulse={memoryTick}
+                    greetSignal={greetSignal}
+                    gaze={gazeRef}
+                    className="h-full"
+                  />
                 </div>
               </div>
+            )}
+
+            {gesturesOn && (
+              <GesturePanel
+                onCommand={runGesture}
+                onTurnOff={() => setGestures(false)}
+                feedback={gestureFeedback}
+                musicAvailable={Boolean(systemStatus?.music)}
+                voiceAvailable={canTalk}
+                onHand={(hand) => {
+                  gazeRef.current = hand;
+                }}
+              />
             )}
 
             {/* System: compact 2-column readout. Collapsible on mobile, always
@@ -683,36 +1177,7 @@ export default function HomePage() {
         </section>
       </div>
 
-      <MacOSDock
-        apps={fearApps}
-        onAppClick={(appId) =>
-          appId === "memory" ? openSettings("memoria") : handleAppAction(appId, speaker)
-        }
-        openApps={settingsOpen && settingsTab === "memoria" ? ["memory"] : []}
-        className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
-      />
-
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => {
-          setSettingsOpen(false);
-          setConsultedFocus([]);
-        }}
-        status={systemStatus}
-        speaker={speaker}
-        initialTab={settingsTab}
-        highlightMemoryIds={consultedFocus}
-      />
-
-      <AuthPanel
-        open={authOpen}
-        onClose={() => setAuthOpen(false)}
-        user={user}
-        onSignIn={signIn}
-        onSignUp={signUp}
-        onSignOut={signOut}
-        onSaveKey={saveOpenRouterKey}
-      />
+      {overlays}
     </main>
   );
 }
