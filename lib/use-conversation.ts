@@ -172,7 +172,8 @@ export function useConversation() {
       abortRef.current = controller;
 
       // Inactivity watchdog: if no token arrives (dead backend) or the stream
-      // stalls mid-reply, abort so the UI never hangs on "thinking" forever.
+      // stalls mid-reply, abort so the UI never hangs on "thinking" forever. Two
+      // minutes: a model on this computer loading into the card comes first.
       let timedOut = false;
       let watchdog: ReturnType<typeof setTimeout> | undefined;
       const arm = () => {
@@ -180,7 +181,7 @@ export function useConversation() {
         watchdog = setTimeout(() => {
           timedOut = true;
           controller.abort();
-        }, 60_000);
+        }, 120_000);
       };
       arm();
 

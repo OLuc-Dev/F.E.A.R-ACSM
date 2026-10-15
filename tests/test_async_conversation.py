@@ -8,6 +8,7 @@ import openai
 import pytest
 
 from fear.brain.async_conversation import AsyncConversationalBrain, UserContext
+from fear.brain.local_models import LocalModelError
 from fear.brain.models import FALLBACK_MODELS
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
@@ -851,3 +852,92 @@ async def test_when_no_model_answers_it_says_why() -> None:
     reply = await _streamed(_brain(client))
     assert "gone/model:free não está disponível" in reply
     assert client.tried == ["gone/model:free", *FALLBACK_MODELS]
+
+
+# --- thinking on this computer (Ollama) ---
+
+
+class LocalModelsClient(ModelsClient):
+    """Ollama on this computer, as the brain sees it: what it has, and its replies."""
+
+    def __init__(
+        self, outcomes: dict[str, Exception | str], tags: tuple[str, ...] = ("qwen3.5:4b",)
+    ):
+        super().__init__(outcomes)
+        self.tags = tags
+
+    async def chat_models(self):
+        return [types.SimpleNamespace(tag=tag) for tag in self.tags]
+
+
+LOCAL = "ollama/qwen3.5:4b"
+OLLAMA_CLOSED = LocalModelError("down", "O Ollama não está aberto.")
+
+
+def _local_brain(
+    model: str, cloud: ModelsClient | None, local: LocalModelsClient | None
+) -> AsyncConversationalBrain:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key="", openrouter_chat_model=model),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = cloud  # type: ignore[assignment]
+    brain._local = local  # type: ignore[assignment]
+    return brain
+
+
+@pytest.mark.asyncio
+async def test_without_a_key_it_thinks_on_this_computer() -> None:
+    local = LocalModelsClient({})
+    brain = _local_brain("thinkingmachines/inkling:free", None, local)
+
+    reply = await _streamed(brain)
+
+    assert reply == "Aqui é o F.E.A.R."
+    assert local.tried == [LOCAL]  # the recommended model, the one downloaded
+
+
+@pytest.mark.asyncio
+async def test_a_local_model_chosen_gives_way_to_the_cloud_when_ollama_is_closed() -> None:
+    cloud, local = ModelsClient({}), LocalModelsClient({LOCAL: OLLAMA_CLOSED})
+    brain = _local_brain(LOCAL, cloud, local)
+
+    result = await brain.process_command("oi", "Lucas")
+
+    assert result.reply == "Aqui é o F.E.A.R."
+    assert local.tried == [LOCAL]
+    assert cloud.tried == [FALLBACK_MODELS[0]]
+
+
+@pytest.mark.asyncio
+async def test_ollama_closed_with_no_cloud_to_fall_back_on_is_said_plainly() -> None:
+    reply = await _streamed(_local_brain(LOCAL, None, LocalModelsClient({LOCAL: OLLAMA_CLOSED})))
+    assert "O Ollama não está aberto" in reply
+    assert "qwen3.5:4b" in reply
+
+
+@pytest.mark.asyncio
+async def test_when_the_free_cloud_runs_out_the_model_on_this_computer_answers() -> None:
+    quota = _openrouter_error(
+        openai.RateLimitError, 429, "Rate limit exceeded: free-models-per-day. Add 10 credits"
+    )
+    cloud = ModelsClient({"gone/model:free": quota})
+    local = LocalModelsClient({})
+    brain = _local_brain("gone/model:free", cloud, local)
+
+    reply = await _streamed(brain)
+
+    assert reply == "Aqui é o F.E.A.R."
+    assert cloud.tried == ["gone/model:free"]  # the quota holds for every free model
+    assert local.tried == [LOCAL]
+
+
+@pytest.mark.asyncio
+async def test_with_no_way_to_think_it_says_how_to_get_one() -> None:
+    brain = _local_brain("thinkingmachines/inkling:free", None, LocalModelsClient({}, tags=()))
+    user = UserContext(user_id="u1")
+
+    result = await brain.process_command("oi", "Lucas", user=user)
+
+    assert "chave do OpenRouter" in result.reply
+    assert "no seu PC" in result.reply

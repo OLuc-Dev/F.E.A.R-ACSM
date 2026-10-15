@@ -2,8 +2,8 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { costLabel, ModelPicker } from "@/components/ui/model-picker";
-import type { ModelOption, ModelsResponse } from "@/lib/api";
+import { costLabel, gigabytes, ModelPicker } from "@/components/ui/model-picker";
+import type { LocalModelsResponse, ModelOption, ModelsResponse } from "@/lib/api";
 
 afterEach(cleanup);
 
@@ -38,9 +38,13 @@ function picker(overrides: Partial<Parameters<typeof ModelPicker>[0]> = {}) {
   const props: Parameters<typeof ModelPicker>[0] = {
     catalog,
     loadError: null,
+    local: null,
+    pulling: null,
     current: "lab/inkling:free",
     busy: false,
     onChoose: vi.fn(),
+    onPull: vi.fn(),
+    onRefreshLocal: vi.fn(),
     ...overrides,
   };
   render(<ModelPicker {...props} />);
@@ -100,6 +104,92 @@ describe("ModelPicker", () => {
     cleanup();
     picker({ catalog: null, loadError: "Não consegui ler a lista de modelos do OpenRouter agora." });
     expect(screen.getByText(/Não consegui ler a lista/)).toBeTruthy();
+  });
+});
+
+const ollama: LocalModelsResponse = {
+  running: true,
+  recommended: "qwen3.5:4b",
+  models: [{ id: "ollama/qwen3.5:4b", tag: "qwen3.5:4b", size: 3_324_173_934, parameter_size: "4.2B" }],
+  downloads: [
+    {
+      id: "ollama/qwen3.5:4b",
+      tag: "qwen3.5:4b",
+      name: "Qwen 3.5 4B (Alibaba)",
+      size: 3_320_000_000,
+      note: "rápido",
+      installed: true,
+    },
+    {
+      id: "ollama/gemma4:e4b",
+      tag: "gemma4:e4b",
+      name: "Gemma 4 E4B (Google)",
+      size: 6_580_000_000,
+      note: "mais esperto, precisa de placa de 8 GB",
+      installed: false,
+    },
+  ],
+};
+
+describe("ModelPicker, models on this computer", () => {
+  it("points to Ollama when it isn't installed or open, and looks again on request", () => {
+    const props = picker({ local: { running: false, models: [], downloads: [], recommended: "" } });
+    expect(screen.getByRole("link", { name: "Ollama" }).getAttribute("href")).toBe(
+      "https://ollama.com/download",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Procurar o Ollama de novo" }));
+    expect(props.onRefreshLocal).toHaveBeenCalled();
+  });
+
+  it("lists the downloaded models to choose, the recommended one marked", () => {
+    const props = picker({ local: ollama });
+    const qwen = screen.getByRole("button", { name: /Qwen 3\.5 4B \(Alibaba\)/ });
+    expect(within(qwen).getByText("recomendado")).toBeTruthy();
+    expect(plain(qwen.textContent)).toContain("no seu PC · 3,3 GB · 4.2B");
+    fireEvent.click(qwen);
+    expect(props.onChoose).toHaveBeenCalledWith("ollama/qwen3.5:4b");
+  });
+
+  it("offers the ones not downloaded yet", () => {
+    const props = picker({ local: ollama });
+    fireEvent.click(screen.getByRole("button", { name: /Baixar · 6,6 GB/ }));
+    expect(props.onPull).toHaveBeenCalledWith("gemma4:e4b");
+  });
+
+  it("shows how a download is going, and why it stopped", () => {
+    picker({
+      local: ollama,
+      pulling: {
+        tag: "gemma4:e4b",
+        progress: { status: "pulling", completed: 2.97e9, total: 6.6e9 },
+        error: null,
+      },
+    });
+    const bar = screen.getByRole("progressbar", { name: "Baixando Gemma 4 E4B (Google)" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("45");
+    expect(plain(screen.getByText(/Baixando… 45%/).textContent)).toBe("Baixando… 45% (3 GB de 6,6 GB)");
+    expect(screen.queryByRole("button", { name: /Baixar/ })).toBeNull(); // one download at a time
+    cleanup();
+
+    picker({
+      local: ollama,
+      pulling: { tag: "gemma4:e4b", progress: null, error: "Não consegui baixar o modelo." },
+    });
+    expect(screen.getByText("Não consegui baixar o modelo.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Baixar · 6,6 GB/ })).toBeTruthy(); // try again
+  });
+
+  it("keeps the local models usable when OpenRouter's list can't be read", () => {
+    picker({ catalog: null, loadError: "Sem internet.", local: ollama });
+    expect(screen.getByText("Sem internet.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Qwen 3\.5 4B/ })).toBeTruthy();
+  });
+});
+
+describe("gigabytes", () => {
+  it("says sizes the way people do", () => {
+    expect(plain(gigabytes(3_324_173_934))).toBe("3,3 GB");
+    expect(plain(gigabytes(6_580_000_000))).toBe("6,6 GB");
   });
 });
 

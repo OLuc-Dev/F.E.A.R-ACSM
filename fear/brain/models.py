@@ -19,6 +19,8 @@ from typing import Any, Literal
 import httpx
 import openai
 
+from fear.brain.local_models import LocalModelError, local_tag
+
 logger = logging.getLogger(__name__)
 
 # After the chosen model: a free one served by the lab that made it, then
@@ -34,7 +36,18 @@ _BUSY_FOR_S = 60.0
 LLM_ERROR_REPLY = "Tive um problema para processar isso agora. Tenta de novo em instantes."
 
 FailureKind = Literal[
-    "key", "key_limit", "credits", "free_quota", "privacy", "model", "busy", "network", "other"
+    "key",
+    "key_limit",
+    "credits",
+    "free_quota",
+    "privacy",
+    "model",
+    "busy",
+    "network",
+    "other",
+    "local_down",
+    "local_missing",
+    "local_other",
 ]
 
 # What F.E.A.R. says when no model answers, by why the last one didn't.
@@ -67,6 +80,18 @@ _REPLIES: dict[FailureKind, str] = {
     "busy": "Os modelos do OpenRouter estão sobrecarregados agora. Tenta de novo em instantes.",
     "network": "Não consegui falar com o OpenRouter. Confira a internet e tenta de novo.",
     "other": LLM_ERROR_REPLY,
+    "local_down": (
+        "O Ollama não está aberto, e é nele que roda o modelo {model}. Abra o Ollama, ele fica "
+        "perto do relógio, e fale comigo de novo."
+    ),
+    "local_missing": (
+        "O modelo {model} não está baixado no Ollama. Baixe ele em Configurações, na aba "
+        "Comportamento."
+    ),
+    "local_other": (
+        "O Ollama não conseguiu rodar o modelo {model} agora. Feche alguns programas pesados, ou "
+        "escolha um modelo menor, e tenta de novo."
+    ),
 }
 
 
@@ -79,9 +104,19 @@ class ModelFailure:
 
 EMPTY_REPLY = ModelFailure("other", try_another=True)
 
+_LOCAL_KINDS: dict[str, FailureKind] = {
+    "down": "local_down",
+    "missing": "local_missing",
+    "other": "local_other",
+}
+
 
 def classify(error: Exception) -> ModelFailure:
-    """What a failed OpenRouter call means for the person."""
+    """What a failed model call (OpenRouter's or Ollama's) means for the person."""
+    if isinstance(error, LocalModelError):
+        # Ollama closed: no local model can answer, though the cloud still may.
+        kind = _LOCAL_KINDS.get(error.kind, "local_other")
+        return ModelFailure(kind, try_another=kind != "local_down")
     if isinstance(error, openai.APIConnectionError):  # timeouts included
         return ModelFailure("network", try_another=False)
     text = str(error).lower()
@@ -115,7 +150,7 @@ def explain(failures: list[ModelFailure], chosen: str) -> str:
     if not failures:
         return LLM_ERROR_REPLY
     stopped = next((failure for failure in failures if not failure.try_another), None)
-    return _REPLIES[(stopped or failures[0]).kind].format(model=chosen)
+    return _REPLIES[(stopped or failures[0]).kind].format(model=local_tag(chosen))
 
 
 class ModelChain:

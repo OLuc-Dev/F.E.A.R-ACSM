@@ -21,12 +21,15 @@ import {
   addKnowledgeText,
   deleteKnowledge,
   getConfig,
+  getLocalModels,
   getModels,
   listKnowledge,
+  pullLocalModel,
   updateConfig,
   type ConfigResponse,
   type ConfigUpdate,
   type KnowledgeListResponse,
+  type LocalModelsResponse,
   type ModelsResponse,
   type StatusResponse,
 } from "@/lib/api";
@@ -43,7 +46,7 @@ import {
 import { fade, springSoft } from "@/lib/motion";
 import { AppSettingsTab, Switch } from "@/components/ui/app-settings-tab";
 import { MemoryTab } from "@/components/ui/memory-tab";
-import { ModelPicker } from "@/components/ui/model-picker";
+import { ModelPicker, type PullState } from "@/components/ui/model-picker";
 
 export type Tab = "conhecimento" | "comportamento" | "memoria" | "app";
 
@@ -143,9 +146,12 @@ export function SettingsPanel({
     setVoiceStyle(loadVoiceStyle());
     setOnlineVoice(loadOnlineVoice());
   }, [open]);
-  // OpenRouter's models, read when the Comportamento tab first opens.
+  // OpenRouter's models, read when the Comportamento tab first opens; and the
+  // ones on this computer (Ollama), read each time it opens.
   const [models, setModels] = useState<ModelsResponse | null>(null);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [local, setLocal] = useState<LocalModelsResponse | null>(null);
+  const [pulling, setPulling] = useState<PullState | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +202,32 @@ export function SettingsPanel({
       current = false;
     };
   }, [open, tab, models]);
+
+  const refreshLocal = useCallback(async () => {
+    try {
+      setLocal(await getLocalModels());
+    } catch {
+      setLocal({ running: false, models: [], downloads: [], recommended: "" });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open && tab === "comportamento") void refreshLocal();
+  }, [open, tab, refreshLocal]);
+
+  // Download a model into Ollama, then think with it.
+  async function pullModel(tag: string) {
+    setPulling({ tag, progress: null, error: null });
+    try {
+      await pullLocalModel(tag, (progress) => setPulling({ tag, progress, error: null }));
+      await refreshLocal();
+      setPulling(null);
+      await applyConfig({ model: `ollama/${tag}` });
+    } catch (caught) {
+      const reason = caught instanceof Error ? caught.message : "";
+      setPulling({ tag, progress: null, error: `Não consegui baixar o modelo. ${reason}`.trim() });
+    }
+  }
 
   // Close on Escape while the drawer is open.
   useEffect(() => {
@@ -555,10 +587,17 @@ export function SettingsPanel({
                         <ModelPicker
                           catalog={models}
                           loadError={modelsError}
+                          local={local}
+                          pulling={pulling}
                           current={config?.model ?? ""}
                           busy={busy}
                           onChoose={(model) => {
                             if (model !== config?.model) void applyConfig({ model });
+                          }}
+                          onPull={(tag) => void pullModel(tag)}
+                          onRefreshLocal={() => {
+                            setLocal(null);
+                            void refreshLocal();
                           }}
                         />
                         {config && config.model !== config.model_default && (
@@ -577,8 +616,9 @@ export function SettingsPanel({
                           </p>
                         )}
                         <p className="text-[11px] leading-4 text-muted-foreground/60">
-                          Atual: {config?.model ?? "—"}. O custo dos pagos é uma estimativa, cobrada na sua
-                          conta do OpenRouter. Se o modelo falhar, ele responde com um grátis sozinho.
+                          Atual: {config?.model ?? "—"}. Os do seu PC usam a placa de vídeo e funcionam sem
+                          internet; os pagos da nuvem são cobrados na sua conta do OpenRouter (o custo é uma
+                          estimativa). Se o modelo falhar, ele responde com outro sozinho.
                         </p>
                       </section>
 

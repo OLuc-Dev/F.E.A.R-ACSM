@@ -499,11 +499,19 @@ export default function HomePage() {
   // First run without a key: open the account panel once (AuthPanel focuses the
   // key field). Closing it won't reopen — no nag loop.
   useEffect(() => {
-    if (ready && user && !user.has_openrouter_key && !promptedKey) {
+    // Not when it already thinks with a model on this computer (no key needed).
+    if (
+      ready &&
+      user &&
+      systemStatus &&
+      !systemStatus.local_models &&
+      !user.has_openrouter_key &&
+      !promptedKey
+    ) {
       setPromptedKey(true);
       setAuthOpen(true);
     }
-  }, [ready, user, promptedKey]);
+  }, [ready, user, systemStatus, promptedKey]);
 
   function submitCommand(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -609,6 +617,12 @@ export default function HomePage() {
       label: "Chave",
       value: keyStatusLabel(user.has_openrouter_key),
       tone: user.has_openrouter_key ? "ok" : "muted",
+    },
+    {
+      icon: <Cpu className="size-3.5" />,
+      label: "IA no PC",
+      // A model in Ollama: thinking here, free and unlimited.
+      ...flag(systemStatus?.local_models, "pronta"),
     },
     {
       icon: <Database className="size-3.5" />,
@@ -766,7 +780,7 @@ export default function HomePage() {
           readings={readings}
           backendOnline={backendOnline}
           userName={accountName(user.email)}
-          hasKey={user.has_openrouter_key}
+          hasKey={user.has_openrouter_key || Boolean(systemStatus?.local_models)}
           onAddKey={() => setAuthOpen(true)}
           onAccount={() => setAuthOpen(true)}
           onSettings={() => openSettings("conhecimento")}
@@ -899,7 +913,7 @@ export default function HomePage() {
           </div>
         )}
 
-        {!user.has_openrouter_key && (
+        {!user.has_openrouter_key && !systemStatus?.local_models && (
           <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-brand/25 bg-brand/[0.06] px-3.5 py-2.5 text-[13px] text-brand/90">
             <span className="flex items-center gap-2">
               <KeyRound className="size-4 shrink-0 text-brand" />

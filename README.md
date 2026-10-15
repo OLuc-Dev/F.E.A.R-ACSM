@@ -57,6 +57,14 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
     microfone nunca sai dele.
   - O Windows precisa liberar o microfone em *Configurações → Privacidade →
     Microfone* para aplicativos da área de trabalho.
+- **Cérebro no seu PC, grátis e sem limite**: com o [Ollama](https://ollama.com/download)
+  instalado (é grátis), o F.E.A.R. pensa com um modelo rodando na sua placa de
+  vídeo — quantas vezes quiser, sem chave do OpenRouter e até sem internet. Em
+  **Configurações → Comportamento → Modelo**, na parte *No seu PC*, baixe o
+  recomendado (Qwen 3.5 4B, 3,3 GB, cabe numa placa de 6 GB) ou o Gemma 4 E4B
+  (6,6 GB, mais esperto, para placas de 8 GB) e escolha. Se o Ollama estiver
+  fechado, ele usa os modelos da nuvem; e quando a cota grátis da nuvem acaba,
+  usa o do PC.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
   pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
 - **Música sem configuração**: comandos como "pausa a música", as palmas e os
@@ -239,6 +247,8 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/knowledge/text`     | `{name, content}` → indexa um texto como fonte. |
 | POST   | `/knowledge/path`     | `{path, source?}` → indexa pasta/arquivo `.md` local. |
 | DELETE | `/knowledge/{source}` | Remove uma fonte de conhecimento.           |
+| GET    | `/models/local`       | Os modelos do Ollama neste computador (baixados e para baixar). |
+| POST   | `/models/local/pull`  | `{tag}` → baixa um modelo no Ollama, com o progresso em NDJSON (só o dono). |
 | GET    | `/models`             | Os modelos de conversa do OpenRouter agora (padrão e reservas primeiro, depois os grátis e os pagos, com custo estimado). |
 | GET    | `/config`             | Config de runtime (modelo + modo de persona). |
 | POST   | `/config`             | `{model?, persona_mode?}` → ajusta na sessão (sem segredos). |

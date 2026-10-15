@@ -10,7 +10,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncOpenAI
 
-from fear.brain.models import EMPTY_REPLY, ModelChain, ModelFailure, classify, explain
+from fear.brain.local_models import RECOMMENDED_LOCAL_MODEL, Ollama, is_local, local_id
+from fear.brain.models import (
+    EMPTY_REPLY,
+    FALLBACK_MODELS,
+    ModelChain,
+    ModelFailure,
+    classify,
+    explain,
+)
 from fear.config import Settings
 from fear.library.reference_library import ReferenceLibrary
 from fear.memory.personal_memory import PersonalMemory, PersonalMemoryResult
@@ -177,6 +185,8 @@ class AsyncConversationalBrain:
         self._history: OrderedDict[str, deque[dict[str, str]]] = OrderedDict()
         # The models a reply may come from, minus those failing lately.
         self._chain = ModelChain()
+        # Models on this computer, through Ollama (when it's set up).
+        self._local = Ollama(settings.ollama_url) if settings.ollama_url else None
 
         if settings.openrouter_api_key:
             self.client = AsyncOpenAI(
@@ -224,8 +234,8 @@ class AsyncConversationalBrain:
         if not clean_text:
             return CommandResponse(reply="", speaker=clean_speaker, remembered=False)
 
-        client = self._client_for(user)
         model = user.chat_model if user and user.chat_model else self.settings.openrouter_chat_model
+        candidates = await self._candidates(model, self._client_for(user))
         persona_mode = user.persona_mode if user and user.persona_mode else self._persona_mode
         # Memory scope + history key: isolated per user when logged in, shared
         # (by speaker) otherwise.
@@ -241,7 +251,7 @@ class AsyncConversationalBrain:
 
         calendar_summary = await self._try_calendar(clean_text) if owns_machine else ""
         # Without a model, hand back the raw agenda; with one, F.E.A.R. phrases it below.
-        if calendar_summary and client is None:
+        if calendar_summary and not candidates:
             await self._remember(clean_text, clean_speaker, "calendar", scope)
             self._record_turn(history_key, clean_text, calendar_summary)
             return CommandResponse(reply=calendar_summary, speaker=clean_speaker, remembered=True)
@@ -253,7 +263,7 @@ class AsyncConversationalBrain:
             reference_context,
         ) = await self._gather_context(clean_text, clean_speaker, scope)
 
-        if client is None:
+        if not candidates:
             fallback = (
                 self._needs_key_reply(clean_speaker)
                 if user is not None
@@ -283,7 +293,7 @@ class AsyncConversationalBrain:
             persona_mode=persona_mode,
         )
 
-        reply, failed = await self._complete(client, model, messages)
+        reply, failed = await self._complete(candidates, model, messages)
 
         await self._remember(clean_text, clean_speaker, "conversation", scope)
         if reply and not failed:
@@ -322,8 +332,8 @@ class AsyncConversationalBrain:
         if not clean_text:
             return StreamSession([], _no_chunks())
 
-        client = self._client_for(user)
         model = user.chat_model if user and user.chat_model else self.settings.openrouter_chat_model
+        candidates = await self._candidates(model, self._client_for(user))
         persona_mode = user.persona_mode if user and user.persona_mode else self._persona_mode
         scope = user.user_id if user else ""
         history_key = user.user_id if user else clean_speaker
@@ -336,7 +346,7 @@ class AsyncConversationalBrain:
             return StreamSession([], _single_chunk(music_reply))
 
         calendar_summary = await self._try_calendar(clean_text) if owns_machine else ""
-        if calendar_summary and client is None:
+        if calendar_summary and not candidates:
             await self._remember(clean_text, clean_speaker, "calendar", scope)
             self._record_turn(history_key, clean_text, calendar_summary)
             return StreamSession([], _single_chunk(calendar_summary))
@@ -349,7 +359,7 @@ class AsyncConversationalBrain:
         ) = await self._gather_context(clean_text, clean_speaker, scope)
         consulted = self._consulted_ids(related_memories, general_memories)
 
-        if client is None:
+        if not candidates:
             fallback = (
                 self._needs_key_reply(clean_speaker)
                 if user is not None
@@ -380,16 +390,18 @@ class AsyncConversationalBrain:
         )
         # Persist the user input up front so it survives an early client disconnect.
         await self._remember(clean_text, clean_speaker, "conversation", scope)
-        ready_client = client  # non-None past the guard above; bound for the closure
 
         async def tokens() -> AsyncIterator[str]:
             parts: list[str] = []
             failures: list[ModelFailure] = []
+            blocked: set[bool] = set()  # is_local of the providers that can't answer now
             # The chosen model, or the next one that answers, until one says
             # something; once words are out, a failure just ends the reply there.
-            for candidate in self._chain.order(model):
+            for candidate, provider in candidates:
+                if is_local(candidate) in blocked:
+                    continue
                 try:
-                    stream = await ready_client.chat.completions.create(
+                    stream = await provider.chat.completions.create(
                         model=candidate,
                         messages=cast(Any, messages),
                         stream=True,
@@ -405,20 +417,17 @@ class AsyncConversationalBrain:
                             yield delta
                 except Exception as error:
                     if parts:
-                        logger.warning("OpenRouter stream from %s cut short: %s", candidate, error)
+                        logger.warning("Model %s cut its reply short: %s", candidate, error)
                         break
                     failure = classify(error)
                     logger.warning(
-                        "OpenRouter %s: %s", candidate, error, exc_info=failure.kind == "other"
+                        "Model %s: %s", candidate, error, exc_info=failure.kind == "other"
                     )
                 else:
                     if parts:
                         break
                     failure = EMPTY_REPLY
-                self._chain.failed(candidate, failure)
-                failures.append(failure)
-                if not failure.try_another:
-                    break
+                self._failed(candidate, failure, failures, blocked)
             if not parts:
                 message = explain(failures, model)
                 self._record_turn(history_key, clean_text, message)
@@ -432,15 +441,56 @@ class AsyncConversationalBrain:
 
         return StreamSession(consulted, tokens())
 
+    async def _candidates(self, chosen: str, cloud: AsyncOpenAI | None) -> list[tuple[str, Any]]:
+        """Where a reply may come from, in order, each model with its client: the
+        chosen one, the free ones in the cloud (with a key) and one on this computer
+        (with Ollama), so neither a quota nor an outage leaves F.E.A.R. mute."""
+        candidates: list[tuple[str, Any]] = []
+        if is_local(chosen):
+            if self._local is not None:
+                candidates.append((chosen, self._local))
+            if cloud is not None:
+                candidates += [(model, cloud) for model in self._chain.order(FALLBACK_MODELS[0])]
+        elif cloud is not None:
+            candidates += [(model, cloud) for model in self._chain.order(chosen)]
+        local = await self._local_fallback()
+        if local is not None and local != chosen:
+            candidates.append((local, self._local))
+        return candidates
+
+    async def _local_fallback(self) -> str | None:
+        """A model on this computer to fall back on: the recommended one when it's
+        downloaded, else any that can talk; None without Ollama or models."""
+        if self._local is None:
+            return None
+        tags = [model.tag for model in await self._local.chat_models()]
+        if not tags:
+            return None
+        return local_id(RECOMMENDED_LOCAL_MODEL if RECOMMENDED_LOCAL_MODEL in tags else tags[0])
+
+    def _failed(
+        self, model: str, failure: ModelFailure, failures: list[ModelFailure], blocked: set[bool]
+    ) -> None:
+        """Note a model's failure; one that holds for every model of its kind (the
+        cloud account, or Ollama being closed) rules the rest of that kind out."""
+        if not is_local(model):
+            self._chain.failed(model, failure)
+        failures.append(failure)
+        if not failure.try_another:
+            blocked.add(is_local(model))
+
     async def _complete(
-        self, client: AsyncOpenAI, chosen: str, messages: list[dict[str, str]]
+        self, candidates: list[tuple[str, Any]], chosen: str, messages: list[dict[str, str]]
     ) -> tuple[str, bool]:
         """A reply from the chosen model, or the next one that answers; otherwise, in
         plain words, why none did. Returns the text and whether it's that explanation."""
         failures: list[ModelFailure] = []
-        for candidate in self._chain.order(chosen):
+        blocked: set[bool] = set()
+        for candidate, provider in candidates:
+            if is_local(candidate) in blocked:
+                continue
             try:
-                response = await client.chat.completions.create(
+                response = await provider.chat.completions.create(
                     model=candidate,
                     # Plain role/content dicts; cast past the client's TypedDict param.
                     messages=cast(Any, messages),
@@ -448,17 +498,12 @@ class AsyncConversationalBrain:
                 reply = response.choices[0].message.content or ""
             except Exception as error:
                 failure = classify(error)
-                logger.warning(
-                    "OpenRouter %s: %s", candidate, error, exc_info=failure.kind == "other"
-                )
+                logger.warning("Model %s: %s", candidate, error, exc_info=failure.kind == "other")
             else:
                 if reply.strip():
                     return reply, False
                 failure = EMPTY_REPLY
-            self._chain.failed(candidate, failure)
-            failures.append(failure)
-            if not failure.try_another:
-                break
+            self._failed(candidate, failure, failures, blocked)
         return explain(failures, chosen), True
 
     async def _remember(self, text: str, speaker: str, source: str, user_id: str = "") -> None:
@@ -662,11 +707,13 @@ class AsyncConversationalBrain:
 
     @staticmethod
     def _needs_key_reply(speaker_name: str) -> str:
-        """Shown to a signed-in user who hasn't added their own OpenRouter key yet."""
+        """Shown to a signed-in user with no way to think yet: no OpenRouter key of
+        their own, and no model on this computer."""
         return (
-            f"Estou aqui, {speaker_name} — mas sem uma chave eu não penso. "
-            "Abra sua conta no ícone de pessoa, lá em cima, e cole sua chave do "
-            "OpenRouter. Faça isso e eu acordo."
+            f"Estou aqui, {speaker_name} — mas sem um cérebro eu não penso. "
+            "Cole sua chave do OpenRouter na sua conta, no ícone de pessoa lá em cima, "
+            "ou baixe um modelo para eu pensar aqui no seu PC, de graça e sem limite, "
+            "em Configurações, na aba Comportamento. Faça isso e eu acordo."
         )
 
     @staticmethod

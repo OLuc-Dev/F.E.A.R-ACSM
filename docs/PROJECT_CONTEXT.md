@@ -66,6 +66,13 @@ gravada).
   esperam dormindo, `OMP_WAIT_POLICY=PASSIVE`, senão uma transcrição de 3 s vira
   20 s com a CPU ocupada), `TextToSpeech` (Piper) e `fear_voice` (o timbre:
   10% mais grave e um comb leve de 3,2 ms).
+- `fear/brain/local_models.py` — `Ollama`: modelos no próprio PC (grátis, sem
+  limite, offline), guardados como `ollama/<tag>`. Fala com a API nativa do
+  Ollama (`/api/chat` com `think: false` e `num_ctx` 8192, para a persona caber),
+  lista os instalados (`/api/tags`) e baixa (`/api/pull`, progresso por camada).
+  O cérebro monta a fila de candidatos (escolhido → reservas da nuvem → modelo
+  local) e uma falha da conta do OpenRouter ou o Ollama fechado tiram só aquele
+  lado da fila. O app do Windows aponta `FEAR_OLLAMA_URL` para 127.0.0.1:11434.
 - `fear/audio/online_voice.py` — `OnlineVoice`: a voz Antonio da Microsoft
   (edge-tts, a do "Ler em voz alta" do Edge; não é API oficial). Cada falha faz
   `/voice/speak` usar o Piper naquela frase e deixa a voz online descansando
