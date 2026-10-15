@@ -179,6 +179,20 @@ describe("ModelPicker, models on this computer", () => {
     expect(screen.getByRole("button", { name: /Baixar · 6,6 GB/ })).toBeTruthy(); // try again
   });
 
+  it("measures a download against the whole model, so the bar never goes backwards", () => {
+    // Ollama announced only a first, small part so far (0,7 GB of the 6,6 GB).
+    picker({
+      local: ollama,
+      pulling: {
+        tag: "gemma4:e4b",
+        progress: { status: "pulling", completed: 0.66e9, total: 0.7e9 },
+        error: null,
+      },
+    });
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("10");
+    expect(plain(screen.getByText(/Baixando…/).textContent)).toBe("Baixando… 10% (0,7 GB de 6,6 GB)");
+  });
+
   it("keeps the local models usable when OpenRouter's list can't be read", () => {
     picker({ catalog: null, loadError: "Sem internet.", local: ollama });
     expect(screen.getByText("Sem internet.")).toBeTruthy();

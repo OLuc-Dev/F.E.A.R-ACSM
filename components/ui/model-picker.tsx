@@ -103,7 +103,10 @@ function DownloadRow({
 }) {
   const mine = pulling?.tag === download.tag ? pulling : null;
   const progress = mine?.progress;
-  const percent = progress?.total ? Math.floor((progress.completed / progress.total) * 100) : 0;
+  // Ollama announces a model's parts one by one (the small ones first), so its
+  // running total grows: against the known size, the bar never goes backwards.
+  const total = Math.max(progress?.total ?? 0, download.size);
+  const percent = progress ? Math.min(99, Math.floor((progress.completed / total) * 100)) : 0;
   return (
     <div className="min-w-0 rounded-xl border border-dashed border-overlay/20 px-3 py-2">
       <div className="flex items-center gap-2">
@@ -134,8 +137,8 @@ function DownloadRow({
             <div className="h-full bg-brand transition-[width]" style={{ width: `${percent}%` }} />
           </div>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            {progress?.total
-              ? `Baixando… ${percent}% (${gigabytes(progress.completed)} de ${gigabytes(progress.total)})`
+            {progress?.completed
+              ? `Baixando… ${percent}% (${gigabytes(progress.completed)} de ${gigabytes(total)})`
               : "Começando o download…"}
           </p>
         </div>

@@ -583,7 +583,7 @@ export function SettingsPanel({
 
                       {/* Model */}
                       <section className="space-y-2">
-                        <SectionLabel icon={<Cpu className="size-3.5" />}>Modelo (OpenRouter)</SectionLabel>
+                        <SectionLabel icon={<Cpu className="size-3.5" />}>Modelo</SectionLabel>
                         <ModelPicker
                           catalog={models}
                           loadError={modelsError}
