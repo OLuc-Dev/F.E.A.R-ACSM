@@ -26,6 +26,7 @@ from fear.brain.async_conversation import (
     AsyncConversationalBrain,
     UserContext,
 )
+from fear.brain.models import ModelCatalog
 from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.desktop_prefs import (
     DesktopPrefs,
@@ -130,6 +131,8 @@ class ConfigResponse(BaseModel):
 
     model: str
     model_default: str
+    # Whether OpenRouter still offers `model` (None: its list can't be read now).
+    model_available: bool | None = None
     persona_mode: str
     persona_modes: list[str]
 
@@ -660,6 +663,7 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     rate_limiter = RateLimiter(limit=10, window_seconds=60.0)
 
     application.state.settings = settings
+    application.state.model_catalog = ModelCatalog(settings.openrouter_base_url)
     application.state.memory = memory
     application.state.reference_library = reference_library
     application.state.spotify = spotify
@@ -1075,33 +1079,46 @@ async def conversation_reset(
     return {"status": "reset", "speaker": user.email}
 
 
-def _user_config(user: User) -> ConfigResponse:
+async def _user_config(user: User, catalog: ModelCatalog | None) -> ConfigResponse:
     """A user's effective model + persona mode (their choice, or the defaults)."""
+    model = user.chat_model or DEFAULT_CHAT_MODEL
     return ConfigResponse(
-        model=user.chat_model or DEFAULT_CHAT_MODEL,
+        model=model,
         model_default=DEFAULT_CHAT_MODEL,
+        model_available=await catalog.offers(model) if catalog else None,
         persona_mode=user.persona_mode or DEFAULT_PERSONA_MODE,
         persona_modes=list(PERSONA_MODES.keys()),
     )
 
 
 @app.get("/config", response_model=ConfigResponse)
-async def config_get(user: User = Depends(get_current_user)) -> ConfigResponse:
+async def config_get(request: Request, user: User = Depends(get_current_user)) -> ConfigResponse:
     """Return the signed-in user's own model + persona choices."""
-    return _user_config(user)
+    return await _user_config(user, getattr(request.app.state, "model_catalog", None))
 
 
 @app.post("/config", response_model=ConfigResponse)
 async def config_set(
     payload: ConfigUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
 ) -> ConfigResponse:
     """Update the user's own chat model and/or persona mode (no secrets)."""
+    catalog: ModelCatalog | None = getattr(request.app.state, "model_catalog", None)
     model: str | None = None
     persona_mode: str | None = None
     if payload.model is not None:
         model = payload.model.strip()
+        # A typo, or a model OpenRouter has retired, would fail every reply.
+        if model and catalog and await catalog.offers(model) is False:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"O OpenRouter não tem o modelo {model}. Confira o id em "
+                    "openrouter.ai/models; os grátis terminam em :free."
+                ),
+            )
     if payload.persona_mode is not None:
         persona_mode = payload.persona_mode.strip().lower()
         if persona_mode not in PERSONA_MODES:
@@ -1112,7 +1129,7 @@ async def config_set(
             store.set_preferences, user.id, chat_model=model, persona_mode=persona_mode
         )
     refreshed = await asyncio.to_thread(store.get_by_id, user.id)
-    return _user_config(refreshed or user)
+    return await _user_config(refreshed or user, catalog)
 
 
 # Ten minutes of opus is ~5 MB; nothing spoken to F.E.A.R. needs more than that.

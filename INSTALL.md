@@ -64,7 +64,7 @@ Edite o `.env` e preencha a chave do OpenRouter (https://openrouter.ai/keys):
 OPENROUTER_API_KEY=sk-or-...
 ```
 
-A chave fica **só no seu `.env` local — nunca faça commit dela.** O modelo já vem no padrão gratuito (`openai/gpt-oss-120b:free`). Sem chave, o F.E.A.R. ainda escuta e lembra, mas responde em modo de fallback.
+A chave fica **só no seu `.env` local — nunca faça commit dela.** O modelo já vem no padrão gratuito (`thinkingmachines/inkling:free`) e, se ele falhar ou sair do ar, o F.E.A.R. responde com outro modelo grátis. Sem chave, o F.E.A.R. ainda escuta e lembra, mas responde em modo de fallback.
 
 Recursos avançados (Obsidian, Spotify, ElevenLabs):
 

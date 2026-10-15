@@ -652,6 +652,47 @@ def test_config_rejects_invalid_mode(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+class FakeCatalog:
+    """OpenRouter's model list, as ModelCatalog reads it (None: unreachable)."""
+
+    def __init__(self, models: set[str] | None) -> None:
+        self.models = models
+
+    async def offers(self, model: str) -> bool | None:
+        return None if self.models is None else model in self.models
+
+
+def test_config_refuses_a_model_openrouter_doesnt_have(client: TestClient) -> None:
+    app.state.model_catalog = FakeCatalog({"x/real:free"})
+    try:
+        _, headers = _register(client)
+        refused = client.post("/config", json={"model": "x/gone:free"}, headers=headers)
+        assert refused.status_code == 422
+        assert "não tem o modelo x/gone:free" in refused.json()["detail"]
+        saved = client.post("/config", json={"model": "x/real:free"}, headers=headers)
+        assert saved.status_code == 200
+        assert saved.json()["model"] == "x/real:free"
+        assert saved.json()["model_available"] is True
+    finally:
+        delattr(app.state, "model_catalog")
+
+
+def test_config_says_when_the_saved_model_was_retired(client: TestClient) -> None:
+    app.state.model_catalog = FakeCatalog({"x/real:free"})
+    try:
+        _, headers = _register(client)
+        client.post("/config", json={"model": "x/real:free"}, headers=headers)
+        app.state.model_catalog.models = {"x/other:free"}  # OpenRouter retired it since
+        assert client.get("/config", headers=headers).json()["model_available"] is False
+        # Can't read the list (offline): nothing is refused, nothing is claimed.
+        app.state.model_catalog.models = None
+        assert client.get("/config", headers=headers).json()["model_available"] is None
+        offline = client.post("/config", json={"model": "x/new:free"}, headers=headers)
+        assert offline.status_code == 200
+    finally:
+        delattr(app.state, "model_catalog")
+
+
 # --- the machine's mic, speakers and integrations belong to its owner ---
 
 

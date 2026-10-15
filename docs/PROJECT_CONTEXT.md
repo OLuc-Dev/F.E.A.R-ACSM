@@ -25,7 +25,10 @@ gravada).
   embeddings locais em CPU via ONNX MiniLM (`all-MiniLM-L6-v2`, do ChromaDB, sem
   PyTorch), compartilhado entre os stores. LLM via
   **OpenRouter** (cliente compatível com OpenAI). Modelo padrão gratuito:
-  `openai/gpt-oss-120b:free`.
+  `thinkingmachines/inkling:free`; quando um modelo falha, `fear/brain/models.py`
+  passa a resposta para o próximo (`nvidia/nemotron-3-super-120b-a12b:free`, e por
+  fim `openrouter/free`) e traduz o erro do OpenRouter numa frase clara (chave,
+  créditos, cota grátis, privacidade, modelo retirado, rede).
 - **Auth:** SQLite (usuários), hash de senha PBKDF2 (stdlib), `cryptography`/
   Fernet (tokens de sessão + criptografia das chaves de API por usuário).
 - **Frontend:** Next.js 14.2 (App Router, **fixo no 14**), React 18.3,

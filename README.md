@@ -121,7 +121,10 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   fria, lúcida e leal, com lente niilista e tempero de Ultron. O painel
   **Configuração → Comportamento** alterna o **modo** (equilíbrio / sombrio /
   cirurgico) e o **modelo** do OpenRouter ao vivo; o padrão fixo fica no `.env`
-  (`FEAR_PERSONA_MODE`, `OPENROUTER_CHAT_MODEL`).
+  (`FEAR_PERSONA_MODE`, `OPENROUTER_CHAT_MODEL`). Se o modelo sair do ar ou
+  atingir o limite, ele responde com outro modelo grátis; quando nenhum consegue,
+  diz o motivo (chave recusada, sem créditos, cota grátis do dia, privacidade da
+  conta, sem internet).
 - **Memória persistente por interlocutor** (`PersonalMemory`, ChromaDB).
 - **Fontes de conhecimento por conta**: pelo painel **Configuração** (ícone de
   engrenagem / app no dock) você adiciona conhecimento por texto colado. Tudo é
@@ -196,7 +199,8 @@ cp .env.example .env
 cat .env.advanced.example >> .env
 ```
 
-Preencha `OPENROUTER_API_KEY` e `OPENROUTER_CHAT_MODEL` para respostas completas.
+Preencha `OPENROUTER_API_KEY` para respostas completas (`OPENROUTER_CHAT_MODEL`
+só se quiser fixar um modelo seu).
 Sem eles, F.E.A.R. ainda escuta e lembra, mas responde em modo de fallback.
 
 Guia passo a passo de OpenRouter + Spotify (com o login one-time do Spotify):

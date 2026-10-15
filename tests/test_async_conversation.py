@@ -3,9 +3,12 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
+import httpx
+import openai
 import pytest
 
 from fear.brain.async_conversation import AsyncConversationalBrain, UserContext
+from fear.brain.models import FALLBACK_MODELS
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
 
@@ -732,3 +735,119 @@ async def test_stream_skips_chunks_without_choices() -> None:
     chunks = [chunk async for chunk in (await brain.open_stream("oi", "Lucas")).stream]
 
     assert "".join(chunks) == "F.E.A.R."
+
+
+# --- OpenRouter retiring or refusing a model ---
+
+_REQUEST = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+
+
+def _openrouter_error(error_class: type[openai.APIStatusError], status: int, message: str):
+    return error_class(message, response=httpx.Response(status, request=_REQUEST), body=None)
+
+
+class ModelsClient:
+    """An AsyncOpenAI stand-in where each model answers, fails or says nothing."""
+
+    def __init__(self, outcomes: dict[str, Exception | str]) -> None:
+        self.tried: list[str] = []
+
+        async def create(*, model, messages, stream=False):
+            self.tried.append(model)
+            outcome = outcomes.get(model, "Aqui é o F.E.A.R.")
+            if isinstance(outcome, Exception):
+                raise outcome
+            if stream:
+
+                async def gen():
+                    if outcome:
+                        delta = types.SimpleNamespace(content=outcome)
+                        yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+                return gen()
+            message = types.SimpleNamespace(content=outcome)
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+
+
+def _brain(client: ModelsClient, memory: FakeMemory | None = None) -> AsyncConversationalBrain:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="gone/model:free"),
+        memory=memory or FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = client  # type: ignore[assignment]
+    return brain
+
+
+async def _streamed(brain: AsyncConversationalBrain, text: str = "oi") -> str:
+    return "".join([chunk async for chunk in (await brain.open_stream(text, "Lucas")).stream])
+
+
+GONE = _openrouter_error(openai.NotFoundError, 404, "No endpoints found for gone/model:free.")
+
+
+@pytest.mark.asyncio
+async def test_a_retired_model_hands_the_reply_to_the_next_one() -> None:
+    client = ModelsClient({"gone/model:free": GONE})
+    brain = _brain(client)
+
+    result = await brain.process_command("oi", "Lucas")
+    streamed = await _streamed(brain)
+
+    assert result.reply == "Aqui é o F.E.A.R."
+    assert streamed == "Aqui é o F.E.A.R."
+    # Tried once, then left out: the second reply doesn't wait on it.
+    assert client.tried == ["gone/model:free", FALLBACK_MODELS[0], FALLBACK_MODELS[0]]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_key_is_said_plainly_and_no_other_model_is_tried() -> None:
+    memory = FakeMemory()
+    refused = _openrouter_error(openai.AuthenticationError, 401, "No auth credentials found")
+    client = ModelsClient({"gone/model:free": refused})
+    brain = _brain(client, memory)
+
+    result = await brain.process_command("oi", "Lucas")
+
+    assert "recusou a sua chave" in result.reply
+    assert client.tried == ["gone/model:free"]
+    assert all(source != "assistant_reply" for (_, _, source) in memory.added)
+
+
+@pytest.mark.asyncio
+async def test_the_end_of_the_free_quota_is_explained() -> None:
+    quota = _openrouter_error(
+        openai.RateLimitError, 429, "Rate limit exceeded: free-models-per-day. Add 10 credits"
+    )
+    client = ModelsClient({"gone/model:free": quota})
+
+    reply = await _streamed(_brain(client))
+
+    assert "cota de hoje" in reply
+    assert client.tried == ["gone/model:free"]  # every free model shares that quota
+
+
+@pytest.mark.asyncio
+async def test_a_privacy_setting_blocking_free_models_is_explained() -> None:
+    policy = _openrouter_error(
+        openai.NotFoundError, 404, "No endpoints found matching your data policy"
+    )
+    reply = await _streamed(_brain(ModelsClient({"gone/model:free": policy})))
+    assert "openrouter.ai/settings/privacy" in reply
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_counts_as_no_reply() -> None:
+    client = ModelsClient({"gone/model:free": ""})
+    result = await _brain(client).process_command("oi", "Lucas")
+    assert result.reply == "Aqui é o F.E.A.R."
+    assert client.tried == ["gone/model:free", FALLBACK_MODELS[0]]
+
+
+@pytest.mark.asyncio
+async def test_when_no_model_answers_it_says_why() -> None:
+    client = ModelsClient({model: GONE for model in ["gone/model:free", *FALLBACK_MODELS]})
+    reply = await _streamed(_brain(client))
+    assert "gone/model:free não está disponível" in reply
+    assert client.tried == ["gone/model:free", *FALLBACK_MODELS]

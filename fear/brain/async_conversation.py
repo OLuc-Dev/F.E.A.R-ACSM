@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncOpenAI
 
+from fear.brain.models import EMPTY_REPLY, ModelChain, ModelFailure, classify, explain
 from fear.config import Settings
 from fear.library.reference_library import ReferenceLibrary
 from fear.memory.personal_memory import PersonalMemory, PersonalMemoryResult
@@ -20,9 +21,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-# Shown to the user when a model call fails, instead of surfacing a 500.
-LLM_ERROR_REPLY = "Tive um problema para processar isso agora. Tenta de novo em instantes."
 
 # Only route to the music player when the message clearly refers to music. This keeps the
 # assistant from hijacking ordinary conversation that happens to contain a verb
@@ -177,6 +175,8 @@ class AsyncConversationalBrain:
         # Rolling per-speaker dialogue window, so F.E.A.R. follows a conversation
         # across turns instead of treating every message as standalone. LRU-bounded.
         self._history: OrderedDict[str, deque[dict[str, str]]] = OrderedDict()
+        # The models a reply may come from, minus those failing lately.
+        self._chain = ModelChain()
 
         if settings.openrouter_api_key:
             self.client = AsyncOpenAI(
@@ -283,18 +283,7 @@ class AsyncConversationalBrain:
             persona_mode=persona_mode,
         )
 
-        try:
-            response = await client.chat.completions.create(
-                model=model,
-                # Plain role/content dicts; cast past the client's TypedDict param.
-                messages=cast(Any, messages),
-            )
-            reply = response.choices[0].message.content or ""
-            failed = False
-        except Exception:
-            logger.exception("OpenRouter chat completion failed")
-            reply = LLM_ERROR_REPLY
-            failed = True
+        reply, failed = await self._complete(client, model, messages)
 
         await self._remember(clean_text, clean_speaker, "conversation", scope)
         if reply and not failed:
@@ -395,27 +384,46 @@ class AsyncConversationalBrain:
 
         async def tokens() -> AsyncIterator[str]:
             parts: list[str] = []
-            try:
-                stream = await ready_client.chat.completions.create(
-                    model=model,
-                    messages=cast(Any, messages),
-                    stream=True,
-                )
-                async for chunk in stream:
-                    # OpenRouter interleaves chunks with no choices (keep-alives,
-                    # the final usage report); indexing them would cut the reply.
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta.content
-                    if delta:
-                        parts.append(delta)
-                        yield delta
-            except Exception:
-                logger.exception("OpenRouter streaming failed")
-                if not parts:
-                    self._record_turn(history_key, clean_text, LLM_ERROR_REPLY)
-                    yield LLM_ERROR_REPLY
-                    return
+            failures: list[ModelFailure] = []
+            # The chosen model, or the next one that answers, until one says
+            # something; once words are out, a failure just ends the reply there.
+            for candidate in self._chain.order(model):
+                try:
+                    stream = await ready_client.chat.completions.create(
+                        model=candidate,
+                        messages=cast(Any, messages),
+                        stream=True,
+                    )
+                    async for chunk in stream:
+                        # OpenRouter interleaves chunks with no choices (keep-alives,
+                        # the final usage report); indexing them would cut the reply.
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta.content
+                        if delta:
+                            parts.append(delta)
+                            yield delta
+                except Exception as error:
+                    if parts:
+                        logger.warning("OpenRouter stream from %s cut short: %s", candidate, error)
+                        break
+                    failure = classify(error)
+                    logger.warning(
+                        "OpenRouter %s: %s", candidate, error, exc_info=failure.kind == "other"
+                    )
+                else:
+                    if parts:
+                        break
+                    failure = EMPTY_REPLY
+                self._chain.failed(candidate, failure)
+                failures.append(failure)
+                if not failure.try_another:
+                    break
+            if not parts:
+                message = explain(failures, model)
+                self._record_turn(history_key, clean_text, message)
+                yield message
+                return
 
             reply = "".join(parts)
             if reply:
@@ -423,6 +431,35 @@ class AsyncConversationalBrain:
             self._record_turn(history_key, clean_text, reply)
 
         return StreamSession(consulted, tokens())
+
+    async def _complete(
+        self, client: AsyncOpenAI, chosen: str, messages: list[dict[str, str]]
+    ) -> tuple[str, bool]:
+        """A reply from the chosen model, or the next one that answers; otherwise, in
+        plain words, why none did. Returns the text and whether it's that explanation."""
+        failures: list[ModelFailure] = []
+        for candidate in self._chain.order(chosen):
+            try:
+                response = await client.chat.completions.create(
+                    model=candidate,
+                    # Plain role/content dicts; cast past the client's TypedDict param.
+                    messages=cast(Any, messages),
+                )
+                reply = response.choices[0].message.content or ""
+            except Exception as error:
+                failure = classify(error)
+                logger.warning(
+                    "OpenRouter %s: %s", candidate, error, exc_info=failure.kind == "other"
+                )
+            else:
+                if reply.strip():
+                    return reply, False
+                failure = EMPTY_REPLY
+            self._chain.failed(candidate, failure)
+            failures.append(failure)
+            if not failure.try_another:
+                break
+        return explain(failures, chosen), True
 
     async def _remember(self, text: str, speaker: str, source: str, user_id: str = "") -> None:
         """Persist a memory; a storage failure must not break the conversation."""

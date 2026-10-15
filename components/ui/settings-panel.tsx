@@ -537,7 +537,7 @@ export function SettingsPanel({
                         <Field
                           value={modelInput}
                           onChange={(event) => setModelInput(event.target.value)}
-                          placeholder="ex: openai/gpt-oss-120b:free"
+                          placeholder={`ex: ${config?.model_default ?? "openrouter/free"}`}
                         />
                         <div className="flex gap-2">
                           <button
@@ -562,9 +562,15 @@ export function SettingsPanel({
                             </button>
                           )}
                         </div>
+                        {config?.model_available === false && (
+                          <p className="text-[11px] leading-4 text-amber-500/90">
+                            O OpenRouter não tem mais o modelo {config.model}. Até você escolher outro, ele
+                            responde com um modelo grátis.
+                          </p>
+                        )}
                         <p className="text-[11px] leading-4 text-muted-foreground/60">
-                          Atual: {config?.model ?? "—"}. Ids em openrouter.ai/models. Vale por esta sessão; o
-                          padrão fixo fica no .env.
+                          Atual: {config?.model ?? "—"}. Ids em openrouter.ai/models; os grátis terminam em
+                          :free. Se o modelo falhar, ele responde com outro grátis sozinho.
                         </p>
                       </section>
 

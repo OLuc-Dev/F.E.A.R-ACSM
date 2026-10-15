@@ -79,6 +79,8 @@ export interface KnowledgeListResponse {
 export interface ConfigResponse {
   model: string;
   model_default: string;
+  /** Whether OpenRouter still offers `model` (null: its list couldn't be read). */
+  model_available?: boolean | null;
   persona_mode: string;
   persona_modes: string[];
 }

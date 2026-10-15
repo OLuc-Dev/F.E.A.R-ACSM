@@ -4,9 +4,10 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# The free GPT-OSS 120B; the single source of truth for the default chat model,
-# reused by the /config endpoint to offer a "reset to default" option.
-DEFAULT_CHAT_MODEL = "openai/gpt-oss-120b:free"
+# Thinking Machines' Inkling, free, served by the lab itself; the single source
+# of truth for the default chat model, reused by the /config endpoint to offer a
+# "reset to default" option. If it goes away, fear.brain.models falls back.
+DEFAULT_CHAT_MODEL = "thinkingmachines/inkling:free"
 
 
 class Settings(BaseSettings):
