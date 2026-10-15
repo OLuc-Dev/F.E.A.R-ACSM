@@ -4,9 +4,10 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# The free GPT-OSS 120B; the single source of truth for the default chat model,
-# reused by the /config endpoint to offer a "reset to default" option.
-DEFAULT_CHAT_MODEL = "openai/gpt-oss-120b:free"
+# Thinking Machines' Inkling, free, served by the lab itself; the single source
+# of truth for the default chat model, reused by the /config endpoint to offer a
+# "reset to default" option. If it goes away, fear.brain.models falls back.
+DEFAULT_CHAT_MODEL = "thinkingmachines/inkling:free"
 
 
 class Settings(BaseSettings):
@@ -72,6 +73,9 @@ class Settings(BaseSettings):
         "https://openrouter.ai/api/v1", validation_alias="OPENROUTER_BASE_URL"
     )
     openrouter_chat_model: str = Field(DEFAULT_CHAT_MODEL, validation_alias="OPENROUTER_CHAT_MODEL")
+    # Ollama on this computer (models that run here, free and unlimited). The
+    # Windows app sets it; empty: no local models.
+    ollama_url: str = Field("", validation_alias="FEAR_OLLAMA_URL")
     openrouter_http_referer: str = Field(
         "http://127.0.0.1:8765", validation_alias="OPENROUTER_HTTP_REFERER"
     )

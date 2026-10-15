@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import hmac
 import importlib.util
+import json
 import logging
 import os
+import re
 import secrets
 import threading
 from collections.abc import AsyncIterator, Coroutine
@@ -26,6 +28,15 @@ from fear.brain.async_conversation import (
     AsyncConversationalBrain,
     UserContext,
 )
+from fear.brain.local_models import (
+    DOWNLOADS,
+    RECOMMENDED_LOCAL_MODEL,
+    Ollama,
+    is_local,
+    local_id,
+    local_tag,
+)
+from fear.brain.models import FALLBACK_MODELS, ModelCatalog, ModelInfo
 from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.desktop_prefs import (
     DesktopPrefs,
@@ -100,6 +111,8 @@ class StatusResponse(BaseModel):
     voice_output: bool
     # Its voice can come from Microsoft's neural voices (with internet).
     voice_online: bool
+    # It can think with a model on this computer (Ollama), no key needed.
+    local_models: bool
     obsidian: bool
     calendar: bool
 
@@ -130,8 +143,32 @@ class ConfigResponse(BaseModel):
 
     model: str
     model_default: str
+    # Whether OpenRouter still offers `model` (None: its list can't be read now).
+    model_available: bool | None = None
     persona_mode: str
     persona_modes: list[str]
+
+
+class ModelOption(BaseModel):
+    """A model to choose, as the settings panel shows it."""
+
+    id: str
+    name: str
+    description: str
+    free: bool
+    context_length: int
+    # Roughly what 100 of F.E.A.R.'s replies cost with it, in US dollars (None: it varies).
+    cost_per_100_replies: float | None
+
+
+class ModelsResponse(BaseModel):
+    """The chat models OpenRouter offers now: the default and fallbacks first, then
+    the other free ones, then the paid ones."""
+
+    models: list[ModelOption]
+    default: str
+    # Tried in this order whenever the chosen model fails.
+    fallbacks: list[str]
 
 
 class ConfigUpdate(BaseModel):
@@ -660,6 +697,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     rate_limiter = RateLimiter(limit=10, window_seconds=60.0)
 
     application.state.settings = settings
+    application.state.model_catalog = ModelCatalog(settings.openrouter_base_url)
+    application.state.ollama = Ollama(settings.ollama_url) if settings.ollama_url else None
     application.state.memory = memory
     application.state.reference_library = reference_library
     application.state.spotify = spotify
@@ -883,6 +922,7 @@ async def status(
     music = getattr(state, "music", None)
     calendar = getattr(state, "calendar", None)
     owner = user is not None and await _is_owner(user, store, settings)
+    ollama: Ollama | None = getattr(state, "ollama", None)
     return StatusResponse(
         assistant=settings.assistant_name,
         openrouter=bool(settings.openrouter_api_key and settings.openrouter_chat_model),
@@ -894,6 +934,7 @@ async def status(
         voice_output=getattr(state, "voice_out", None) is not None
         or getattr(state, "voice_online", None) is not None,
         voice_online=getattr(state, "voice_online", None) is not None,
+        local_models=bool(await ollama.chat_models()) if ollama else False,
         obsidian=owner and getattr(state, "obsidian_watcher", None) is not None,
         calendar=owner and bool(calendar is not None and calendar.is_configured),
     )
@@ -1075,33 +1116,224 @@ async def conversation_reset(
     return {"status": "reset", "speaker": user.email}
 
 
-def _user_config(user: User) -> ConfigResponse:
+async def _model_available(
+    model: str, catalog: ModelCatalog | None, ollama: Ollama | None
+) -> bool | None:
+    """Whether `model` can answer: OpenRouter offers it, or it's downloaded into
+    Ollama here (None: can't tell right now)."""
+    if is_local(model):
+        installed = await ollama.chat_models() if ollama else []
+        if ollama is None or await ollama.installed() is None:
+            return None
+        return local_tag(model) in {local.tag for local in installed}
+    return await catalog.offers(model) if catalog else None
+
+
+async def _user_config(
+    user: User, catalog: ModelCatalog | None, ollama: Ollama | None
+) -> ConfigResponse:
     """A user's effective model + persona mode (their choice, or the defaults)."""
+    model = user.chat_model or DEFAULT_CHAT_MODEL
     return ConfigResponse(
-        model=user.chat_model or DEFAULT_CHAT_MODEL,
+        model=model,
         model_default=DEFAULT_CHAT_MODEL,
+        model_available=await _model_available(model, catalog, ollama),
         persona_mode=user.persona_mode or DEFAULT_PERSONA_MODE,
         persona_modes=list(PERSONA_MODES.keys()),
     )
 
 
+# OpenRouter's own routers, but for these two, do jobs other than chatting.
+_CHAT_ROUTERS = ("openrouter/free", "openrouter/auto")
+
+
+def _model_option(model: ModelInfo) -> ModelOption:
+    # "Google: Gemma 4 31B (free)": the panel already sorts the free ones apart.
+    name = re.sub(r"\s*\(free\)$", "", model.name).strip()
+    first_sentence = model.description.split(". ")[0].strip()
+    cost = None if model.free else model.cost_per_100_replies()
+    return ModelOption(
+        id=model.id,
+        name=name,
+        description=first_sentence[:160],
+        free=model.free,
+        context_length=model.context_length,
+        cost_per_100_replies=None if cost is None else round(cost, 4),
+    )
+
+
+@app.get("/models", response_model=ModelsResponse)
+async def models_list(request: Request, user: User = Depends(get_current_user)) -> ModelsResponse:
+    """The chat models OpenRouter offers now, for choosing F.E.A.R.'s model."""
+    catalog: ModelCatalog | None = getattr(request.app.state, "model_catalog", None)
+    listed = await catalog.listing() if catalog else None
+    if listed is None:
+        raise HTTPException(
+            status_code=503, detail="Não consegui ler a lista de modelos do OpenRouter agora."
+        )
+    recommended = [DEFAULT_CHAT_MODEL, *FALLBACK_MODELS]
+    chat = [
+        model
+        for model in listed
+        if model.chat and (not model.id.startswith("openrouter/") or model.id in _CHAT_ROUTERS)
+    ]
+
+    def order(model: ModelInfo) -> tuple[int, int, str]:
+        rank = recommended.index(model.id) if model.id in recommended else len(recommended)
+        return (rank, 0 if model.free else 1, model.name.lower())
+
+    return ModelsResponse(
+        models=[_model_option(model) for model in sorted(chat, key=order)],
+        default=DEFAULT_CHAT_MODEL,
+        fallbacks=list(FALLBACK_MODELS),
+    )
+
+
+class LocalModelOption(BaseModel):
+    """A model downloaded into Ollama on this computer."""
+
+    id: str  # "ollama/<tag>", as the model setting stores it
+    tag: str
+    size: int  # bytes on disk
+    parameter_size: str
+
+
+class LocalDownload(BaseModel):
+    """A model the settings offer to download into Ollama."""
+
+    id: str
+    tag: str
+    name: str
+    size: int  # bytes to download, roughly
+    note: str
+    installed: bool
+
+
+class LocalModelsResponse(BaseModel):
+    """What Ollama on this computer has, and can download."""
+
+    # Ollama answers (installed and open).
+    running: bool
+    models: list[LocalModelOption]
+    downloads: list[LocalDownload]
+    recommended: str
+
+
+class PullRequest(BaseModel):
+    """A model to download into Ollama, by its tag (e.g. "qwen3.5:4b")."""
+
+    tag: str = Field(pattern=r"^[a-z0-9][a-z0-9._\-/]*(:[a-z0-9._\-]+)?$", max_length=120)
+
+
+@app.get("/models/local", response_model=LocalModelsResponse)
+async def models_local(
+    request: Request, user: User = Depends(get_current_user)
+) -> LocalModelsResponse:
+    """The models F.E.A.R. can think with on this computer, through Ollama."""
+    ollama: Ollama | None = getattr(request.app.state, "ollama", None)
+    running = ollama is not None and await ollama.installed() is not None
+    installed = await ollama.chat_models() if ollama else []
+    tags = {model.tag for model in installed}
+    return LocalModelsResponse(
+        running=running,
+        models=[
+            LocalModelOption(
+                id=local_id(model.tag),
+                tag=model.tag,
+                size=model.size,
+                parameter_size=model.parameter_size,
+            )
+            for model in installed
+        ],
+        downloads=[
+            LocalDownload(
+                id=local_id(str(offer["tag"])),
+                tag=str(offer["tag"]),
+                name=str(offer["name"]),
+                size=int(offer["size"]),
+                note=str(offer["note"]),
+                installed=offer["tag"] in tags,
+            )
+            for offer in DOWNLOADS
+        ],
+        recommended=RECOMMENDED_LOCAL_MODEL,
+    )
+
+
+@app.post("/models/local/pull")
+async def models_local_pull(
+    payload: PullRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Download a model into Ollama, streaming its progress as NDJSON lines:
+    {"status", "completed", "total"} (bytes, all layers together), then
+    {"status": "success"} or {"error": ...}."""
+    await _require_owner(
+        user, store, settings, detail="Só o dono deste F.E.A.R. baixa modelos neste computador."
+    )
+    ollama: Ollama | None = getattr(request.app.state, "ollama", None)
+    if ollama is None:
+        raise HTTPException(status_code=503, detail="Os modelos locais não estão ativados.")
+    pulling = ollama
+
+    async def progress() -> AsyncIterator[str]:
+        layers: dict[str, tuple[int, int]] = {}
+        async for event in pulling.pull(payload.tag):
+            if "error" in event:
+                yield json.dumps({"error": str(event["error"])}) + "\n"
+                return
+            digest, total = event.get("digest"), event.get("total")
+            if digest and total:
+                layers[str(digest)] = (int(event.get("completed") or 0), int(total))
+            yield (
+                json.dumps(
+                    {
+                        "status": str(event.get("status") or ""),
+                        "completed": sum(done for done, _ in layers.values()),
+                        "total": sum(size for _, size in layers.values()),
+                    }
+                )
+                + "\n"
+            )
+
+    return StreamingResponse(progress(), media_type="application/x-ndjson")
+
+
 @app.get("/config", response_model=ConfigResponse)
-async def config_get(user: User = Depends(get_current_user)) -> ConfigResponse:
+async def config_get(request: Request, user: User = Depends(get_current_user)) -> ConfigResponse:
     """Return the signed-in user's own model + persona choices."""
-    return _user_config(user)
+    state = request.app.state
+    return await _user_config(
+        user, getattr(state, "model_catalog", None), getattr(state, "ollama", None)
+    )
 
 
 @app.post("/config", response_model=ConfigResponse)
 async def config_set(
     payload: ConfigUpdate,
+    request: Request,
     user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
 ) -> ConfigResponse:
     """Update the user's own chat model and/or persona mode (no secrets)."""
+    catalog: ModelCatalog | None = getattr(request.app.state, "model_catalog", None)
+    ollama: Ollama | None = getattr(request.app.state, "ollama", None)
     model: str | None = None
     persona_mode: str | None = None
     if payload.model is not None:
         model = payload.model.strip()
+        # A typo, a retired model or one not downloaded would fail every reply.
+        if model and await _model_available(model, catalog, ollama) is False:
+            detail = (
+                f"O modelo {local_tag(model)} não está baixado no Ollama."
+                if is_local(model)
+                else f"O OpenRouter não tem o modelo {model}. Confira o id em "
+                "openrouter.ai/models; os grátis terminam em :free."
+            )
+            raise HTTPException(status_code=422, detail=detail)
     if payload.persona_mode is not None:
         persona_mode = payload.persona_mode.strip().lower()
         if persona_mode not in PERSONA_MODES:
@@ -1112,7 +1344,7 @@ async def config_set(
             store.set_preferences, user.id, chat_model=model, persona_mode=persona_mode
         )
     refreshed = await asyncio.to_thread(store.get_by_id, user.id)
-    return _user_config(refreshed or user)
+    return await _user_config(refreshed or user, catalog, ollama)
 
 
 # Ten minutes of opus is ~5 MB; nothing spoken to F.E.A.R. needs more than that.

@@ -3,9 +3,13 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
+import httpx
+import openai
 import pytest
 
 from fear.brain.async_conversation import AsyncConversationalBrain, UserContext
+from fear.brain.local_models import LocalModelError
+from fear.brain.models import FALLBACK_MODELS
 from fear.config import Settings
 from fear.memory.personal_memory import PersonalMemoryResult
 
@@ -732,3 +736,208 @@ async def test_stream_skips_chunks_without_choices() -> None:
     chunks = [chunk async for chunk in (await brain.open_stream("oi", "Lucas")).stream]
 
     assert "".join(chunks) == "F.E.A.R."
+
+
+# --- OpenRouter retiring or refusing a model ---
+
+_REQUEST = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+
+
+def _openrouter_error(error_class: type[openai.APIStatusError], status: int, message: str):
+    return error_class(message, response=httpx.Response(status, request=_REQUEST), body=None)
+
+
+class ModelsClient:
+    """An AsyncOpenAI stand-in where each model answers, fails or says nothing."""
+
+    def __init__(self, outcomes: dict[str, Exception | str]) -> None:
+        self.tried: list[str] = []
+
+        async def create(*, model, messages, stream=False):
+            self.tried.append(model)
+            outcome = outcomes.get(model, "Aqui é o F.E.A.R.")
+            if isinstance(outcome, Exception):
+                raise outcome
+            if stream:
+
+                async def gen():
+                    if outcome:
+                        delta = types.SimpleNamespace(content=outcome)
+                        yield types.SimpleNamespace(choices=[types.SimpleNamespace(delta=delta)])
+
+                return gen()
+            message = types.SimpleNamespace(content=outcome)
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+
+
+def _brain(client: ModelsClient, memory: FakeMemory | None = None) -> AsyncConversationalBrain:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="gone/model:free"),
+        memory=memory or FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = client  # type: ignore[assignment]
+    return brain
+
+
+async def _streamed(brain: AsyncConversationalBrain, text: str = "oi") -> str:
+    return "".join([chunk async for chunk in (await brain.open_stream(text, "Lucas")).stream])
+
+
+GONE = _openrouter_error(openai.NotFoundError, 404, "No endpoints found for gone/model:free.")
+
+
+@pytest.mark.asyncio
+async def test_a_retired_model_hands_the_reply_to_the_next_one() -> None:
+    client = ModelsClient({"gone/model:free": GONE})
+    brain = _brain(client)
+
+    result = await brain.process_command("oi", "Lucas")
+    streamed = await _streamed(brain)
+
+    assert result.reply == "Aqui é o F.E.A.R."
+    assert streamed == "Aqui é o F.E.A.R."
+    # Tried once, then left out: the second reply doesn't wait on it.
+    assert client.tried == ["gone/model:free", FALLBACK_MODELS[0], FALLBACK_MODELS[0]]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_key_is_said_plainly_and_no_other_model_is_tried() -> None:
+    memory = FakeMemory()
+    refused = _openrouter_error(openai.AuthenticationError, 401, "No auth credentials found")
+    client = ModelsClient({"gone/model:free": refused})
+    brain = _brain(client, memory)
+
+    result = await brain.process_command("oi", "Lucas")
+
+    assert "recusou a sua chave" in result.reply
+    assert client.tried == ["gone/model:free"]
+    assert all(source != "assistant_reply" for (_, _, source) in memory.added)
+
+
+@pytest.mark.asyncio
+async def test_the_end_of_the_free_quota_is_explained() -> None:
+    quota = _openrouter_error(
+        openai.RateLimitError, 429, "Rate limit exceeded: free-models-per-day. Add 10 credits"
+    )
+    client = ModelsClient({"gone/model:free": quota})
+
+    reply = await _streamed(_brain(client))
+
+    assert "cota de hoje" in reply
+    assert client.tried == ["gone/model:free"]  # every free model shares that quota
+
+
+@pytest.mark.asyncio
+async def test_a_privacy_setting_blocking_free_models_is_explained() -> None:
+    policy = _openrouter_error(
+        openai.NotFoundError, 404, "No endpoints found matching your data policy"
+    )
+    reply = await _streamed(_brain(ModelsClient({"gone/model:free": policy})))
+    assert "openrouter.ai/settings/privacy" in reply
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_counts_as_no_reply() -> None:
+    client = ModelsClient({"gone/model:free": ""})
+    result = await _brain(client).process_command("oi", "Lucas")
+    assert result.reply == "Aqui é o F.E.A.R."
+    assert client.tried == ["gone/model:free", FALLBACK_MODELS[0]]
+
+
+@pytest.mark.asyncio
+async def test_when_no_model_answers_it_says_why() -> None:
+    client = ModelsClient({model: GONE for model in ["gone/model:free", *FALLBACK_MODELS]})
+    reply = await _streamed(_brain(client))
+    assert "gone/model:free não está disponível" in reply
+    assert client.tried == ["gone/model:free", *FALLBACK_MODELS]
+
+
+# --- thinking on this computer (Ollama) ---
+
+
+class LocalModelsClient(ModelsClient):
+    """Ollama on this computer, as the brain sees it: what it has, and its replies."""
+
+    def __init__(
+        self, outcomes: dict[str, Exception | str], tags: tuple[str, ...] = ("qwen3.5:4b",)
+    ):
+        super().__init__(outcomes)
+        self.tags = tags
+
+    async def chat_models(self):
+        return [types.SimpleNamespace(tag=tag) for tag in self.tags]
+
+
+LOCAL = "ollama/qwen3.5:4b"
+OLLAMA_CLOSED = LocalModelError("down", "O Ollama não está aberto.")
+
+
+def _local_brain(
+    model: str, cloud: ModelsClient | None, local: LocalModelsClient | None
+) -> AsyncConversationalBrain:
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_api_key="", openrouter_chat_model=model),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    brain.client = cloud  # type: ignore[assignment]
+    brain._local = local  # type: ignore[assignment]
+    return brain
+
+
+@pytest.mark.asyncio
+async def test_without_a_key_it_thinks_on_this_computer() -> None:
+    local = LocalModelsClient({})
+    brain = _local_brain("thinkingmachines/inkling:free", None, local)
+
+    reply = await _streamed(brain)
+
+    assert reply == "Aqui é o F.E.A.R."
+    assert local.tried == [LOCAL]  # the recommended model, the one downloaded
+
+
+@pytest.mark.asyncio
+async def test_a_local_model_chosen_gives_way_to_the_cloud_when_ollama_is_closed() -> None:
+    cloud, local = ModelsClient({}), LocalModelsClient({LOCAL: OLLAMA_CLOSED})
+    brain = _local_brain(LOCAL, cloud, local)
+
+    result = await brain.process_command("oi", "Lucas")
+
+    assert result.reply == "Aqui é o F.E.A.R."
+    assert local.tried == [LOCAL]
+    assert cloud.tried == [FALLBACK_MODELS[0]]
+
+
+@pytest.mark.asyncio
+async def test_ollama_closed_with_no_cloud_to_fall_back_on_is_said_plainly() -> None:
+    reply = await _streamed(_local_brain(LOCAL, None, LocalModelsClient({LOCAL: OLLAMA_CLOSED})))
+    assert "O Ollama não está aberto" in reply
+    assert "qwen3.5:4b" in reply
+
+
+@pytest.mark.asyncio
+async def test_when_the_free_cloud_runs_out_the_model_on_this_computer_answers() -> None:
+    quota = _openrouter_error(
+        openai.RateLimitError, 429, "Rate limit exceeded: free-models-per-day. Add 10 credits"
+    )
+    cloud = ModelsClient({"gone/model:free": quota})
+    local = LocalModelsClient({})
+    brain = _local_brain("gone/model:free", cloud, local)
+
+    reply = await _streamed(brain)
+
+    assert reply == "Aqui é o F.E.A.R."
+    assert cloud.tried == ["gone/model:free"]  # the quota holds for every free model
+    assert local.tried == [LOCAL]
+
+
+@pytest.mark.asyncio
+async def test_with_no_way_to_think_it_says_how_to_get_one() -> None:
+    brain = _local_brain("thinkingmachines/inkling:free", None, LocalModelsClient({}, tags=()))
+    user = UserContext(user_id="u1")
+
+    result = await brain.process_command("oi", "Lucas", user=user)
+
+    assert "chave do OpenRouter" in result.reply
+    assert "no seu PC" in result.reply

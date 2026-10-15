@@ -62,6 +62,8 @@ export interface StatusResponse {
   voice_output: boolean;
   /** Its voice can come from Microsoft's neural voices (with internet). */
   voice_online: boolean;
+  /** It can think with a model on this computer (Ollama), no key needed. */
+  local_models: boolean;
   obsidian: boolean;
   calendar: boolean;
 }
@@ -79,8 +81,65 @@ export interface KnowledgeListResponse {
 export interface ConfigResponse {
   model: string;
   model_default: string;
+  /** Whether OpenRouter still offers `model` (null: its list couldn't be read). */
+  model_available?: boolean | null;
   persona_mode: string;
   persona_modes: string[];
+}
+
+/** A model F.E.A.R. can talk with, as OpenRouter lists it now. */
+export interface ModelOption {
+  id: string;
+  name: string;
+  description: string;
+  free: boolean;
+  context_length: number;
+  /** Roughly what 100 of F.E.A.R.'s replies cost with it, in US dollars (null: it varies). */
+  cost_per_100_replies: number | null;
+}
+
+export interface ModelsResponse {
+  /** The default and fallbacks first, then the other free models, then the paid ones. */
+  models: ModelOption[];
+  default: string;
+  /** Tried in this order whenever the chosen model fails. */
+  fallbacks: string[];
+}
+
+/** A model downloaded into Ollama on this computer. */
+export interface LocalModelOption {
+  /** "ollama/<tag>", as the model setting stores it. */
+  id: string;
+  tag: string;
+  /** Bytes on disk. */
+  size: number;
+  parameter_size: string;
+}
+
+/** A model the settings offer to download into Ollama. */
+export interface LocalDownload {
+  id: string;
+  tag: string;
+  name: string;
+  /** Bytes to download, roughly. */
+  size: number;
+  note: string;
+  installed: boolean;
+}
+
+export interface LocalModelsResponse {
+  /** Ollama answers: installed and open. */
+  running: boolean;
+  models: LocalModelOption[];
+  downloads: LocalDownload[];
+  recommended: string;
+}
+
+/** How a model's download is going (bytes, all its parts together). */
+export interface PullProgress {
+  status: string;
+  completed: number;
+  total: number;
 }
 
 export interface ConfigUpdate {
@@ -306,6 +365,54 @@ export async function getConfig(): Promise<ConfigResponse> {
   const response = await apiFetch("/config");
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as ConfigResponse;
+}
+
+export async function getModels(): Promise<ModelsResponse> {
+  const response = await apiFetch("/models");
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
+  return (await response.json()) as ModelsResponse;
+}
+
+export async function getLocalModels(): Promise<LocalModelsResponse> {
+  const response = await apiFetch("/models/local");
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
+  return (await response.json()) as LocalModelsResponse;
+}
+
+/** Download a model into Ollama, reporting progress until it's done (or throwing why not). */
+export async function pullLocalModel(
+  tag: string,
+  onProgress: (progress: PullProgress) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await apiFetch("/models/local/pull", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tag }),
+    signal,
+  });
+  if (!response.ok || !response.body) throw new ApiError(await errorDetail(response), response.status);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let done = false;
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as Partial<PullProgress> & { error?: string };
+    if (event.error) throw new ApiError(event.error, 502);
+    if (event.status === "success") done = true;
+    onProgress({ status: event.status ?? "", completed: event.completed ?? 0, total: event.total ?? 0 });
+  };
+  for (;;) {
+    const { done: ended, value } = await reader.read();
+    if (ended) break;
+    buffered += decoder.decode(value, { stream: true });
+    const lines = buffered.split("\n");
+    buffered = lines.pop() ?? "";
+    lines.forEach(handle);
+  }
+  handle(buffered + decoder.decode());
+  if (!done) throw new ApiError("O download parou antes de terminar.", 502);
 }
 
 export async function updateConfig(update: ConfigUpdate): Promise<ConfigResponse> {

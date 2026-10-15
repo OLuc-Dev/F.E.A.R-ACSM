@@ -57,6 +57,14 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
     microfone nunca sai dele.
   - O Windows precisa liberar o microfone em *Configurações → Privacidade →
     Microfone* para aplicativos da área de trabalho.
+- **Cérebro no seu PC, grátis e sem limite**: com o [Ollama](https://ollama.com/download)
+  instalado (é grátis), o F.E.A.R. pensa com um modelo rodando na sua placa de
+  vídeo — quantas vezes quiser, sem chave do OpenRouter e até sem internet. Em
+  **Configurações → Comportamento → Modelo**, na parte *No seu PC*, baixe o
+  recomendado (Qwen 3.5 4B, 3,3 GB, cabe numa placa de 6 GB) ou o Gemma 4 E4B
+  (6,6 GB, mais esperto, para placas de 8 GB) e escolha. Se o Ollama estiver
+  fechado, ele usa os modelos da nuvem; e quando a cota grátis da nuvem acaba,
+  usa o do PC.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
   pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
 - **Música sem configuração**: comandos como "pausa a música", as palmas e os
@@ -120,8 +128,13 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   `prompts/fear_persona.md` (carregado por `FEAR_PERSONA_FILE`) — uma consciência
   fria, lúcida e leal, com lente niilista e tempero de Ultron. O painel
   **Configuração → Comportamento** alterna o **modo** (equilíbrio / sombrio /
-  cirurgico) e o **modelo** do OpenRouter ao vivo; o padrão fixo fica no `.env`
-  (`FEAR_PERSONA_MODE`, `OPENROUTER_CHAT_MODEL`).
+  cirurgico) e o **modelo** do OpenRouter ao vivo, escolhido numa lista: os
+  modelos grátis do dia e, pela busca, qualquer outro, com o custo estimado a
+  cada 100 respostas. O padrão fixo fica no `.env` (`FEAR_PERSONA_MODE`,
+  `OPENROUTER_CHAT_MODEL`). Se o modelo sair do ar ou
+  atingir o limite, ele responde com outro modelo grátis; quando nenhum consegue,
+  diz o motivo (chave recusada, sem créditos, cota grátis do dia, privacidade da
+  conta, sem internet).
 - **Memória persistente por interlocutor** (`PersonalMemory`, ChromaDB).
 - **Fontes de conhecimento por conta**: pelo painel **Configuração** (ícone de
   engrenagem / app no dock) você adiciona conhecimento por texto colado. Tudo é
@@ -196,7 +209,8 @@ cp .env.example .env
 cat .env.advanced.example >> .env
 ```
 
-Preencha `OPENROUTER_API_KEY` e `OPENROUTER_CHAT_MODEL` para respostas completas.
+Preencha `OPENROUTER_API_KEY` para respostas completas (`OPENROUTER_CHAT_MODEL`
+só se quiser fixar um modelo seu).
 Sem eles, F.E.A.R. ainda escuta e lembra, mas responde em modo de fallback.
 
 Guia passo a passo de OpenRouter + Spotify (com o login one-time do Spotify):
@@ -233,6 +247,9 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/knowledge/text`     | `{name, content}` → indexa um texto como fonte. |
 | POST   | `/knowledge/path`     | `{path, source?}` → indexa pasta/arquivo `.md` local. |
 | DELETE | `/knowledge/{source}` | Remove uma fonte de conhecimento.           |
+| GET    | `/models/local`       | Os modelos do Ollama neste computador (baixados e para baixar). |
+| POST   | `/models/local/pull`  | `{tag}` → baixa um modelo no Ollama, com o progresso em NDJSON (só o dono). |
+| GET    | `/models`             | Os modelos de conversa do OpenRouter agora (padrão e reservas primeiro, depois os grátis e os pagos, com custo estimado). |
 | GET    | `/config`             | Config de runtime (modelo + modo de persona). |
 | POST   | `/config`             | `{model?, persona_mode?}` → ajusta na sessão (sem segredos). |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |

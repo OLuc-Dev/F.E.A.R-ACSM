@@ -290,6 +290,8 @@ def prepare_environment(home: Path, resources: Path) -> None:
     _provide("FEAR_DESKTOP", "1")
     _provide("FEAR_ENV", "local")
     _provide("FEAR_SECRET_KEY", load_or_create_secret(home / "secret.key"))
+    # Models run by Ollama on this computer, when it's installed.
+    _provide("FEAR_OLLAMA_URL", "http://127.0.0.1:11434")
     # A persona of their own counts only if it's really there: .env.example's
     # prompts/fear_persona.md means the repo's copy, which isn't in this folder.
     persona = os.environ.get("FEAR_PERSONA_FILE", "").strip()

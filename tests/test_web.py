@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import tempfile
 import time
@@ -15,7 +16,9 @@ from fastapi.testclient import TestClient
 from fear.audio.online_voice import OnlineVoiceError
 from fear.auth import Security, UserStore
 from fear.brain.async_conversation import CommandResponse, StreamSession
-from fear.config import Settings
+from fear.brain.local_models import LocalModel
+from fear.brain.models import FALLBACK_MODELS, ModelInfo
+from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.memory.personal_memory import PersonalMemoryResult
 from fear.web import app as app_module
 from fear.web.app import (
@@ -190,6 +193,7 @@ def test_status(client: TestClient) -> None:
         "voice_input",
         "voice_output",
         "voice_online",
+        "local_models",
         "obsidian",
         "calendar",
     }
@@ -650,6 +654,197 @@ def test_config_rejects_invalid_mode(client: TestClient) -> None:
     _, headers = _register(client)
     response = client.post("/config", json={"persona_mode": "caotico"}, headers=headers)
     assert response.status_code == 422
+
+
+class FakeCatalog:
+    """OpenRouter's model list, as ModelCatalog reads it (None: unreachable)."""
+
+    def __init__(self, models: set[str] | None, listed: list[ModelInfo] | None = None) -> None:
+        self.models = models
+        self.listed = listed
+
+    async def offers(self, model: str) -> bool | None:
+        return None if self.models is None else model in self.models
+
+    async def listing(self) -> list[ModelInfo] | None:
+        return self.listed
+
+
+def test_models_lists_what_can_be_chosen_recommended_first(client: TestClient) -> None:
+    listed = [
+        ModelInfo("z/paid", "Z: Paid", "Pricey. Very.", 1000, 0.000003, 0.000015),
+        ModelInfo("a/other:free", "A: Other (free)", "Another free one.", 2000),
+        ModelInfo(FALLBACK_MODELS[0], "NVIDIA: Fallback (free)", "", 3000),
+        ModelInfo(DEFAULT_CHAT_MODEL, "Default (free)", "The default. More text.", 4000),
+        ModelInfo("x/painter", "X: Painter", "", 0, 0.00001, 0.00001, chat=False),
+        # OpenRouter's routers other than free and auto do other jobs than chatting.
+        ModelInfo("openrouter/bodybuilder", "Body Builder", "", 0, None, None),
+    ]
+    app.state.model_catalog = FakeCatalog(set(), listed)
+    try:
+        _, headers = _register(client)
+        body = client.get("/models", headers=headers).json()
+        ids = [model["id"] for model in body["models"]]
+        assert ids == [DEFAULT_CHAT_MODEL, FALLBACK_MODELS[0], "a/other:free", "z/paid"]
+        default, *_, paid = body["models"]
+        assert default["name"] == "Default" and default["description"] == "The default"
+        assert default["free"] is True and default["cost_per_100_replies"] is None
+        # 100 replies of ~3,500 tokens in and ~300 out.
+        assert paid["free"] is False and paid["cost_per_100_replies"] == 1.5
+        assert body["default"] == DEFAULT_CHAT_MODEL
+        assert body["fallbacks"] == list(FALLBACK_MODELS)
+    finally:
+        delattr(app.state, "model_catalog")
+
+
+class FakeLocalOllama:
+    """Ollama on this computer, for the routes: what it has, and downloads."""
+
+    def __init__(self, tags: list[str] | None, pull_events: list[dict] | None = None) -> None:
+        self.tags = tags
+        self.pull_events = pull_events or []
+        self.pulled: list[str] = []
+
+    async def installed(self):
+        if self.tags is None:
+            return None
+        return [LocalModel(tag, size=3_000_000_000, parameter_size="4.2B") for tag in self.tags]
+
+    async def chat_models(self):
+        return await self.installed() or []
+
+    async def pull(self, tag: str):
+        self.pulled.append(tag)
+        for event in self.pull_events:
+            yield event
+
+
+def test_local_models_lists_whats_downloaded_and_what_to_download(client: TestClient) -> None:
+    app.state.ollama = FakeLocalOllama(["qwen3.5:4b"])
+    try:
+        _, headers = _register(client)
+        body = client.get("/models/local", headers=headers).json()
+        assert body["running"] is True
+        assert body["models"] == [
+            {
+                "id": "ollama/qwen3.5:4b",
+                "tag": "qwen3.5:4b",
+                "size": 3_000_000_000,
+                "parameter_size": "4.2B",
+            }
+        ]
+        offered = {download["tag"]: download["installed"] for download in body["downloads"]}
+        assert offered == {"qwen3.5:4b": True, "gemma4:e4b": False}
+        assert body["recommended"] == "qwen3.5:4b"
+    finally:
+        delattr(app.state, "ollama")
+
+
+def test_local_models_says_when_ollama_isnt_there(client: TestClient) -> None:
+    _, headers = _register(client)
+    assert client.get("/models/local", headers=headers).json()["running"] is False  # not set up
+    app.state.ollama = FakeLocalOllama(None)  # installed, but closed
+    try:
+        body = client.get("/models/local", headers=headers).json()
+        assert body["running"] is False and body["models"] == []
+    finally:
+        delattr(app.state, "ollama")
+
+
+def test_pull_streams_the_download_all_parts_together(client: TestClient) -> None:
+    events = [
+        {"status": "pulling manifest"},
+        {"status": "pulling a", "digest": "sha256:a", "total": 1000, "completed": 500},
+        {"status": "pulling b", "digest": "sha256:b", "total": 200},
+        {"status": "pulling b", "digest": "sha256:b", "total": 200, "completed": 200},
+        {"status": "success"},
+    ]
+    app.state.ollama = FakeLocalOllama([], events)
+    try:
+        _, owner = _register(client, "owner@example.com")
+        response = client.post("/models/local/pull", json={"tag": "qwen3.5:4b"}, headers=owner)
+        lines = [json.loads(line) for line in response.text.splitlines()]
+        assert response.headers["content-type"].startswith("application/x-ndjson")
+        assert lines[1] == {"status": "pulling a", "completed": 500, "total": 1000}
+        assert lines[3] == {"status": "pulling b", "completed": 700, "total": 1200}
+        assert lines[-1]["status"] == "success"
+        assert app.state.ollama.pulled == ["qwen3.5:4b"]
+    finally:
+        delattr(app.state, "ollama")
+
+
+def test_pull_is_for_the_owner_and_says_why_it_failed(client: TestClient) -> None:
+    app.state.ollama = FakeLocalOllama([], [{"error": "pull model manifest: file does not exist"}])
+    try:
+        _, owner = _register(client, "owner@example.com")
+        _, guest = _register(client, "guest@example.com")
+        refused = client.post("/models/local/pull", json={"tag": "qwen3.5:4b"}, headers=guest)
+        assert refused.status_code == 403
+        failed = client.post("/models/local/pull", json={"tag": "nope:1b"}, headers=owner)
+        assert [json.loads(line) for line in failed.text.splitlines()] == [
+            {"error": "pull model manifest: file does not exist"}
+        ]
+        bad_tag = client.post("/models/local/pull", json={"tag": "../etc"}, headers=owner)
+        assert bad_tag.status_code == 422
+    finally:
+        delattr(app.state, "ollama")
+
+
+def test_config_takes_a_local_model_only_once_downloaded(client: TestClient) -> None:
+    app.state.ollama = FakeLocalOllama(["qwen3.5:4b"])
+    try:
+        _, headers = _register(client)
+        missing = client.post("/config", json={"model": "ollama/gemma4:e4b"}, headers=headers)
+        assert missing.status_code == 422
+        assert "não está baixado" in missing.json()["detail"]
+        saved = client.post("/config", json={"model": "ollama/qwen3.5:4b"}, headers=headers)
+        assert saved.status_code == 200 and saved.json()["model_available"] is True
+        assert client.get("/status").json()["local_models"] is True
+    finally:
+        delattr(app.state, "ollama")
+
+
+def test_models_says_when_openrouter_cant_be_read(client: TestClient) -> None:
+    _, headers = _register(client)
+    assert client.get("/models", headers=headers).status_code == 503  # no catalog at all
+    app.state.model_catalog = FakeCatalog(None, None)
+    try:
+        response = client.get("/models", headers=headers)
+        assert response.status_code == 503
+        assert "lista de modelos" in response.json()["detail"]
+    finally:
+        delattr(app.state, "model_catalog")
+
+
+def test_config_refuses_a_model_openrouter_doesnt_have(client: TestClient) -> None:
+    app.state.model_catalog = FakeCatalog({"x/real:free"})
+    try:
+        _, headers = _register(client)
+        refused = client.post("/config", json={"model": "x/gone:free"}, headers=headers)
+        assert refused.status_code == 422
+        assert "não tem o modelo x/gone:free" in refused.json()["detail"]
+        saved = client.post("/config", json={"model": "x/real:free"}, headers=headers)
+        assert saved.status_code == 200
+        assert saved.json()["model"] == "x/real:free"
+        assert saved.json()["model_available"] is True
+    finally:
+        delattr(app.state, "model_catalog")
+
+
+def test_config_says_when_the_saved_model_was_retired(client: TestClient) -> None:
+    app.state.model_catalog = FakeCatalog({"x/real:free"})
+    try:
+        _, headers = _register(client)
+        client.post("/config", json={"model": "x/real:free"}, headers=headers)
+        app.state.model_catalog.models = {"x/other:free"}  # OpenRouter retired it since
+        assert client.get("/config", headers=headers).json()["model_available"] is False
+        # Can't read the list (offline): nothing is refused, nothing is claimed.
+        app.state.model_catalog.models = None
+        assert client.get("/config", headers=headers).json()["model_available"] is None
+        offline = client.post("/config", json={"model": "x/new:free"}, headers=headers)
+        assert offline.status_code == 200
+    finally:
+        delattr(app.state, "model_catalog")
 
 
 # --- the machine's mic, speakers and integrations belong to its owner ---
