@@ -120,8 +120,10 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   `prompts/fear_persona.md` (carregado por `FEAR_PERSONA_FILE`) — uma consciência
   fria, lúcida e leal, com lente niilista e tempero de Ultron. O painel
   **Configuração → Comportamento** alterna o **modo** (equilíbrio / sombrio /
-  cirurgico) e o **modelo** do OpenRouter ao vivo; o padrão fixo fica no `.env`
-  (`FEAR_PERSONA_MODE`, `OPENROUTER_CHAT_MODEL`). Se o modelo sair do ar ou
+  cirurgico) e o **modelo** do OpenRouter ao vivo, escolhido numa lista: os
+  modelos grátis do dia e, pela busca, qualquer outro, com o custo estimado a
+  cada 100 respostas. O padrão fixo fica no `.env` (`FEAR_PERSONA_MODE`,
+  `OPENROUTER_CHAT_MODEL`). Se o modelo sair do ar ou
   atingir o limite, ele responde com outro modelo grátis; quando nenhum consegue,
   diz o motivo (chave recusada, sem créditos, cota grátis do dia, privacidade da
   conta, sem internet).
@@ -237,6 +239,7 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/knowledge/text`     | `{name, content}` → indexa um texto como fonte. |
 | POST   | `/knowledge/path`     | `{path, source?}` → indexa pasta/arquivo `.md` local. |
 | DELETE | `/knowledge/{source}` | Remove uma fonte de conhecimento.           |
+| GET    | `/models`             | Os modelos de conversa do OpenRouter agora (padrão e reservas primeiro, depois os grátis e os pagos, com custo estimado). |
 | GET    | `/config`             | Config de runtime (modelo + modo de persona). |
 | POST   | `/config`             | `{model?, persona_mode?}` → ajusta na sessão (sem segredos). |
 | POST   | `/wearable/tap`       | Gesto de wearable → comando.                |

@@ -12,6 +12,7 @@ from fear.brain.models import (
     ModelCatalog,
     ModelChain,
     ModelFailure,
+    ModelInfo,
     classify,
     explain,
 )
@@ -112,6 +113,40 @@ def test_tries_everything_rather_than_nothing() -> None:
     for model in ["x/y", *FALLBACK_MODELS]:
         chain.failed(model, ModelFailure("model", True))
     assert chain.order("x/y") == ["x/y", *FALLBACK_MODELS]
+
+
+def test_reads_each_listed_model() -> None:
+    model = ModelInfo.parse(
+        {
+            "id": "x/y",
+            "name": "X: Y",
+            "description": "A model.",
+            "context_length": 131072,
+            "pricing": {"prompt": "0.00000015", "completion": "0.0000006"},
+            "architecture": {"output_modalities": ["text"]},
+        }
+    )
+    assert (model.name, model.context_length, model.chat, model.free) == (
+        "X: Y",
+        131072,
+        True,
+        False,
+    )
+    # 100 replies of ~3,500 tokens in and ~300 out.
+    assert model.cost_per_100_replies() == pytest.approx(0.0705)
+
+    free = ModelInfo.parse({"id": "x/y:free", "pricing": {"prompt": "0", "completion": "0"}})
+    assert free.free and free.name == "x/y:free" and free.cost_per_100_replies() == 0
+
+    router = ModelInfo.parse(
+        {"id": "openrouter/auto", "pricing": {"prompt": "-1", "completion": "-1"}}
+    )
+    assert not router.free and router.cost_per_100_replies() is None  # the price varies
+
+    # Batch endpoints answer hours later; image models don't chat.
+    assert not ModelInfo.parse({"id": "x/y:batch"}).chat
+    painter = {"id": "x/paint", "architecture": {"output_modalities": ["image", "text"]}}
+    assert not ModelInfo.parse(painter).chat
 
 
 def _catalog(ids: list[str], calls: list[int], *, fail: bool = False, **kwargs) -> ModelCatalog:

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 import openai
@@ -139,6 +139,61 @@ class ModelChain:
             self._skip_until[model] = self._clock() + _BUSY_FOR_S
 
 
+# One of F.E.A.R.'s replies, roughly: the persona, memories and recent turns make
+# a prompt of about this many tokens, and a spoken answer about this many.
+_PROMPT_TOKENS = 3500
+_REPLY_TOKENS = 300
+
+
+def _price(value: Any) -> float | None:
+    """A per-token price from the list; None where it varies (routers say -1)."""
+    try:
+        price = float(value)
+    except (TypeError, ValueError):
+        return None
+    return price if price >= 0 else None
+
+
+@dataclass(frozen=True)
+class ModelInfo:
+    """One model as OpenRouter lists it."""
+
+    id: str
+    name: str
+    description: str = ""
+    context_length: int = 0
+    # US dollars per token; None where the price varies.
+    prompt_price: float | None = 0.0
+    completion_price: float | None = 0.0
+    # It writes text and only text: something F.E.A.R. can talk with.
+    chat: bool = True
+
+    @classmethod
+    def parse(cls, item: Mapping[str, Any]) -> ModelInfo:
+        pricing = item.get("pricing") or {}
+        outputs = (item.get("architecture") or {}).get("output_modalities") or ["text"]
+        return cls(
+            id=item["id"],
+            name=item.get("name") or item["id"],
+            description=item.get("description") or "",
+            context_length=int(item.get("context_length") or 0),
+            prompt_price=_price(pricing.get("prompt", 0)),
+            completion_price=_price(pricing.get("completion", 0)),
+            # Batch endpoints answer hours later; image and audio models aren't chat.
+            chat=list(outputs) == ["text"] and not item["id"].endswith(":batch"),
+        )
+
+    @property
+    def free(self) -> bool:
+        return self.prompt_price == 0 and self.completion_price == 0
+
+    def cost_per_100_replies(self) -> float | None:
+        """Roughly what 100 of F.E.A.R.'s replies cost with it, in US dollars."""
+        if self.prompt_price is None or self.completion_price is None:
+            return None
+        return 100 * (_PROMPT_TOKENS * self.prompt_price + _REPLY_TOKENS * self.completion_price)
+
+
 class ModelCatalog:
     """The models OpenRouter offers right now: its public list, kept for an hour."""
 
@@ -154,23 +209,29 @@ class ModelCatalog:
         self.keep_for = keep_for
         self._clock = clock
         self._transport = transport
-        self._models: frozenset[str] | None = None
+        self._entries: dict[str, ModelInfo] | None = None
         self._fetched_at = 0.0
 
-    async def models(self) -> frozenset[str] | None:
-        """Every model id on offer, or None when the list can't be had (offline)."""
-        if self._models is not None and self._clock() - self._fetched_at < self.keep_for:
-            return self._models
+    async def listing(self) -> list[ModelInfo] | None:
+        """Every model on offer, or None when the list can't be had (offline)."""
+        if self._entries is not None and self._clock() - self._fetched_at < self.keep_for:
+            return list(self._entries.values())
         try:
             async with httpx.AsyncClient(timeout=8.0, transport=self._transport) as client:
                 response = await client.get(self.url)
                 response.raise_for_status()
-                listed = frozenset(item["id"] for item in response.json()["data"])
+                listed = [ModelInfo.parse(item) for item in response.json()["data"]]
         except Exception as exc:
             logger.warning("Couldn't read OpenRouter's model list: %s", exc)
-            return self._models  # the last list known, if any
-        self._models, self._fetched_at = listed, self._clock()
+            # The last list known, if any.
+            return None if self._entries is None else list(self._entries.values())
+        self._entries, self._fetched_at = {model.id: model for model in listed}, self._clock()
         return listed
+
+    async def models(self) -> frozenset[str] | None:
+        """Every model id on offer, or None when the list can't be had (offline)."""
+        listed = await self.listing()
+        return None if listed is None else frozenset(model.id for model in listed)
 
     async def offers(self, model: str) -> bool | None:
         """Whether OpenRouter has `model` (None: can't tell right now)."""

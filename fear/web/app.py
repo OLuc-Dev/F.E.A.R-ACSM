@@ -5,6 +5,7 @@ import hmac
 import importlib.util
 import logging
 import os
+import re
 import secrets
 import threading
 from collections.abc import AsyncIterator, Coroutine
@@ -26,7 +27,7 @@ from fear.brain.async_conversation import (
     AsyncConversationalBrain,
     UserContext,
 )
-from fear.brain.models import ModelCatalog
+from fear.brain.models import FALLBACK_MODELS, ModelCatalog, ModelInfo
 from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.desktop_prefs import (
     DesktopPrefs,
@@ -135,6 +136,28 @@ class ConfigResponse(BaseModel):
     model_available: bool | None = None
     persona_mode: str
     persona_modes: list[str]
+
+
+class ModelOption(BaseModel):
+    """A model to choose, as the settings panel shows it."""
+
+    id: str
+    name: str
+    description: str
+    free: bool
+    context_length: int
+    # Roughly what 100 of F.E.A.R.'s replies cost with it, in US dollars (None: it varies).
+    cost_per_100_replies: float | None
+
+
+class ModelsResponse(BaseModel):
+    """The chat models OpenRouter offers now: the default and fallbacks first, then
+    the other free ones, then the paid ones."""
+
+    models: list[ModelOption]
+    default: str
+    # Tried in this order whenever the chosen model fails.
+    fallbacks: list[str]
 
 
 class ConfigUpdate(BaseModel):
@@ -1088,6 +1111,52 @@ async def _user_config(user: User, catalog: ModelCatalog | None) -> ConfigRespon
         model_available=await catalog.offers(model) if catalog else None,
         persona_mode=user.persona_mode or DEFAULT_PERSONA_MODE,
         persona_modes=list(PERSONA_MODES.keys()),
+    )
+
+
+# OpenRouter's own routers, but for these two, do jobs other than chatting.
+_CHAT_ROUTERS = ("openrouter/free", "openrouter/auto")
+
+
+def _model_option(model: ModelInfo) -> ModelOption:
+    # "Google: Gemma 4 31B (free)": the panel already sorts the free ones apart.
+    name = re.sub(r"\s*\(free\)$", "", model.name).strip()
+    first_sentence = model.description.split(". ")[0].strip()
+    cost = None if model.free else model.cost_per_100_replies()
+    return ModelOption(
+        id=model.id,
+        name=name,
+        description=first_sentence[:160],
+        free=model.free,
+        context_length=model.context_length,
+        cost_per_100_replies=None if cost is None else round(cost, 4),
+    )
+
+
+@app.get("/models", response_model=ModelsResponse)
+async def models_list(request: Request, user: User = Depends(get_current_user)) -> ModelsResponse:
+    """The chat models OpenRouter offers now, for choosing F.E.A.R.'s model."""
+    catalog: ModelCatalog | None = getattr(request.app.state, "model_catalog", None)
+    listed = await catalog.listing() if catalog else None
+    if listed is None:
+        raise HTTPException(
+            status_code=503, detail="Não consegui ler a lista de modelos do OpenRouter agora."
+        )
+    recommended = [DEFAULT_CHAT_MODEL, *FALLBACK_MODELS]
+    chat = [
+        model
+        for model in listed
+        if model.chat and (not model.id.startswith("openrouter/") or model.id in _CHAT_ROUTERS)
+    ]
+
+    def order(model: ModelInfo) -> tuple[int, int, str]:
+        rank = recommended.index(model.id) if model.id in recommended else len(recommended)
+        return (rank, 0 if model.free else 1, model.name.lower())
+
+    return ModelsResponse(
+        models=[_model_option(model) for model in sorted(chat, key=order)],
+        default=DEFAULT_CHAT_MODEL,
+        fallbacks=list(FALLBACK_MODELS),
     )
 
 

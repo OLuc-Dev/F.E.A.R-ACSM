@@ -21,11 +21,13 @@ import {
   addKnowledgeText,
   deleteKnowledge,
   getConfig,
+  getModels,
   listKnowledge,
   updateConfig,
   type ConfigResponse,
   type ConfigUpdate,
   type KnowledgeListResponse,
+  type ModelsResponse,
   type StatusResponse,
 } from "@/lib/api";
 import { IS_DESKTOP } from "@/lib/desktop";
@@ -41,6 +43,7 @@ import {
 import { fade, springSoft } from "@/lib/motion";
 import { AppSettingsTab, Switch } from "@/components/ui/app-settings-tab";
 import { MemoryTab } from "@/components/ui/memory-tab";
+import { ModelPicker } from "@/components/ui/model-picker";
 
 export type Tab = "conhecimento" | "comportamento" | "memoria" | "app";
 
@@ -140,7 +143,9 @@ export function SettingsPanel({
     setVoiceStyle(loadVoiceStyle());
     setOnlineVoice(loadOnlineVoice());
   }, [open]);
-  const [modelInput, setModelInput] = useState("");
+  // OpenRouter's models, read when the Comportamento tab first opens.
+  const [models, setModels] = useState<ModelsResponse | null>(null);
+  const [modelsError, setModelsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -165,7 +170,6 @@ export function SettingsPanel({
     try {
       const cfg = await getConfig();
       setConfig(cfg);
-      setModelInput(cfg.model);
     } catch {
       setConfig(null);
     }
@@ -177,6 +181,21 @@ export function SettingsPanel({
     void refresh();
     void refreshConfig();
   }, [open, initialTab, refresh, refreshConfig]);
+
+  useEffect(() => {
+    if (!open || tab !== "comportamento" || models) return;
+    let current = true;
+    setModelsError(null);
+    getModels()
+      .then((listed) => current && setModels(listed))
+      .catch((caught) => {
+        if (current)
+          setModelsError(caught instanceof Error ? caught.message : "Não consegui ler os modelos.");
+      });
+    return () => {
+      current = false;
+    };
+  }, [open, tab, models]);
 
   // Close on Escape while the drawer is open.
   useEffect(() => {
@@ -207,7 +226,6 @@ export function SettingsPanel({
     try {
       const cfg = await updateConfig(update);
       setConfig(cfg);
-      setModelInput(cfg.model);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Não consegui salvar.");
     } finally {
@@ -534,34 +552,24 @@ export function SettingsPanel({
                       {/* Model */}
                       <section className="space-y-2">
                         <SectionLabel icon={<Cpu className="size-3.5" />}>Modelo (OpenRouter)</SectionLabel>
-                        <Field
-                          value={modelInput}
-                          onChange={(event) => setModelInput(event.target.value)}
-                          placeholder={`ex: ${config?.model_default ?? "openrouter/free"}`}
+                        <ModelPicker
+                          catalog={models}
+                          loadError={modelsError}
+                          current={config?.model ?? ""}
+                          busy={busy}
+                          onChoose={(model) => {
+                            if (model !== config?.model) void applyConfig({ model });
+                          }}
                         />
-                        <div className="flex gap-2">
+                        {config && config.model !== config.model_default && (
                           <button
-                            onClick={() => void applyConfig({ model: modelInput.trim() })}
-                            disabled={busy || !modelInput.trim() || modelInput.trim() === config?.model}
-                            className="tap inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-xl bg-brand text-sm font-medium text-[hsl(var(--brand-ink))] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => void applyConfig({ model: config.model_default })}
+                            disabled={busy}
+                            className="tap inline-flex h-8 items-center justify-center rounded-xl border border-overlay/10 bg-overlay/[0.04] px-3 text-xs text-foreground hover:bg-overlay/[0.08] disabled:opacity-50"
                           >
-                            {busy ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <Check className="size-4" />
-                            )}
-                            Salvar modelo
+                            Voltar ao padrão
                           </button>
-                          {config && config.model !== config.model_default && (
-                            <button
-                              onClick={() => void applyConfig({ model: config.model_default })}
-                              disabled={busy}
-                              className="tap inline-flex h-9 items-center justify-center rounded-xl border border-overlay/10 bg-overlay/[0.04] px-3 text-sm text-foreground hover:bg-overlay/[0.08] disabled:opacity-50"
-                            >
-                              Padrão
-                            </button>
-                          )}
-                        </div>
+                        )}
                         {config?.model_available === false && (
                           <p className="text-[11px] leading-4 text-amber-500/90">
                             O OpenRouter não tem mais o modelo {config.model}. Até você escolher outro, ele
@@ -569,8 +577,8 @@ export function SettingsPanel({
                           </p>
                         )}
                         <p className="text-[11px] leading-4 text-muted-foreground/60">
-                          Atual: {config?.model ?? "—"}. Ids em openrouter.ai/models; os grátis terminam em
-                          :free. Se o modelo falhar, ele responde com outro grátis sozinho.
+                          Atual: {config?.model ?? "—"}. O custo dos pagos é uma estimativa, cobrada na sua
+                          conta do OpenRouter. Se o modelo falhar, ele responde com um grátis sozinho.
                         </p>
                       </section>
 

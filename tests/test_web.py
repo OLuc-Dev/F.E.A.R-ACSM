@@ -15,7 +15,8 @@ from fastapi.testclient import TestClient
 from fear.audio.online_voice import OnlineVoiceError
 from fear.auth import Security, UserStore
 from fear.brain.async_conversation import CommandResponse, StreamSession
-from fear.config import Settings
+from fear.brain.models import FALLBACK_MODELS, ModelInfo
+from fear.config import DEFAULT_CHAT_MODEL, Settings
 from fear.memory.personal_memory import PersonalMemoryResult
 from fear.web import app as app_module
 from fear.web.app import (
@@ -655,11 +656,54 @@ def test_config_rejects_invalid_mode(client: TestClient) -> None:
 class FakeCatalog:
     """OpenRouter's model list, as ModelCatalog reads it (None: unreachable)."""
 
-    def __init__(self, models: set[str] | None) -> None:
+    def __init__(self, models: set[str] | None, listed: list[ModelInfo] | None = None) -> None:
         self.models = models
+        self.listed = listed
 
     async def offers(self, model: str) -> bool | None:
         return None if self.models is None else model in self.models
+
+    async def listing(self) -> list[ModelInfo] | None:
+        return self.listed
+
+
+def test_models_lists_what_can_be_chosen_recommended_first(client: TestClient) -> None:
+    listed = [
+        ModelInfo("z/paid", "Z: Paid", "Pricey. Very.", 1000, 0.000003, 0.000015),
+        ModelInfo("a/other:free", "A: Other (free)", "Another free one.", 2000),
+        ModelInfo(FALLBACK_MODELS[0], "NVIDIA: Fallback (free)", "", 3000),
+        ModelInfo(DEFAULT_CHAT_MODEL, "Default (free)", "The default. More text.", 4000),
+        ModelInfo("x/painter", "X: Painter", "", 0, 0.00001, 0.00001, chat=False),
+        # OpenRouter's routers other than free and auto do other jobs than chatting.
+        ModelInfo("openrouter/bodybuilder", "Body Builder", "", 0, None, None),
+    ]
+    app.state.model_catalog = FakeCatalog(set(), listed)
+    try:
+        _, headers = _register(client)
+        body = client.get("/models", headers=headers).json()
+        ids = [model["id"] for model in body["models"]]
+        assert ids == [DEFAULT_CHAT_MODEL, FALLBACK_MODELS[0], "a/other:free", "z/paid"]
+        default, *_, paid = body["models"]
+        assert default["name"] == "Default" and default["description"] == "The default"
+        assert default["free"] is True and default["cost_per_100_replies"] is None
+        # 100 replies of ~3,500 tokens in and ~300 out.
+        assert paid["free"] is False and paid["cost_per_100_replies"] == 1.5
+        assert body["default"] == DEFAULT_CHAT_MODEL
+        assert body["fallbacks"] == list(FALLBACK_MODELS)
+    finally:
+        delattr(app.state, "model_catalog")
+
+
+def test_models_says_when_openrouter_cant_be_read(client: TestClient) -> None:
+    _, headers = _register(client)
+    assert client.get("/models", headers=headers).status_code == 503  # no catalog at all
+    app.state.model_catalog = FakeCatalog(None, None)
+    try:
+        response = client.get("/models", headers=headers)
+        assert response.status_code == 503
+        assert "lista de modelos" in response.json()["detail"]
+    finally:
+        delattr(app.state, "model_catalog")
 
 
 def test_config_refuses_a_model_openrouter_doesnt_have(client: TestClient) -> None:

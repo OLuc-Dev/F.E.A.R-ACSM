@@ -85,6 +85,25 @@ export interface ConfigResponse {
   persona_modes: string[];
 }
 
+/** A model F.E.A.R. can talk with, as OpenRouter lists it now. */
+export interface ModelOption {
+  id: string;
+  name: string;
+  description: string;
+  free: boolean;
+  context_length: number;
+  /** Roughly what 100 of F.E.A.R.'s replies cost with it, in US dollars (null: it varies). */
+  cost_per_100_replies: number | null;
+}
+
+export interface ModelsResponse {
+  /** The default and fallbacks first, then the other free models, then the paid ones. */
+  models: ModelOption[];
+  default: string;
+  /** Tried in this order whenever the chosen model fails. */
+  fallbacks: string[];
+}
+
 export interface ConfigUpdate {
   model?: string;
   persona_mode?: string;
@@ -308,6 +327,12 @@ export async function getConfig(): Promise<ConfigResponse> {
   const response = await apiFetch("/config");
   if (!response.ok) throw new ApiError(`HTTP ${response.status}`, response.status);
   return (await response.json()) as ConfigResponse;
+}
+
+export async function getModels(): Promise<ModelsResponse> {
+  const response = await apiFetch("/models");
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
+  return (await response.json()) as ModelsResponse;
 }
 
 export async function updateConfig(update: ConfigUpdate): Promise<ConfigResponse> {

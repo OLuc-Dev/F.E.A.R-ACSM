@@ -6,6 +6,7 @@ import {
   UNAUTHORIZED_EVENT,
   captureVoiceOnce,
   fetchVoice,
+  getModels,
   getStatus,
   parseConsultedMemoryIdsHeader,
   sendCommand,
@@ -183,6 +184,16 @@ describe("parseConsultedMemoryIdsHeader", () => {
       { text: "Olá.", style: "fear", online: true },
       { text: "Olá.", style: "natural", online: false },
     ]);
+  });
+
+  it("getModels reads OpenRouter's models, or says why it couldn't", async () => {
+    const listed = { models: [], default: "lab/inkling:free", fallbacks: ["openrouter/free"] };
+    mockFetch(async () => new Response(JSON.stringify(listed)));
+    expect(await getModels()).toEqual(listed);
+
+    const detail = "Não consegui ler a lista de modelos do OpenRouter agora.";
+    mockFetch(async () => new Response(JSON.stringify({ detail }), { status: 503 }));
+    await expect(getModels()).rejects.toThrow(detail);
   });
 
   it("captureVoiceOnce tells a disabled mic apart from a queued clip", async () => {
