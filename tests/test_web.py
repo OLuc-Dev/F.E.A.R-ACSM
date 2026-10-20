@@ -13,6 +13,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
+from fear.attention import VisualAttention
 from fear.audio.online_voice import OnlineVoiceError
 from fear.auth import Security, UserStore
 from fear.brain.async_conversation import CommandResponse, StreamSession
@@ -223,6 +224,67 @@ def test_command_stream(client: TestClient) -> None:
     )
     assert response.status_code == 200
     assert response.text == "parte 1 parte 2"
+
+
+@pytest.mark.parametrize("path", ["/command", "/command/stream"])
+def test_command_passes_optional_visual_attention(client: TestClient, path: str) -> None:
+    class AttentionBrain(FakeBrain):
+        attention: VisualAttention | None = None
+
+        async def process_command(self, text, speaker="user", user=None, *, visual_attention=None):
+            self.attention = visual_attention
+            return await super().process_command(text, speaker, user)
+
+        async def open_stream(self, text, speaker="user", user=None, *, visual_attention=None):
+            self.attention = visual_attention
+            return await super().open_stream(text, speaker, user)
+
+    brain = AttentionBrain()
+    app.dependency_overrides[get_brain] = lambda: brain
+    _, headers = _register(client)
+    attention = {
+        "source": "pointer-test",
+        "coordinate_space": "viewport-css-pixels",
+        "x": 100,
+        "y": 150,
+        "viewport_width": 640,
+        "viewport_height": 480,
+        "captured_at_ms": time.time() * 1000,
+        "calibration_error_px": 25,
+    }
+    response = client.post(
+        path, json={"text": "isso?", "speak": False, "visual_attention": attention}, headers=headers
+    )
+    assert response.status_code == 200
+    assert isinstance(brain.attention, VisualAttention)
+    assert brain.attention.model_dump(exclude_none=True) == attention
+
+
+@pytest.mark.parametrize("path", ["/command", "/command/stream"])
+def test_command_null_attention_keeps_original_brain_signature(client: TestClient, path: str) -> None:
+    _, headers = _register(client)
+    response = client.post(
+        path, json={"text": "oi", "speak": False, "visual_attention": None}, headers=headers
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/command", "/command/stream"])
+@pytest.mark.parametrize("invalid_x", [-1, 640, "NaN", "Infinity"])
+def test_command_rejects_invalid_attention(client: TestClient, path: str, invalid_x: object) -> None:
+    _, headers = _register(client)
+    attention = {
+        "source": "pointer-test",
+        "coordinate_space": "viewport-css-pixels",
+        "x": invalid_x,
+        "y": 150,
+        "viewport_width": 640,
+        "viewport_height": 480,
+        "captured_at_ms": time.time() * 1000,
+        "calibration_error_px": 25,
+    }
+    response = client.post(path, json={"text": "isso?", "visual_attention": attention}, headers=headers)
+    assert response.status_code == 422
 
 
 def test_command_stream_exposes_consulted_memory_ids(client: TestClient, brain: FakeBrain) -> None:
