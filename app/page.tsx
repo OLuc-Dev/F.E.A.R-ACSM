@@ -85,6 +85,11 @@ const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((modul
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
   { id: "gestures", name: "Gestos", icon: <Hand className="h-full w-full text-amber-200" /> },
+  {
+    id: "attention",
+    name: "Olhar (experimental)",
+    icon: <Crosshair className="h-full w-full text-cyan-200" />,
+  },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Música", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
@@ -659,6 +664,8 @@ export default function HomePage() {
         onAppClick={(appId) => {
           if (appId === "memory") openSettings("memoria");
           else if (appId === "gestures") setGestures(!gesturesOn);
+          else if (appId === "attention")
+            window.location.assign(IS_DESKTOP ? "/attention.html" : "/attention");
           else if (appId === "voice" && canTalk) {
             if (listensAlways) toggleListening();
             else if (voice.state === "idle") void voice.start("auto");
