@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
+from fear.attention import VisualAttention
 from fear.auth import EmailTaken, Security, TokenError, User, UserStore
 from fear.brain.async_conversation import (
     DEFAULT_PERSONA_MODE,
@@ -65,6 +66,7 @@ class CommandRequest(BaseModel):
     text: str
     speaker: str = "user"
     speak: bool = True
+    visual_attention: VisualAttention | None = None
 
 
 class CommandResponse(BaseModel):
@@ -951,7 +953,12 @@ async def command(
 ) -> CommandResponse:
     """Process a text command and optionally speak it locally."""
     ctx = await _user_context(user, store, settings)
-    result = await brain.process_command(payload.text, payload.speaker, user=ctx)
+    if payload.visual_attention is None:
+        result = await brain.process_command(payload.text, payload.speaker, user=ctx)
+    else:
+        result = await brain.process_command(
+            payload.text, payload.speaker, user=ctx, visual_attention=payload.visual_attention
+        )
 
     # The speakers are the owner's: nobody else gets to talk through their room.
     if payload.speak and result.reply and ctx is not None and ctx.is_owner:
@@ -977,7 +984,12 @@ async def command_stream(
     was consulted.
     """
     ctx = await _user_context(user, store, settings)
-    session = await brain.open_stream(payload.text, payload.speaker, user=ctx)
+    if payload.visual_attention is None:
+        session = await brain.open_stream(payload.text, payload.speaker, user=ctx)
+    else:
+        session = await brain.open_stream(
+            payload.text, payload.speaker, user=ctx, visual_attention=payload.visual_attention
+        )
 
     # Disable proxy/browser buffering so tokens reach the client as they are produced.
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
