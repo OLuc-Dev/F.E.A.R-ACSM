@@ -65,6 +65,12 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
   (6,6 GB, mais esperto, para placas de 8 GB) e escolha. Se o Ollama estiver
   fechado, ele usa os modelos da nuvem; e quando a cota grátis da nuvem acaba,
   usa o do PC.
+  Ao executar pelo código em ambiente local, o backend também procura o Ollama
+  em `http://127.0.0.1:11434`. Mantenha o Ollama aberto e selecione o modelo em
+  **Configurações → Comportamento → Modelo → No seu PC**. Para outro endereço,
+  configure `FEAR_OLLAMA_URL` no `.env`; um valor vazio desativa a descoberta.
+  Em servidor remoto ou contêiner, esse endereço se refere ao backend, não ao
+  computador que abriu o navegador. Produção exige configuração explícita.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
   pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
 - **Música sem configuração**: comandos como "pausa a música", as palmas e os
