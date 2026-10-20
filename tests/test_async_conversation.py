@@ -131,7 +131,9 @@ async def test_attention_is_untrusted_context_for_one_turn_and_not_persisted(
     brain.client = fake  # type: ignore[assignment]
     user = UserContext(user_id="u1")
     if streaming:
-        session = await brain.open_stream("o que é isso?", "Lucas", user, visual_attention=_attention())
+        session = await brain.open_stream(
+            "o que é isso?", "Lucas", user, visual_attention=_attention()
+        )
         reply = "".join([chunk async for chunk in session.stream])
     else:
         result = await brain.process_command(

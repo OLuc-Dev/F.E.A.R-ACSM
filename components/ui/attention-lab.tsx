@@ -482,7 +482,7 @@ export function AttentionLab({ createTracker = loadTracker }: { createTracker?: 
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      const element = event.target as HTMLElement | null;
+      const element = event.target instanceof Element ? event.target : null;
       if (
         event.repeat ||
         event.ctrlKey ||

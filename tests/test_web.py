@@ -261,7 +261,9 @@ def test_command_passes_optional_visual_attention(client: TestClient, path: str)
 
 
 @pytest.mark.parametrize("path", ["/command", "/command/stream"])
-def test_command_null_attention_keeps_original_brain_signature(client: TestClient, path: str) -> None:
+def test_command_null_attention_keeps_original_brain_signature(
+    client: TestClient, path: str
+) -> None:
     _, headers = _register(client)
     response = client.post(
         path, json={"text": "oi", "speak": False, "visual_attention": None}, headers=headers
@@ -271,7 +273,9 @@ def test_command_null_attention_keeps_original_brain_signature(client: TestClien
 
 @pytest.mark.parametrize("path", ["/command", "/command/stream"])
 @pytest.mark.parametrize("invalid_x", [-1, 640, "NaN", "Infinity"])
-def test_command_rejects_invalid_attention(client: TestClient, path: str, invalid_x: object) -> None:
+def test_command_rejects_invalid_attention(
+    client: TestClient, path: str, invalid_x: object
+) -> None:
     _, headers = _register(client)
     attention = {
         "source": "pointer-test",
@@ -283,7 +287,9 @@ def test_command_rejects_invalid_attention(client: TestClient, path: str, invali
         "captured_at_ms": time.time() * 1000,
         "calibration_error_px": 25,
     }
-    response = client.post(path, json={"text": "isso?", "visual_attention": attention}, headers=headers)
+    response = client.post(
+        path, json={"text": "isso?", "visual_attention": attention}, headers=headers
+    )
     assert response.status_code == 422
 
 
