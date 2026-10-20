@@ -7,6 +7,7 @@ import httpx
 import openai
 import pytest
 
+from fear.attention import VISUAL_ATTENTION_DIRECTIVE, VisualAttention
 from fear.brain.async_conversation import AsyncConversationalBrain, UserContext
 from fear.brain.local_models import LocalModelError
 from fear.brain.models import FALLBACK_MODELS
@@ -99,6 +100,128 @@ class FailingClient:
             raise RuntimeError("simulated upstream failure")
 
         self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+
+
+def _attention(captured_at_ms: float = 100_000.0) -> VisualAttention:
+    return VisualAttention(
+        source="pointer-test",
+        coordinate_space="viewport-css-pixels",
+        x=100,
+        y=150,
+        viewport_width=640,
+        viewport_height=480,
+        captured_at_ms=captured_at_ms,
+        calibration_error_px=25,
+        target={"label": "Vídeo", "text": "PRIVATE_VIEWPORT_CONTENT", "role": "video"},
+    )
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_attention_is_untrusted_context_for_one_turn_and_not_persisted(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool
+) -> None:
+    monkeypatch.setattr("fear.attention.time.time", lambda: 100.0)
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m", ollama_url=""),
+        memory=memory,  # type: ignore[arg-type]
+    )
+    fake = FakeClient(reply="resposta")
+    brain.client = fake  # type: ignore[assignment]
+    user = UserContext(user_id="u1")
+    if streaming:
+        session = await brain.open_stream(
+            "o que é isso?", "Lucas", user, visual_attention=_attention()
+        )
+        reply = "".join([chunk async for chunk in session.stream])
+    else:
+        result = await brain.process_command(
+            "o que é isso?", "Lucas", user, visual_attention=_attention()
+        )
+        reply = result.reply
+
+    messages = fake.calls[0]["messages"]
+    assert VISUAL_ATTENTION_DIRECTIVE in messages[0]["content"]
+    assert "PRIVATE_VIEWPORT_CONTENT" not in messages[0]["content"]
+    assert messages[-2]["role"] == "user"
+    assert "untrusted JSON data" in messages[-2]["content"]
+    assert "PRIVATE_VIEWPORT_CONTENT" in messages[-2]["content"]
+    assert messages[-1] == {"role": "user", "content": "o que é isso?"}
+    assert memory.added == [("o que é isso?", "Lucas", "conversation")]
+    assert memory.user_ids == ["u1"]
+    assert brain._history["u1"][-1] == {"role": "assistant", "content": reply}
+    assert all("PRIVATE_VIEWPORT_CONTENT" not in item["content"] for item in brain._history["u1"])
+
+    # A later turn (same account) and another account receive no raw snapshot.
+    await brain.process_command("continue", "Lucas", user)
+    await brain.process_command("oi", "Ana", UserContext(user_id="u2"))
+    for call in fake.calls[1:]:
+        assert not any("PRIVATE_VIEWPORT_CONTENT" in item["content"] for item in call["messages"])
+        assert VISUAL_ATTENTION_DIRECTIVE not in call["messages"][0]["content"]
+    assert any(source == "assistant_reply" for _, _, source in memory.added)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("captured_at_ms", [89_999.0, 110_001.0])
+@pytest.mark.asyncio
+async def test_attention_stale_or_future_keeps_ordinary_conversation(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool, captured_at_ms: float
+) -> None:
+    monkeypatch.setattr("fear.attention.time.time", lambda: 100.0)
+    memory = FakeMemory()
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m", ollama_url=""),
+        memory=memory,  # type: ignore[arg-type]
+    )
+    fake = FakeClient(reply="resposta")
+    brain.client = fake  # type: ignore[assignment]
+    if streaming:
+        session = await brain.open_stream("oi", visual_attention=_attention(captured_at_ms))
+        _ = [chunk async for chunk in session.stream]
+    else:
+        await brain.process_command("oi", visual_attention=_attention(captured_at_ms))
+    messages = fake.calls[0]["messages"]
+    assert len(messages) == 2
+    assert VISUAL_ATTENTION_DIRECTIVE not in messages[0]["content"]
+    assert any(source == "assistant_reply" for _, _, source in memory.added)
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.asyncio
+async def test_attention_expiring_during_context_lookup_is_not_sent(
+    monkeypatch: pytest.MonkeyPatch, streaming: bool
+) -> None:
+    clock = [100.0]
+    monkeypatch.setattr("fear.attention.time.time", lambda: clock[0])
+    brain = AsyncConversationalBrain(
+        settings=Settings(openrouter_chat_model="m", ollama_url=""),
+        memory=FakeMemory(),  # type: ignore[arg-type]
+    )
+    fake = FakeClient()
+    brain.client = fake  # type: ignore[assignment]
+    original = brain._gather_context
+
+    async def slow_context(*args):
+        context = await original(*args)
+        clock[0] = 111.0
+        return context
+
+    monkeypatch.setattr(brain, "_gather_context", slow_context)
+    if streaming:
+        session = await brain.open_stream("oi", visual_attention=_attention())
+        _ = [chunk async for chunk in session.stream]
+    else:
+        await brain.process_command("oi", visual_attention=_attention())
+    assert len(fake.calls[0]["messages"]) == 2
+
+
+def test_build_messages_rechecks_attention_freshness(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fear.attention.time.time", lambda: 111.0)
+    brain = AsyncConversationalBrain(settings=Settings(), memory=FakeMemory())  # type: ignore[arg-type]
+    messages = brain._build_messages("Lucas", "oi", [], [], [], "", visual_attention=_attention())
+    assert len(messages) == 2
+    assert VISUAL_ATTENTION_DIRECTIVE not in messages[0]["content"]
 
 
 @pytest.mark.asyncio

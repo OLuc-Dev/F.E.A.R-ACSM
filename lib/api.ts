@@ -2,6 +2,7 @@
 
 import { authHeaders } from "@/lib/auth";
 import { IS_DESKTOP } from "@/lib/desktop";
+import type { VisualAttention } from "@/lib/visual-attention";
 
 // Resolve the backend base URL. An explicit NEXT_PUBLIC_FEAR_API_BASE always
 // wins; otherwise, in the browser, talk to the same host that served the page —
@@ -24,6 +25,7 @@ export interface CommandRequest {
   text: string;
   speaker: string;
   speak?: boolean;
+  visual_attention?: VisualAttention;
 }
 
 export interface CommandResponse {
