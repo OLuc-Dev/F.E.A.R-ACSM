@@ -6,7 +6,9 @@ import io
 import sys
 import types
 
-from PIL import Image
+import pytest
+
+Image = pytest.importorskip("PIL.Image")  # the desktop extra brings it
 
 from fear import screen
 
