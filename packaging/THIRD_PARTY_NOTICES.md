@@ -16,10 +16,11 @@ text inside the app folder (`_internal`, next to each package or in its
 | CTranslate2 | speech recognition | MIT |
 | PyAV, with FFmpeg | reading recorded audio | BSD-3-Clause; FFmpeg LGPL-2.1+ |
 | ONNX Runtime | voice, memory | MIT |
-| MediaPipe Tasks Vision + gesture model | hand gestures | Apache-2.0 |
+| MediaPipe Tasks Vision + gesture and face detector models | hand gestures, presence | Apache-2.0 |
 | all-MiniLM-L6-v2 | memory search | Apache-2.0 |
 | ChromaDB | memory | Apache-2.0 |
 | pywebview | the app window | BSD-3-Clause |
+| python-mss | seeing the screen | MIT |
 
 Because the app bundles GPL-3.0 components, the app as distributed is offered
 under terms compatible with the GPL: its complete source code is public at

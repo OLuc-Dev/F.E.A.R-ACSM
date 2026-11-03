@@ -40,6 +40,8 @@ desktop = [
   "pywebview>=5.3,<6",
   "pystray>=0.19,<0.20",
   "pillow>=10,<12",
+  # Seeing the screen (a picture for a local model to look at).
+  "mss>=9,<11",
 ]
 # Talking to F.E.A.R. in the app: local speech recognition + its own voice
 # (Piper, local; Microsoft's neural voice through edge-tts when online).

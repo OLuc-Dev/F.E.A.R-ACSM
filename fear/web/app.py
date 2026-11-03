@@ -65,6 +65,8 @@ class CommandRequest(BaseModel):
     text: str
     speaker: str = "user"
     speak: bool = True
+    # Share the screen with this question (the machine's owner, a local model).
+    look: bool = False
 
 
 class CommandResponse(BaseModel):
@@ -113,6 +115,8 @@ class StatusResponse(BaseModel):
     voice_online: bool
     # It can think with a model on this computer (Ollama), no key needed.
     local_models: bool
+    # It can look at this computer's screen (owner only).
+    screen: bool
     obsidian: bool
     calendar: bool
 
@@ -699,6 +703,12 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.settings = settings
     application.state.model_catalog = ModelCatalog(settings.openrouter_base_url)
     application.state.ollama = Ollama(settings.ollama_url) if settings.ollama_url else None
+    from fear.screen import capture_screen, screen_available
+
+    # Only where F.E.A.R. runs on the person's own computer.
+    application.state.capture_screen = (
+        capture_screen if settings.desktop and screen_available() else None
+    )
     application.state.memory = memory
     application.state.reference_library = reference_library
     application.state.spotify = spotify
@@ -935,6 +945,7 @@ async def status(
         or getattr(state, "voice_online", None) is not None,
         voice_online=getattr(state, "voice_online", None) is not None,
         local_models=bool(await ollama.chat_models()) if ollama else False,
+        screen=owner and getattr(state, "capture_screen", None) is not None,
         obsidian=owner and getattr(state, "obsidian_watcher", None) is not None,
         calendar=owner and bool(calendar is not None and calendar.is_configured),
     )
@@ -963,6 +974,7 @@ async def command(
 @app.post("/command/stream")
 async def command_stream(
     payload: CommandRequest,
+    request: Request,
     brain: AsyncConversationalBrain = Depends(get_brain),
     user: User = Depends(get_current_user),
     store: UserStore = Depends(get_user_store),
@@ -977,7 +989,8 @@ async def command_stream(
     was consulted.
     """
     ctx = await _user_context(user, store, settings)
-    session = await brain.open_stream(payload.text, payload.speaker, user=ctx)
+    screen = await _look_at_screen(request, user, store, settings) if payload.look else None
+    session = await brain.open_stream(payload.text, payload.speaker, user=ctx, screen=screen)
 
     # Disable proxy/browser buffering so tokens reach the client as they are produced.
     headers = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -991,6 +1004,37 @@ async def command_stream(
         media_type="text/plain; charset=utf-8",
         headers=headers,
     )
+
+
+async def _look_at_screen(
+    request: Request, user: User, store: UserStore, settings: Settings
+) -> bytes:
+    """A picture of this computer's screen: it's the owner's to share."""
+    await _require_owner(
+        user, store, settings, detail="Só o dono deste F.E.A.R. pode mostrar a tela dele."
+    )
+    capture = getattr(request.app.state, "capture_screen", None)
+    if capture is None:
+        raise HTTPException(status_code=503, detail="Ver a tela não está disponível aqui.")
+    try:
+        return await asyncio.to_thread(capture)
+    except Exception as exc:
+        logger.exception("Screen capture failed")
+        raise HTTPException(status_code=503, detail="Não consegui ver a sua tela agora.") from exc
+
+
+@app.post("/screen/comment")
+async def screen_comment(
+    request: Request,
+    brain: AsyncConversationalBrain = Depends(get_brain),
+    user: User = Depends(get_current_user),
+    store: UserStore = Depends(get_user_store),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, str]:
+    """One glance at the screen by the commentator: a short remark, or "" to stay quiet."""
+    screen = await _look_at_screen(request, user, store, settings)
+    ctx = await _user_context(user, store, settings)
+    return {"comment": await brain.comment_on_screen(screen, user=ctx)}
 
 
 @app.get("/memory", response_model=MemoryResponse)
