@@ -510,6 +510,10 @@ def smoke_test(home: Path, resources: Path) -> int:
             if len(r.read()) < 1_000_000:
                 logger.error("smoke test: the gesture model is missing")
                 return 1
+        with urllib.request.urlopen(f"{base}/mediapipe/face_detector.tflite", timeout=10) as r:
+            if len(r.read()) < 100_000:
+                logger.error("smoke test: the presence model is missing")
+                return 1
         wasm = f"{base}/mediapipe/wasm/vision_wasm_internal.wasm"
         with urllib.request.urlopen(wasm, timeout=10) as response:
             if response.headers.get_content_type() != "application/wasm":

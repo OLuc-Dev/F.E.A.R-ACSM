@@ -15,6 +15,7 @@ import {
   Crosshair,
   Database,
   Download,
+  Eye,
   Hand,
   KeyRound,
   Loader2,
@@ -74,6 +75,8 @@ import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 import { type UpdateInfo, checkForUpdate } from "@/lib/updates";
 import { loadGesturePreference, saveGesturePreference } from "@/lib/use-hand-gestures";
+import { greetingName, loadPresencePreference, savePresencePreference, welcomeBack } from "@/lib/presence";
+import { usePresence } from "@/lib/use-presence";
 import {
   type ListeningState,
   loadAlwaysListen,
@@ -95,6 +98,7 @@ const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((modul
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
   { id: "gestures", name: "Gestos", icon: <Hand className="h-full w-full text-amber-200" /> },
+  { id: "presence", name: "Presença", icon: <Eye className="h-full w-full text-rose-200" /> },
   { id: "screen", name: "Ver a tela", icon: <Monitor className="h-full w-full text-sky-200" /> },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Música", icon: <Music className="h-full w-full text-emerald-200" /> },
@@ -361,6 +365,27 @@ export default function HomePage() {
     glance: commentOnScreen,
     onRemark: (remark) => startSpeaking().say(remark),
   });
+  // Presence: the webcam notices you sit down and get up; back after a while,
+  // F.E.A.R. waves and says hello — unless it's busy talking or you are.
+  const [presenceOn, setPresenceOn] = useState(false);
+  useEffect(() => setPresenceOn(loadPresencePreference()), []);
+  const presence = usePresence({
+    enabled: presenceOn,
+    onEvent: (event) => {
+      if (event.type !== "arrived" || !event.greet) return;
+      setGreetSignal((count) => count + 1);
+      const quiet =
+        isBusy ||
+        speaking ||
+        voice.state !== "idle" ||
+        continuous.state === "hearing" ||
+        continuous.state === "transcribing";
+      if (!quiet) startSpeaking().say(welcomeBack(event.awayMs, greetingName(user?.email ?? "")));
+    },
+  });
+  useEffect(() => {
+    if (presence.error) notify(presence.error);
+  }, [presence.error]);
   const toggleListening = () => {
     // The click that woke a microphone waiting for one isn't also a pause.
     if (continuous.state === "blocked" || continuous.justWoken()) return;
@@ -645,6 +670,22 @@ export default function HomePage() {
       tone: user.has_openrouter_key ? "ok" : "muted",
     },
     {
+      icon: <Eye className="size-3.5" />,
+      label: "Presença",
+      value: !presenceOn
+        ? "desligada"
+        : presence.status === "error"
+          ? "sem câmera"
+          : presence.status === "paused"
+            ? "pausada"
+            : presence.state === "here"
+              ? "você está aqui"
+              : presence.state === "away"
+                ? "você saiu"
+                : "olhando…",
+      tone: presenceOn && presence.status !== "error" ? ("ok" as const) : ("muted" as const),
+    },
+    {
       icon: <Monitor className="size-3.5" />,
       label: "Tela",
       ...(systemStatus?.screen
@@ -695,7 +736,16 @@ export default function HomePage() {
         onAppClick={(appId) => {
           if (appId === "memory") openSettings("memoria");
           else if (appId === "gestures") setGestures(!gesturesOn);
-          else if (appId === "screen") {
+          else if (appId === "presence") {
+            const on = !presenceOn;
+            savePresencePreference(on);
+            setPresenceOn(on);
+            notify(
+              on
+                ? "Vou perceber quando você sair e voltar. A câmera só responde se tem alguém aqui, e nada sai do seu PC."
+                : "Parei de ver se você está aqui.",
+            );
+          } else if (appId === "screen") {
             const mode = nextScreenMode(screenMode);
             saveScreenMode(mode);
             setScreenMode(mode);
@@ -720,6 +770,7 @@ export default function HomePage() {
             : []),
           ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
           ...(gesturesOn ? ["gestures"] : []),
+          ...(presenceOn ? ["presence"] : []),
           ...(screenMode !== "off" ? ["screen"] : []),
         ]}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"

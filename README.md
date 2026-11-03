@@ -185,6 +185,14 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   computador: as imagens nunca saem dele. No Windows, a câmera precisa estar
   liberada em *Configurações → Privacidade → Câmera* para aplicativos da área de
   trabalho.
+- **Presença pela webcam**: ligue no ícone de olho do dock. Duas vezes por
+  segundo, a câmera responde a uma pergunta só: tem um rosto na frente do PC?
+  Quando você sai por mais de 45 s, ele percebe. Quando volta depois de pelo
+  menos 3 minutos fora, o robô acena e o F.E.A.R. te cumprimenta ("De volta,
+  Lucas.", ou "Boa noite, Lucas. Faz umas 3 horas que você saiu."). Ele fica
+  quieto se estiver respondendo ou ouvindo você. Nenhuma imagem é guardada ou
+  sai do computador, e a câmera só fica ligada com a janela visível. O painel
+  Sistema mostra se você está aqui.
 - **Presença 3D**: um robô de corpo inteiro em cromo, âmbar e ciano, com olhos
   carmim que seguem o cursor e reagem ao estado da conversa (ouvindo, pensando,
   respondendo), com um painel de status do sistema ao lado.
