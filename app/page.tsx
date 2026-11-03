@@ -19,6 +19,7 @@ import {
   KeyRound,
   Loader2,
   Mic,
+  Monitor,
   Music,
   RotateCcw,
   Send,
@@ -43,7 +44,15 @@ import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings
 import { type CoreMode } from "@/components/ui/reactor-core";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { type HudReading, useHudCaptions, VoiceHud } from "@/components/ui/voice-hud";
-import { fetchVoice, getStatus, sendCommand, type StatusResponse } from "@/lib/api";
+import { commentOnScreen, fetchVoice, getStatus, sendCommand, type StatusResponse } from "@/lib/api";
+import {
+  loadScreenMode,
+  nextScreenMode,
+  saveScreenMode,
+  SCREEN_MODE_LABEL,
+  type ScreenMode,
+  useScreenCommentator,
+} from "@/lib/screen-watch";
 import { humanizeError } from "@/lib/chat-helpers";
 import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
@@ -54,6 +63,7 @@ import {
   isSpeaking,
   setServerVoice,
   speechText,
+  startSpeaking,
   stopSpeaking,
   subscribeSaying,
   subscribeSpeaking,
@@ -85,6 +95,7 @@ const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((modul
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
   { id: "gestures", name: "Gestos", icon: <Hand className="h-full w-full text-amber-200" /> },
+  { id: "screen", name: "Ver a tela", icon: <Monitor className="h-full w-full text-sky-200" /> },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Música", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
@@ -307,8 +318,12 @@ export default function HomePage() {
   // back out loud. Problems show briefly under the composer, never in the thread.
   const [voiceNotice, setVoiceNotice] = useState<{ text: string; at: number } | null>(null);
   const notify = (message: string) => setVoiceNotice({ text: message, at: Date.now() });
+  // F.E.A.R. seeing the screen: with what you ask, or also by itself.
+  const [screenMode, setScreenMode] = useState<ScreenMode>("off");
+  useEffect(() => setScreenMode(loadScreenMode()), []);
   const sendSpoken = (spoken: string) => {
-    void send(spoken, speaker, { speak: true }).then((sent) => {
+    const look = screenMode !== "off" && Boolean(systemStatus?.screen);
+    void send(spoken, speaker, { speak: true, look }).then((sent) => {
       if (!sent) notify(STILL_ANSWERING);
     });
   };
@@ -334,6 +349,17 @@ export default function HomePage() {
     hold: isBusy || speaking || voice.state !== "idle",
     onTranscript: sendSpoken,
     onNotice: notify,
+  });
+  useScreenCommentator({
+    active: screenMode === "watch" && Boolean(systemStatus?.screen) && pageVisible,
+    hold:
+      isBusy ||
+      speaking ||
+      voice.state !== "idle" ||
+      continuous.state === "hearing" ||
+      continuous.state === "transcribing",
+    glance: commentOnScreen,
+    onRemark: (remark) => startSpeaking().say(remark),
   });
   const toggleListening = () => {
     // The click that woke a microphone waiting for one isn't also a pause.
@@ -619,6 +645,16 @@ export default function HomePage() {
       tone: user.has_openrouter_key ? "ok" : "muted",
     },
     {
+      icon: <Monitor className="size-3.5" />,
+      label: "Tela",
+      ...(systemStatus?.screen
+        ? {
+            value: SCREEN_MODE_LABEL[screenMode],
+            tone: screenMode === "off" ? ("muted" as const) : ("ok" as const),
+          }
+        : flag(systemStatus?.screen, "")),
+    },
+    {
       icon: <Cpu className="size-3.5" />,
       label: "IA no PC",
       // A model in Ollama: thinking here, free and unlimited.
@@ -659,7 +695,20 @@ export default function HomePage() {
         onAppClick={(appId) => {
           if (appId === "memory") openSettings("memoria");
           else if (appId === "gestures") setGestures(!gesturesOn);
-          else if (appId === "voice" && canTalk) {
+          else if (appId === "screen") {
+            const mode = nextScreenMode(screenMode);
+            saveScreenMode(mode);
+            setScreenMode(mode);
+            notify(
+              !systemStatus?.screen
+                ? "Ver a tela só funciona no app do F.E.A.R. no seu PC."
+                : mode === "off"
+                  ? "Parei de ver a sua tela."
+                  : mode === "ask"
+                    ? "Vejo a sua tela quando você me perguntar algo."
+                    : "Estou de olho na sua tela: falo quando tiver algo útil.",
+            );
+          } else if (appId === "voice" && canTalk) {
             if (listensAlways) toggleListening();
             else if (voice.state === "idle") void voice.start("auto");
             else void voice.stop();
@@ -671,6 +720,7 @@ export default function HomePage() {
             : []),
           ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
           ...(gesturesOn ? ["gestures"] : []),
+          ...(screenMode !== "off" ? ["screen"] : []),
         ]}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />

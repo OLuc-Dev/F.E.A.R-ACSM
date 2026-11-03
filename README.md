@@ -71,6 +71,14 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
   configure `FEAR_OLLAMA_URL` no `.env`; um valor vazio desativa a descoberta.
   Em servidor remoto ou contêiner, esse endereço se refere ao backend, não ao
   computador que abriu o navegador. Produção exige configuração explícita.
+- **Ele vê a sua tela** (botão *Ver a tela* no dock, que alterna entre três
+  modos): *quando você pergunta*, o que você fala vai junto com uma imagem da
+  tela ("o que acha dessa build?", "o que é isso no filme?"); *comentando*, ele
+  também olha sozinho a cada 20 s e fala quando tiver uma dica ou um comentário
+  útil, e fica quieto quando não. Usa um modelo do seu PC que entende imagens
+  (o Qwen 3.5 4B), então é grátis e a imagem nunca sai do computador. Com a
+  janela do F.E.A.R. minimizada, ele para de olhar. Em jogos pesados, cada
+  olhada divide a placa de vídeo com o jogo por alguns segundos.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
   pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
 - **Música sem configuração**: comandos como "pausa a música", as palmas e os
@@ -253,6 +261,7 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/knowledge/text`     | `{name, content}` → indexa um texto como fonte. |
 | POST   | `/knowledge/path`     | `{path, source?}` → indexa pasta/arquivo `.md` local. |
 | DELETE | `/knowledge/{source}` | Remove uma fonte de conhecimento.           |
+| POST   | `/screen/comment`     | O comentarista olha a tela uma vez → `{comment}` (vazio quando não há nada a dizer; só o dono). |
 | GET    | `/models/local`       | Os modelos do Ollama neste computador (baixados e para baixar). |
 | POST   | `/models/local/pull`  | `{tag}` → baixa um modelo no Ollama, com o progresso em NDJSON (só o dono). |
 | GET    | `/models`             | Os modelos de conversa do OpenRouter agora (padrão e reservas primeiro, depois os grátis e os pagos, com custo estimado). |

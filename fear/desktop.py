@@ -437,6 +437,22 @@ def _voice_round_trip() -> bool:
     return True
 
 
+def _screen_check() -> bool:
+    """Seeing the screen must be in the app; a real capture is tried and reported."""
+    from fear.screen import capture_screen, screen_available
+
+    if not screen_available():
+        logger.error("smoke test: screen capture (mss) isn't in the app")
+        return False
+    try:
+        picture = capture_screen()
+    except Exception as exc:  # a machine with no desktop to capture
+        logger.warning("smoke test: couldn't capture the screen here: %s", exc)
+    else:
+        logger.info("smoke test: screen captured, %d bytes", len(picture))
+    return True
+
+
 def _online_voice_round_trip() -> bool:
     """The online voice must be in the app. Whether Microsoft answers from here is
     only reported (a service on the internet); when it does, Whisper must hear it."""
@@ -507,6 +523,8 @@ def smoke_test(home: Path, resources: Path) -> int:
         if voice_dir(resources) is not None and not (
             _voice_round_trip() and _online_voice_round_trip()
         ):
+            return 1
+        if not _screen_check():
             return 1
         logger.info("smoke test passed")
         return 0
