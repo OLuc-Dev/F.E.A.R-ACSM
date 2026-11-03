@@ -8,9 +8,9 @@ import types
 
 import pytest
 
-Image = pytest.importorskip("PIL.Image")  # the desktop extra brings it
-
 from fear import screen
+
+Image = pytest.importorskip("PIL.Image")  # the desktop extra brings it
 
 
 def test_the_screen_comes_out_as_a_small_jpeg(monkeypatch) -> None:
