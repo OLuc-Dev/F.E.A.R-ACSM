@@ -119,4 +119,9 @@ class Settings(BaseSettings):
     def from_env(cls) -> Settings:
         """Load .env into the environment, then read and validate settings."""
         load_dotenv()
-        return cls()
+        settings = cls()
+        # Local source runs discover Ollama just like the Windows launcher.
+        # An explicit URL (including empty to opt out) always wins.
+        if not settings.is_production and "ollama_url" not in settings.model_fields_set:
+            settings.ollama_url = "http://127.0.0.1:11434"
+        return settings

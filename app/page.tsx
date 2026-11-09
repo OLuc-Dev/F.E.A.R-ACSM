@@ -15,10 +15,12 @@ import {
   Crosshair,
   Database,
   Download,
+  Eye,
   Hand,
   KeyRound,
   Loader2,
   Mic,
+  Monitor,
   Music,
   RotateCcw,
   Send,
@@ -43,7 +45,15 @@ import { SettingsPanel, type Tab as SettingsTab } from "@/components/ui/settings
 import { type CoreMode } from "@/components/ui/reactor-core";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { type HudReading, useHudCaptions, VoiceHud } from "@/components/ui/voice-hud";
-import { fetchVoice, getStatus, sendCommand, type StatusResponse } from "@/lib/api";
+import { commentOnScreen, fetchVoice, getStatus, sendCommand, type StatusResponse } from "@/lib/api";
+import {
+  loadScreenMode,
+  nextScreenMode,
+  saveScreenMode,
+  SCREEN_MODE_LABEL,
+  type ScreenMode,
+  useScreenCommentator,
+} from "@/lib/screen-watch";
 import { humanizeError } from "@/lib/chat-helpers";
 import type { GestureCommand } from "@/lib/hand-gestures";
 import { accountInitial, accountName, keyStatusLabel } from "@/lib/identity";
@@ -54,6 +64,7 @@ import {
   isSpeaking,
   setServerVoice,
   speechText,
+  startSpeaking,
   stopSpeaking,
   subscribeSaying,
   subscribeSpeaking,
@@ -64,6 +75,8 @@ import { useAuth } from "@/lib/use-auth";
 import { type Status, useConversation } from "@/lib/use-conversation";
 import { type UpdateInfo, checkForUpdate } from "@/lib/updates";
 import { loadGesturePreference, saveGesturePreference } from "@/lib/use-hand-gestures";
+import { greetingName, loadPresencePreference, savePresencePreference, welcomeBack } from "@/lib/presence";
+import { usePresence } from "@/lib/use-presence";
 import {
   type ListeningState,
   loadAlwaysListen,
@@ -312,8 +325,12 @@ export default function HomePage() {
   // back out loud. Problems show briefly under the composer, never in the thread.
   const [voiceNotice, setVoiceNotice] = useState<{ text: string; at: number } | null>(null);
   const notify = (message: string) => setVoiceNotice({ text: message, at: Date.now() });
+  // F.E.A.R. seeing the screen: with what you ask, or also by itself.
+  const [screenMode, setScreenMode] = useState<ScreenMode>("off");
+  useEffect(() => setScreenMode(loadScreenMode()), []);
   const sendSpoken = (spoken: string) => {
-    void send(spoken, speaker, { speak: true }).then((sent) => {
+    const look = screenMode !== "off" && Boolean(systemStatus?.screen);
+    void send(spoken, speaker, { speak: true, look }).then((sent) => {
       if (!sent) notify(STILL_ANSWERING);
     });
   };
@@ -340,6 +357,38 @@ export default function HomePage() {
     onTranscript: sendSpoken,
     onNotice: notify,
   });
+  useScreenCommentator({
+    active: screenMode === "watch" && Boolean(systemStatus?.screen) && pageVisible,
+    hold:
+      isBusy ||
+      speaking ||
+      voice.state !== "idle" ||
+      continuous.state === "hearing" ||
+      continuous.state === "transcribing",
+    glance: commentOnScreen,
+    onRemark: (remark) => startSpeaking().say(remark),
+  });
+  // Presence: the webcam notices you sit down and get up; back after a while,
+  // F.E.A.R. waves and says hello — unless it's busy talking or you are.
+  const [presenceOn, setPresenceOn] = useState(false);
+  useEffect(() => setPresenceOn(loadPresencePreference()), []);
+  const presence = usePresence({
+    enabled: presenceOn,
+    onEvent: (event) => {
+      if (event.type !== "arrived" || !event.greet) return;
+      setGreetSignal((count) => count + 1);
+      const quiet =
+        isBusy ||
+        speaking ||
+        voice.state !== "idle" ||
+        continuous.state === "hearing" ||
+        continuous.state === "transcribing";
+      if (!quiet) startSpeaking().say(welcomeBack(event.awayMs, greetingName(user?.email ?? "")));
+    },
+  });
+  useEffect(() => {
+    if (presence.error) notify(presence.error);
+  }, [presence.error]);
   const toggleListening = () => {
     // The click that woke a microphone waiting for one isn't also a pause.
     if (continuous.state === "blocked" || continuous.justWoken()) return;
@@ -624,6 +673,32 @@ export default function HomePage() {
       tone: user.has_openrouter_key ? "ok" : "muted",
     },
     {
+      icon: <Eye className="size-3.5" />,
+      label: "Presença",
+      value: !presenceOn
+        ? "desligada"
+        : presence.status === "error"
+          ? "sem câmera"
+          : presence.status === "paused"
+            ? "pausada"
+            : presence.state === "here"
+              ? "você está aqui"
+              : presence.state === "away"
+                ? "você saiu"
+                : "olhando…",
+      tone: presenceOn && presence.status !== "error" ? ("ok" as const) : ("muted" as const),
+    },
+    {
+      icon: <Monitor className="size-3.5" />,
+      label: "Tela",
+      ...(systemStatus?.screen
+        ? {
+            value: SCREEN_MODE_LABEL[screenMode],
+            tone: screenMode === "off" ? ("muted" as const) : ("ok" as const),
+          }
+        : flag(systemStatus?.screen, "")),
+    },
+    {
       icon: <Cpu className="size-3.5" />,
       label: "IA no PC",
       // A model in Ollama: thinking here, free and unlimited.
@@ -678,6 +753,8 @@ export default function HomePage() {
             : []),
           ...(settingsOpen && settingsTab === "memoria" ? ["memory"] : []),
           ...(gesturesOn ? ["gestures"] : []),
+          ...(presenceOn ? ["presence"] : []),
+          ...(screenMode !== "off" ? ["screen"] : []),
         ]}
         className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2"
       />

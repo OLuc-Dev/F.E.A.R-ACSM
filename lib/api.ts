@@ -66,6 +66,8 @@ export interface StatusResponse {
   voice_online: boolean;
   /** It can think with a model on this computer (Ollama), no key needed. */
   local_models: boolean;
+  /** It can look at this computer's screen. */
+  screen: boolean;
   obsidian: boolean;
   calendar: boolean;
 }
@@ -373,6 +375,13 @@ export async function getModels(): Promise<ModelsResponse> {
   const response = await apiFetch("/models");
   if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
   return (await response.json()) as ModelsResponse;
+}
+
+/** One glance at the screen: a short remark, or "" when nothing is worth saying. */
+export async function commentOnScreen(signal?: AbortSignal): Promise<string> {
+  const response = await apiFetch("/screen/comment", { method: "POST", signal });
+  if (!response.ok) throw new ApiError(await errorDetail(response), response.status);
+  return ((await response.json()) as { comment?: string }).comment ?? "";
 }
 
 export async function getLocalModels(): Promise<LocalModelsResponse> {

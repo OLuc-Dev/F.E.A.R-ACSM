@@ -52,15 +52,24 @@ class FakeBrain:
         return CommandResponse(reply=f"echo: {text}", speaker=speaker, remembered=True)
 
     async def open_stream(
-        self, text: str, speaker: str = "user", user: object | None = None
+        self,
+        text: str,
+        speaker: str = "user",
+        user: object | None = None,
+        screen: bytes | None = None,
     ) -> StreamSession:
         self.last_user = user
+        self.last_screen = screen
 
         async def _tokens() -> AsyncIterator[str]:
             for piece in ["parte 1 ", "parte 2"]:
                 yield piece
 
         return StreamSession(consulted_memory_ids=self.consulted_ids, stream=_tokens())
+
+    async def comment_on_screen(self, screen: bytes, user: object | None = None) -> str:
+        self.last_screen = screen
+        return "Cuidado com o inimigo à esquerda."
 
     def reset_conversation(self, speaker: str) -> None:
         self.reset_calls.append(speaker)
@@ -195,6 +204,7 @@ def test_status(client: TestClient) -> None:
         "voice_output",
         "voice_online",
         "local_models",
+        "screen",
         "obsidian",
         "calendar",
     }
@@ -1237,3 +1247,53 @@ def test_status_counts_the_online_voice_as_a_voice(client: TestClient) -> None:
         assert body["voice_output"] is True and body["voice_online"] is True
     finally:
         delattr(app.state, "voice_online")
+
+
+# --- seeing the screen ---
+
+
+def test_a_question_can_take_the_screen_along(client: TestClient, brain: FakeBrain) -> None:
+    app.state.capture_screen = lambda: b"jpeg-bytes"
+    try:
+        _, owner = _register(client, "owner@example.com")
+        client.post("/command/stream", json={"text": "o que é isso?", "look": True}, headers=owner)
+        assert brain.last_screen == b"jpeg-bytes"
+        client.post("/command/stream", json={"text": "oi"}, headers=owner)
+        assert brain.last_screen is None  # only when asked
+        assert client.get("/status", headers=owner).json()["screen"] is True
+    finally:
+        delattr(app.state, "capture_screen")
+
+
+def test_the_screen_is_its_owners_to_share(client: TestClient, brain: FakeBrain) -> None:
+    app.state.capture_screen = lambda: b"jpeg-bytes"
+    try:
+        _register(client, "owner@example.com")
+        _, guest = _register(client, "guest@example.com")
+        refused = client.post(
+            "/command/stream", json={"text": "e aí?", "look": True}, headers=guest
+        )
+        assert refused.status_code == 403
+        assert client.post("/screen/comment", headers=guest).status_code == 403
+        assert client.get("/status", headers=guest).json()["screen"] is False
+    finally:
+        delattr(app.state, "capture_screen")
+
+
+def test_the_commentator_glances_and_says_so(client: TestClient, brain: FakeBrain) -> None:
+    _, owner = _register(client, "owner@example.com")
+    assert client.post("/screen/comment", headers=owner).status_code == 503  # not this computer
+
+    def broken() -> bytes:
+        raise OSError("no display")
+
+    app.state.capture_screen = broken
+    try:
+        failed = client.post("/screen/comment", headers=owner)
+        assert failed.status_code == 503 and "tela" in failed.json()["detail"]
+        app.state.capture_screen = lambda: b"jpeg-bytes"
+        assert client.post("/screen/comment", headers=owner).json() == {
+            "comment": "Cuidado com o inimigo à esquerda."
+        }
+    finally:
+        delattr(app.state, "capture_screen")

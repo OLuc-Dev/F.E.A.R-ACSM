@@ -1064,3 +1064,61 @@ async def test_with_no_way_to_think_it_says_how_to_get_one() -> None:
 
     assert "chave do OpenRouter" in result.reply
     assert "no seu PC" in result.reply
+
+
+# --- seeing the screen ---
+
+
+class VisionClient(LocalModelsClient):
+    """Ollama with models that see (or not), recording the messages sent."""
+
+    def __init__(self, outcomes: dict[str, Exception | str], vision: dict[str, bool]):
+        super().__init__(outcomes, tags=tuple(vision))
+        self.vision = vision
+        self.sent: list[list[dict]] = []
+        create = self.chat.completions.create
+
+        async def recording(*, model, messages, stream=False):
+            self.sent.append(messages)
+            return await create(model=model, messages=messages, stream=stream)
+
+        self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=recording))
+
+    async def chat_models(self):
+        return [types.SimpleNamespace(tag=tag, vision=sees) for tag, sees in self.vision.items()]
+
+
+@pytest.mark.asyncio
+async def test_the_screen_goes_to_a_model_on_this_computer_that_sees() -> None:
+    local = VisionClient({}, {"tiny:1b": False, "qwen3.5:4b": True})
+    cloud = ModelsClient({})
+    brain = _local_brain("thinkingmachines/inkling:free", cloud, local)
+
+    session = await brain.open_stream("o que é isso?", "Lucas", screen=b"jpeg")
+    reply = "".join([chunk async for chunk in session.stream])
+
+    assert reply == "Aqui é o F.E.A.R."
+    assert local.tried == ["ollama/qwen3.5:4b"] and cloud.tried == []  # never the cloud
+    question = local.sent[-1][-1]
+    assert question["images"] == ["anBlZw=="]  # base64 of b"jpeg"
+    assert "imagem da minha tela" in question["content"]
+
+
+@pytest.mark.asyncio
+async def test_without_a_model_that_sees_it_says_which_to_get() -> None:
+    brain = _local_brain(LOCAL, None, VisionClient({}, {"tiny:1b": False}))
+    session = await brain.open_stream("o que é isso?", "Lucas", screen=b"jpeg")
+    reply = "".join([chunk async for chunk in session.stream])
+    assert "Qwen 3.5 4B" in reply
+
+
+@pytest.mark.asyncio
+async def test_the_commentator_speaks_only_when_its_worth_it() -> None:
+    local = VisionClient({LOCAL: "Silêncio."}, {"qwen3.5:4b": True})
+    brain = _local_brain(LOCAL, None, local)
+    assert await brain.comment_on_screen(b"jpeg") == ""
+
+    local = VisionClient({LOCAL: "Tem um baú escondido à direita."}, {"qwen3.5:4b": True})
+    brain = _local_brain(LOCAL, None, local)
+    assert await brain.comment_on_screen(b"jpeg") == "Tem um baú escondido à direita."
+    assert local.sent[-1][-1]["images"] == ["anBlZw=="]

@@ -118,6 +118,7 @@ async def test_lists_what_is_downloaded_and_what_can_talk() -> None:
     assert [(model.tag, model.size, model.parameter_size) for model in chat] == [
         ("qwen3.5:4b", 3324173934, "4.2B")
     ]  # an embedding model can't talk
+    assert chat[0].vision and not installed[1].vision  # Qwen 3.5 sees images
     # Read on every reply: asked once, then trusted for a few seconds.
     assert [path for path, _ in fake.requests] == ["/api/tags"]
     clock.now += 11

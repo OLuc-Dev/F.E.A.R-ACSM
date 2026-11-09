@@ -149,7 +149,12 @@ export function useConversation() {
     // `speak` voices this reply even with the voice toggle off — for a question
     // asked out loud, the answer comes back out loud. Resolves false when the
     // message was refused (blank, or another reply still being written).
-    async (text: string, speaker: string, options: { speak?: boolean } = {}): Promise<boolean> => {
+    // `look` shares the screen with the question.
+    async (
+      text: string,
+      speaker: string,
+      options: { speak?: boolean; look?: boolean } = {},
+    ): Promise<boolean> => {
       const trimmed = text.trim();
       // Guard on a ref, not `isBusy`: state updates a render late, so two fast
       // Enters would both see false and double-send. A ref flips synchronously.
@@ -192,7 +197,7 @@ export function useConversation() {
       let full = "";
       try {
         await streamCommand(
-          { text: trimmed, speaker: who },
+          { text: trimmed, speaker: who, ...(options.look ? { look: true } : {}) },
           (chunk) => {
             arm(); // a token arrived — reset the stall timer
             if (!full) setStatus("speaking");

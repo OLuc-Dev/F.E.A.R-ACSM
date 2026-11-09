@@ -78,6 +78,8 @@ class LocalModel:
     parameter_size: str = ""
     # It writes text (an embedding-only model can't talk).
     chat: bool = True
+    # It can look at a picture (the screen).
+    vision: bool = False
 
     @classmethod
     def parse(cls, item: Mapping[str, Any]) -> LocalModel:
@@ -88,6 +90,7 @@ class LocalModel:
             size=int(item.get("size") or 0),
             parameter_size=details.get("parameter_size") or "",
             chat=capabilities is None or "completion" in capabilities,
+            vision=capabilities is not None and "vision" in capabilities,
         )
 
 

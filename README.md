@@ -65,6 +65,20 @@ em `%LOCALAPPDATA%\FEAR` e não somem ao atualizar ou desinstalar.
   (6,6 GB, mais esperto, para placas de 8 GB) e escolha. Se o Ollama estiver
   fechado, ele usa os modelos da nuvem; e quando a cota grátis da nuvem acaba,
   usa o do PC.
+  Ao executar pelo código em ambiente local, o backend também procura o Ollama
+  em `http://127.0.0.1:11434`. Mantenha o Ollama aberto e selecione o modelo em
+  **Configurações → Comportamento → Modelo → No seu PC**. Para outro endereço,
+  configure `FEAR_OLLAMA_URL` no `.env`; um valor vazio desativa a descoberta.
+  Em servidor remoto ou contêiner, esse endereço se refere ao backend, não ao
+  computador que abriu o navegador. Produção exige configuração explícita.
+- **Ele vê a sua tela** (botão *Ver a tela* no dock, que alterna entre três
+  modos): *quando você pergunta*, o que você fala vai junto com uma imagem da
+  tela ("o que acha dessa build?", "o que é isso no filme?"); *comentando*, ele
+  também olha sozinho a cada 20 s e fala quando tiver uma dica ou um comentário
+  útil, e fica quieto quando não. Usa um modelo do seu PC que entende imagens
+  (o Qwen 3.5 4B), então é grátis e a imagem nunca sai do computador. Com a
+  janela do F.E.A.R. minimizada, ele para de olhar. Em jogos pesados, cada
+  olhada divide a placa de vídeo com o jogo por alguns segundos.
 - **Configurações → App** (ícone de engrenagem): ligar as palmas, escolher a
   pasta do vault do Obsidian e iniciar com o Windows, tudo aplicado na hora.
 - **Música sem configuração**: comandos como "pausa a música", as palmas e os
@@ -171,6 +185,14 @@ nunca ligam o microfone, leem a agenda ou mexem no Spotify de quem hospeda.
   computador: as imagens nunca saem dele. No Windows, a câmera precisa estar
   liberada em *Configurações → Privacidade → Câmera* para aplicativos da área de
   trabalho.
+- **Presença pela webcam**: ligue no ícone de olho do dock. Duas vezes por
+  segundo, a câmera responde a uma pergunta só: tem um rosto na frente do PC?
+  Quando você sai por mais de 45 s, ele percebe. Quando volta depois de pelo
+  menos 3 minutos fora, o robô acena e o F.E.A.R. te cumprimenta ("De volta,
+  Lucas.", ou "Boa noite, Lucas. Faz umas 3 horas que você saiu."). Ele fica
+  quieto se estiver respondendo ou ouvindo você. Nenhuma imagem é guardada ou
+  sai do computador, e a câmera só fica ligada com a janela visível. O painel
+  Sistema mostra se você está aqui.
 - **Presença 3D**: um robô de corpo inteiro em cromo, âmbar e ciano, com olhos
   carmim que seguem o cursor e reagem ao estado da conversa (ouvindo, pensando,
   respondendo), com um painel de status do sistema ao lado.
@@ -247,6 +269,7 @@ FEAR_ENABLE_VOICE_LISTENER=1 FEAR_ENABLE_CLAP_DETECTOR=1 python main.py
 | POST   | `/knowledge/text`     | `{name, content}` → indexa um texto como fonte. |
 | POST   | `/knowledge/path`     | `{path, source?}` → indexa pasta/arquivo `.md` local. |
 | DELETE | `/knowledge/{source}` | Remove uma fonte de conhecimento.           |
+| POST   | `/screen/comment`     | O comentarista olha a tela uma vez → `{comment}` (vazio quando não há nada a dizer; só o dono). |
 | GET    | `/models/local`       | Os modelos do Ollama neste computador (baixados e para baixar). |
 | POST   | `/models/local/pull`  | `{tag}` → baixa um modelo no Ollama, com o progresso em NDJSON (só o dono). |
 | GET    | `/models`             | Os modelos de conversa do OpenRouter agora (padrão e reservas primeiro, depois os grátis e os pagos, com custo estimado). |
