@@ -12,13 +12,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncOpenAI
 
-from fear.brain.local_models import (
-    RECOMMENDED_LOCAL_MODEL,
-    Ollama,
-    is_local,
-    local_id,
-    local_tag,
+from fear.attention import (
+    VISUAL_ATTENTION_DIRECTIVE,
+    VisualAttention,
+    attention_observation,
+    fresh_visual_attention,
 )
+from fear.brain.local_models import RECOMMENDED_LOCAL_MODEL, Ollama, is_local, local_id
 from fear.brain.models import (
     EMPTY_REPLY,
     FALLBACK_MODELS,
@@ -256,7 +256,12 @@ class AsyncConversationalBrain:
         return cached
 
     async def process_command(
-        self, user_text: str, speaker_name: str = "user", user: UserContext | None = None
+        self,
+        user_text: str,
+        speaker_name: str = "user",
+        user: UserContext | None = None,
+        *,
+        visual_attention: VisualAttention | None = None,
     ) -> CommandResponse:
         """Process one memory-aware command without blocking the event loop."""
         clean_text = user_text.strip()
@@ -312,6 +317,8 @@ class AsyncConversationalBrain:
             self._record_turn(history_key, clean_text, fallback)
             return CommandResponse(reply=fallback, speaker=clean_speaker, remembered=True)
 
+        # Context/model lookups may have taken seconds: do not attach an old gaze.
+        visual_attention = fresh_visual_attention(visual_attention)
         messages = self._build_messages(
             clean_speaker,
             clean_text,
@@ -322,12 +329,15 @@ class AsyncConversationalBrain:
             calendar_summary,
             history_key=history_key,
             persona_mode=persona_mode,
+            visual_attention=visual_attention,
         )
 
         reply, failed = await self._complete(candidates, model, messages)
 
         await self._remember(clean_text, clean_speaker, "conversation", scope)
-        if reply and not failed:
+        # A response can quote screen content. Keep that response out of persistent
+        # memory for an attended turn; the normal rolling dialogue still works.
+        if reply and not failed and visual_attention is None:
             await self._remember(reply, "fear", "assistant_reply", scope)
 
         self._record_turn(history_key, clean_text, reply)
@@ -350,7 +360,8 @@ class AsyncConversationalBrain:
         user_text: str,
         speaker_name: str = "user",
         user: UserContext | None = None,
-        screen: bytes | None = None,
+        *,
+        visual_attention: VisualAttention | None = None,
     ) -> StreamSession:
         """Prepare a streamed reply and expose the memory ids consulted for it.
 
@@ -421,6 +432,7 @@ class AsyncConversationalBrain:
             self._record_turn(history_key, clean_text, fallback)
             return StreamSession(consulted, _single_chunk(fallback))
 
+        visual_attention = fresh_visual_attention(visual_attention)
         messages = self._build_messages(
             clean_speaker,
             clean_text,
@@ -431,6 +443,7 @@ class AsyncConversationalBrain:
             calendar_summary,
             history_key=history_key,
             persona_mode=persona_mode,
+            visual_attention=visual_attention,
         )
         if screen is not None:
             _show_screen(messages, screen)
@@ -481,7 +494,7 @@ class AsyncConversationalBrain:
                 return
 
             reply = "".join(parts)
-            if reply:
+            if reply and visual_attention is None:
                 await self._remember(reply, "fear", "assistant_reply", scope)
             self._record_turn(history_key, clean_text, reply)
 
@@ -624,6 +637,7 @@ class AsyncConversationalBrain:
         calendar_summary: str = "",
         history_key: str | None = None,
         persona_mode: str | None = None,
+        visual_attention: VisualAttention | None = None,
     ) -> list[dict[str, str]]:
         """Assemble system(persona + memory) + rolling history + the new user message."""
         context = self._build_context(
@@ -642,8 +656,13 @@ class AsyncConversationalBrain:
             "Context F.E.A.R. can draw on (do not read it back verbatim):\n"
             f"{context}"
         )
+        visual_attention = fresh_visual_attention(visual_attention)
+        if visual_attention is not None:
+            system_content += f"\n\n{VISUAL_ATTENTION_DIRECTIVE}"
         messages: list[dict[str, str]] = [{"role": "system", "content": system_content}]
         messages.extend(self._history_for(history_key if history_key is not None else speaker))
+        if visual_attention is not None:
+            messages.append({"role": "user", "content": attention_observation(visual_attention)})
         messages.append({"role": "user", "content": text})
         return messages
 

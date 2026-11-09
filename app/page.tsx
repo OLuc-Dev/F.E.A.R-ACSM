@@ -98,8 +98,11 @@ const FearRobot = dynamic(() => import("@/components/ui/fear-robot").then((modul
 const fearApps: DockApp[] = [
   { id: "voice", name: "Voz", icon: <Mic className="h-full w-full text-brand" /> },
   { id: "gestures", name: "Gestos", icon: <Hand className="h-full w-full text-amber-200" /> },
-  { id: "presence", name: "Presença", icon: <Eye className="h-full w-full text-rose-200" /> },
-  { id: "screen", name: "Ver a tela", icon: <Monitor className="h-full w-full text-sky-200" /> },
+  {
+    id: "attention",
+    name: "Olhar (experimental)",
+    icon: <Crosshair className="h-full w-full text-cyan-200" />,
+  },
   { id: "memory", name: "Memória", icon: <Brain className="h-full w-full text-violet-200" /> },
   { id: "spotify", name: "Música", icon: <Music className="h-full w-full text-emerald-200" /> },
   { id: "obsidian", name: "Obsidian", icon: <BookOpen className="h-full w-full text-blue-200" /> },
@@ -736,29 +739,9 @@ export default function HomePage() {
         onAppClick={(appId) => {
           if (appId === "memory") openSettings("memoria");
           else if (appId === "gestures") setGestures(!gesturesOn);
-          else if (appId === "presence") {
-            const on = !presenceOn;
-            savePresencePreference(on);
-            setPresenceOn(on);
-            notify(
-              on
-                ? "Vou perceber quando você sair e voltar. A câmera só responde se tem alguém aqui, e nada sai do seu PC."
-                : "Parei de ver se você está aqui.",
-            );
-          } else if (appId === "screen") {
-            const mode = nextScreenMode(screenMode);
-            saveScreenMode(mode);
-            setScreenMode(mode);
-            notify(
-              !systemStatus?.screen
-                ? "Ver a tela só funciona no app do F.E.A.R. no seu PC."
-                : mode === "off"
-                  ? "Parei de ver a sua tela."
-                  : mode === "ask"
-                    ? "Vejo a sua tela quando você me perguntar algo."
-                    : "Estou de olho na sua tela: falo quando tiver algo útil.",
-            );
-          } else if (appId === "voice" && canTalk) {
+          else if (appId === "attention")
+            window.location.assign(IS_DESKTOP ? "/attention.html" : "/attention");
+          else if (appId === "voice" && canTalk) {
             if (listensAlways) toggleListening();
             else if (voice.state === "idle") void voice.start("auto");
             else void voice.stop();
