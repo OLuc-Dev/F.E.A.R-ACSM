@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
+import re
 from collections import OrderedDict, deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -10,7 +12,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from openai import AsyncOpenAI
 
-from fear.brain.local_models import RECOMMENDED_LOCAL_MODEL, Ollama, is_local, local_id
+from fear.brain.local_models import (
+    RECOMMENDED_LOCAL_MODEL,
+    Ollama,
+    is_local,
+    local_id,
+    local_tag,
+)
 from fear.brain.models import (
     EMPTY_REPLY,
     FALLBACK_MODELS,
@@ -29,6 +37,29 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+# Seeing the screen takes a model on this computer that understands images.
+NEEDS_VISION_REPLY = (
+    "Para ver a sua tela eu preciso de um modelo aqui no seu PC que entenda imagens, "
+    "como o Qwen 3.5 4B. Baixe ele em Configurações, na aba Comportamento, com o "
+    "Ollama aberto, e me pergunte de novo."
+)
+# The commentator: speak only when it helps, else say exactly this word.
+SCREEN_COMMENT_DIRECTIVE = (
+    "Você está olhando a tela do usuário enquanto ele joga, assiste ou trabalha. "
+    "Se houver algo realmente útil ou interessante para dizer (uma dica, um aviso, "
+    "um comentário curto sobre o que está acontecendo), diga em uma ou duas frases, "
+    "em português do Brasil, falando com ele. Se não houver, responda apenas: SILÊNCIO"
+)
+_QUIET = re.compile(r"^\W*sil[eê]ncio\W*$", re.IGNORECASE)
+
+
+def _show_screen(messages: list[Any], screen: bytes) -> None:
+    """Attach the screen to the last message, as Ollama takes images."""
+    last = messages[-1]
+    last["content"] = f"{last['content']}\n\n(Junto vai uma imagem da minha tela agora.)"
+    last["images"] = [base64.b64encode(screen).decode()]
+
 
 # Only route to the music player when the message clearly refers to music. This keeps the
 # assistant from hijacking ordinary conversation that happens to contain a verb
@@ -315,7 +346,11 @@ class AsyncConversationalBrain:
         return ids
 
     async def open_stream(
-        self, user_text: str, speaker_name: str = "user", user: UserContext | None = None
+        self,
+        user_text: str,
+        speaker_name: str = "user",
+        user: UserContext | None = None,
+        screen: bytes | None = None,
     ) -> StreamSession:
         """Prepare a streamed reply and expose the memory ids consulted for it.
 
@@ -333,7 +368,11 @@ class AsyncConversationalBrain:
             return StreamSession([], _no_chunks())
 
         model = user.chat_model if user and user.chat_model else self.settings.openrouter_chat_model
-        candidates = await self._candidates(model, self._client_for(user))
+        candidates = (
+            await self._candidates(model, self._client_for(user))
+            if screen is None
+            else await self._vision_candidates(model)
+        )
         persona_mode = user.persona_mode if user and user.persona_mode else self._persona_mode
         scope = user.user_id if user else ""
         history_key = user.user_id if user else clean_speaker
@@ -358,6 +397,11 @@ class AsyncConversationalBrain:
             reference_context,
         ) = await self._gather_context(clean_text, clean_speaker, scope)
         consulted = self._consulted_ids(related_memories, general_memories)
+
+        if screen is not None and not candidates:
+            await self._remember(clean_text, clean_speaker, "conversation", scope)
+            self._record_turn(history_key, clean_text, NEEDS_VISION_REPLY)
+            return StreamSession(consulted, _single_chunk(NEEDS_VISION_REPLY))
 
         if not candidates:
             fallback = (
@@ -388,6 +432,8 @@ class AsyncConversationalBrain:
             history_key=history_key,
             persona_mode=persona_mode,
         )
+        if screen is not None:
+            _show_screen(messages, screen)
         # Persist the user input up front so it survives an early client disconnect.
         await self._remember(clean_text, clean_speaker, "conversation", scope)
 
@@ -457,6 +503,36 @@ class AsyncConversationalBrain:
         if local is not None and local != chosen:
             candidates.append((local, self._local))
         return candidates
+
+    async def _vision_candidates(self, chosen: str) -> list[tuple[str, Any]]:
+        """The models on this computer that can look at the screen: the chosen one
+        first, then the recommended one, then the rest. The screen never leaves
+        the computer, so cloud models aren't among them."""
+        if self._local is None:
+            return []
+        tags = [model.tag for model in await self._local.chat_models() if model.vision]
+        preferred = [local_tag(chosen) if is_local(chosen) else "", RECOMMENDED_LOCAL_MODEL]
+        ordered = [tag for tag in preferred if tag in tags]
+        ordered += [tag for tag in tags if tag not in ordered]
+        return [(local_id(tag), self._local) for tag in ordered]
+
+    async def comment_on_screen(self, screen: bytes, user: UserContext | None = None) -> str:
+        """A short remark on what's on the screen, or "" when nothing is worth
+        saying (the commentator stays quiet rather than narrate)."""
+        model = user.chat_model if user and user.chat_model else self.settings.openrouter_chat_model
+        candidates = await self._vision_candidates(model)
+        if not candidates:
+            return ""
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": f"{self._persona}\n\n{SCREEN_COMMENT_DIRECTIVE}"},
+            {"role": "user", "content": "O que está na minha tela agora?"},
+        ]
+        _show_screen(messages, screen)
+        reply, failed = await self._complete(candidates, model, messages)
+        remark = reply.strip()
+        if failed or not remark or _QUIET.match(remark):
+            return ""
+        return remark
 
     async def _local_fallback(self) -> str | None:
         """A model on this computer to fall back on: the recommended one when it's
